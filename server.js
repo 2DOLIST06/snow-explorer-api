@@ -38,7 +38,7 @@ async function loadResortBySlug(slug) {
        altitude_min_m, altitude_max_m,
        to_char(season_open_date,'YYYY-MM-DD') as season_open_date,
        to_char(season_close_date,'YYYY-MM-DD') as season_close_date
-     from resort
+     from resorts
      where slug = $1`,
     [slug]
   );
@@ -98,7 +98,7 @@ app.get(['/api/resorts', '/api/ski/resorts'], async (req, res) => {
 
     const sql = `
       select id, name, slug, region_id, department, latitude, longitude
-      from resort
+      from resorts
       ${where}
       order by name asc
       limit $${params.length-1} offset $${params.length};
@@ -158,7 +158,7 @@ for (const base of [
       }
       if (set.length) {
         vals.push(slug);
-        await q(`update resort set ${set.join(', ')} where slug = $${vals.length}`, vals);
+        await q(`update resorts set ${set.join(', ')} where slug = $${vals.length}`, vals);
       }
 
       const data = await loadResortBySlug(slug);
