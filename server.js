@@ -12,7 +12,12 @@ const app = express();
 app.use(bodyParser.json({ limit: '2mb' }));
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*', credentials: true }));
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false,
+  },
+});
 const q = (sql, params = []) => pool.query(sql, params);
 const PORT = process.env.PORT || 5001;
 
