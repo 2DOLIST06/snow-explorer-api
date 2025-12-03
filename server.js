@@ -44,10 +44,28 @@ async function loadResortBySlug(slug) {
   );
   if (!r1.rowCount) return null;
 
-  const resort = r1.rows[0];
-  const r2 = await q(`select data from resort_widgets where resort_id=$1`, [resort.id]);
-  const widgets = r2.rowCount ? r2.rows[0].data : {};
+    const resort = r1.rows[0];
+
+  // lecture des widgets depuis station_widgets.config (JSON string)
+  const r2 = await q(
+    `select config
+     from station_widgets
+     where station_slug = $1`,
+    [slug]
+  );
+
+  const widgets = r2.rowCount
+    ? (() => {
+        try {
+          return JSON.parse(r2.rows[0].config);
+        } catch {
+          return {};
+        }
+      })()
+    : {};
+
   return { resort, widgets };
+
 }
 
 /* =========================
@@ -164,6 +182,18 @@ for (const base of [
       const data = await loadResortBySlug(slug);
       res.json(data);
     } catch (e) { res.status(500).send(`PATCH failed: ${e.message}`); }
+  });
+
+  // GET widgets
+  app.get(`${base}/:slug/widgets`, async (req, res) => {
+    try {
+      const { slug } = req.params;
+      const found = await loadResortBySlug(slug);
+      if (!found) return res.status(404).send('Not found');
+      res.json(found.widgets || {});
+    } catch (e) {
+      res.status(500).send(`GET widgets failed: ${e.message}`);
+    }
   });
 
   // PATCH widgets (jsonb complet)
