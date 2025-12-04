@@ -32,11 +32,25 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 async function loadResortBySlug(slug) {
   const r1 = await q(
     `select
-       id, name, slug, latitude, longitude,
-       website_url, cover_image_url, description_md,
-       region_id, department,
-       altitude_min_m, altitude_max_m,
-       to_char(season_open_date,'YYYY-MM-DD') as season_open_date,
+       id,
+       name,
+       slug,
+       latitude,
+       longitude,
+       website_url,
+       cover_image_url,
+       logo_url,
+       description_md,
+       region_id,
+       department,
+       altitude_base_m,
+       altitude_top_m,
+       altitude_min_m,
+       altitude_max_m,
+       ski_area_km,
+       lifts_count,
+       pistes_count,
+       to_char(season_open_date,'YYYY-MM-DD')  as season_open_date,
        to_char(season_close_date,'YYYY-MM-DD') as season_close_date
      from resort
      where slug = $1`,
