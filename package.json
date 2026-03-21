@@ -7,6 +7,7 @@
     "dev": "node server.js",
     "start": "node server.js",
     "build": "echo Build skipped"
+    "import:openskimap": "node scripts/import-openskimap.js"
   },
   "dependencies": {
     "body-parser": "1.20.2",
