@@ -24,7 +24,22 @@ jobs:
       - name: Install deps
         run: npm install
 
+      - name: Run scan
+        run: node scripts/scan-openskimap.js
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
       - name: Run import
         run: node scripts/import-openskimap-all.js
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openskimap-report
+          path: |
+            openskimap-match-report.json
+            *.json
+          if-no-files-found: ignore
