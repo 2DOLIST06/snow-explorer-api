@@ -9,64 +9,23 @@ const pool = new Pool({
 
 const q = (sql, params = []) => pool.query(sql, params);
 
-const OPENSKIMAP_SKI_AREAS_URL = "https://tiles.skimap.org/geojson/ski_areas.geojson";
-const OPENSKIMAP_RUNS_URL = "https://tiles.skimap.org/geojson/runs.geojson";
-const OPENSKIMAP_LIFTS_URL = "https://tiles.skimap.org/geojson/lifts.geojson";
+const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+const DEFAULT_RADIUS_M = 12000;
 
-function flattenCoords(coords, out = []) {
-  if (!Array.isArray(coords)) return out;
-  if (typeof coords[0] === "number" && typeof coords[1] === "number") {
-    out.push(coords);
-    return out;
-  }
-  for (const c of coords) flattenCoords(c, out);
-  return out;
-}
-
-function getBBoxFromGeometry(geometry) {
-  const pts = flattenCoords(geometry?.coordinates || []);
-  if (!pts.length) return null;
-
-  let minLng = Infinity;
-  let minLat = Infinity;
-  let maxLng = -Infinity;
-  let maxLat = -Infinity;
-
-  for (const [lng, lat] of pts) {
-    if (lng < minLng) minLng = lng;
-    if (lat < minLat) minLat = lat;
-    if (lng > maxLng) maxLng = lng;
-    if (lat > maxLat) maxLat = lat;
-  }
-
-  return { minLng, minLat, maxLng, maxLat };
-}
-
-function expandBBox(bbox, pad = 0.01) {
-  return {
-    minLng: bbox.minLng - pad,
-    minLat: bbox.minLat - pad,
-    maxLng: bbox.maxLng + pad,
-    maxLat: bbox.maxLat + pad,
-  };
-}
-
-function bboxesIntersect(a, b) {
-  return !(
-    a.maxLng < b.minLng ||
-    a.minLng > b.maxLng ||
-    a.maxLat < b.minLat ||
-    a.minLat > b.maxLat
-  );
+function toNumber(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 function normalizeDifficulty(raw) {
   const v = String(raw || "").toLowerCase().trim();
   if (!v) return null;
-  if (["green", "easy", "novice", "beginner", "verte", "vert"].includes(v)) return "green";
-  if (["blue", "intermediate", "bleue", "bleu"].includes(v)) return "blue";
-  if (["red", "advanced", "rouge"].includes(v)) return "red";
-  if (["black", "expert", "extreme", "double_black", "noire", "noir"].includes(v)) return "black";
+
+  if (["novice", "easy", "beginner", "green", "vert", "verte"].includes(v)) return "green";
+  if (["intermediate", "blue", "bleu", "bleue"].includes(v)) return "blue";
+  if (["advanced", "red", "rouge"].includes(v)) return "red";
+  if (["expert", "extreme", "black", "noir", "noire"].includes(v)) return "black";
+
   return v;
 }
 
@@ -75,54 +34,169 @@ function normalizeLiftType(raw) {
   if (!v) return null;
 
   if (
-    v.includes("drag") ||
-    v.includes("surface") ||
-    v.includes("platter") ||
-    v.includes("button") ||
-    v.includes("rope") ||
-    v.includes("t-bar") ||
-    v.includes("j-bar") ||
-    v.includes("magic carpet") ||
-    v.includes("tire")
+    [
+      "drag_lift",
+      "t-bar",
+      "j-bar",
+      "platter",
+      "rope_tow",
+      "magic_carpet",
+    ].includes(v)
   ) {
     return "drag";
   }
 
-  if (
-    v.includes("chair") ||
-    v.includes("telesiege") ||
-    v.includes("télésiège")
-  ) {
+  if (["chair_lift", "mixed_lift"].includes(v)) {
     return "chair";
   }
 
   if (
-    v.includes("gondola") ||
-    v.includes("tram") ||
-    v.includes("cable") ||
-    v.includes("telepherique") ||
-    v.includes("téléphérique") ||
-    v.includes("funitel") ||
-    v.includes("funicular") ||
-    v.includes("aerial")
+    [
+      "gondola",
+      "cable_car",
+      "goods",
+      "zip_line",
+      "jig_back",
+      "yes",
+      "station",
+    ].includes(v)
   ) {
     return "cable";
   }
 
-  return v;
-}
-
-function toNumber(v) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-async function fetchGeoJSON(url) {
-  const r = await fetch(url);
-  if (!r.ok) {
-    throw new Error(`Fetch failed ${url} -> HTTP ${r.status}`);
+  if (v.includes("chair")) return "chair";
+  if (
+    v.includes("drag") ||
+    v.includes("t-bar") ||
+    v.includes("j-bar") ||
+    v.includes("platter") ||
+    v.includes("rope") ||
+    v.includes("carpet")
+  ) {
+    return "drag";
   }
+
+  return "cable";
+}
+
+function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function buildOverpassQuery(lat, lon, radiusM) {
+  return `
+[out:json][timeout:120];
+
+(
+  way(around:${radiusM},${lat},${lon})["piste:type"="downhill"];
+  relation(around:${radiusM},${lat},${lon})["route"="piste"]["piste:type"="downhill"];
+
+  way(around:${radiusM},${lat},${lon})["aerialway"];
+  relation(around:${radiusM},${lat},${lon})["aerialway"];
+);
+
+out tags center geom;
+`;
+}
+
+async function fetchOverpass(lat, lon, radiusM) {
+  const query = buildOverpassQuery(lat, lon, radiusM);
+
+  const r = await fetch(OVERPASS_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+    },
+    body: `data=${encodeURIComponent(query)}`,
+  });
+
+  if (!r.ok) {
+    throw new Error(`Overpass HTTP ${r.status}`);
+  }
+
   return r.json();
+}
+
+function elementCenter(el) {
+  if (typeof el?.center?.lat === "number" && typeof el?.center?.lon === "number") {
+    return { lat: el.center.lat, lon: el.center.lon };
+  }
+
+  if (Array.isArray(el?.geometry) && el.geometry.length > 0) {
+    const pts = el.geometry.filter(
+      (p) => typeof p?.lat === "number" && typeof p?.lon === "number"
+    );
+    if (pts.length) {
+      const lat = pts.reduce((s, p) => s + p.lat, 0) / pts.length;
+      const lon = pts.reduce((s, p) => s + p.lon, 0) / pts.length;
+      return { lat, lon };
+    }
+  }
+
+  return null;
+}
+
+function estimateLengthMeters(el) {
+  if (!Array.isArray(el?.geometry) || el.geometry.length < 2) return null;
+
+  let total = 0;
+  for (let i = 1; i < el.geometry.length; i++) {
+    const a = el.geometry[i - 1];
+    const b = el.geometry[i];
+    if (
+      typeof a?.lat === "number" &&
+      typeof a?.lon === "number" &&
+      typeof b?.lat === "number" &&
+      typeof b?.lon === "number"
+    ) {
+      total += haversineDistanceMeters(a.lat, a.lon, b.lat, b.lon);
+    }
+  }
+
+  return total > 0 ? Math.round(total) : null;
+}
+
+function estimateElevationDiff(tags) {
+  const top =
+    toNumber(tags?.["piste:top"]) ??
+    toNumber(tags?.["ele:top"]) ??
+    toNumber(tags?.["top"]) ??
+    null;
+
+  const bottom =
+    toNumber(tags?.["piste:bottom"]) ??
+    toNumber(tags?.["ele:bottom"]) ??
+    toNumber(tags?.["bottom"]) ??
+    null;
+
+  if (top !== null && bottom !== null) {
+    return Math.max(0, Math.round(top - bottom));
+  }
+
+  return null;
+}
+
+function dedupeByKey(items, keyFn) {
+  const seen = new Set();
+  const out = [];
+
+  for (const item of items) {
+    const key = keyFn(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+
+  return out;
 }
 
 async function run() {
@@ -132,7 +206,7 @@ async function run() {
   }
 
   const resortRes = await q(
-    `select id, name, slug
+    `select id, name, slug, latitude, longitude
      from resort
      where slug = $1
      limit 1`,
@@ -144,47 +218,31 @@ async function run() {
   }
 
   const resort = resortRes.rows[0];
-  console.log(`Import OpenSkiMap pour: ${resort.name} (${resort.slug})`);
 
-  const [skiAreas, runs, lifts] = await Promise.all([
-    fetchGeoJSON(OPENSKIMAP_SKI_AREAS_URL),
-    fetchGeoJSON(OPENSKIMAP_RUNS_URL),
-    fetchGeoJSON(OPENSKIMAP_LIFTS_URL),
-  ]);
-
-  const areaFeatures = Array.isArray(skiAreas?.features) ? skiAreas.features : [];
-  const runFeatures = Array.isArray(runs?.features) ? runs.features : [];
-  const liftFeatures = Array.isArray(lifts?.features) ? lifts.features : [];
-
-  const normalizedResortName = resort.name.toLowerCase().trim();
-
-  const matchedArea =
-    areaFeatures.find((f) => String(f?.properties?.name || "").toLowerCase().trim() === normalizedResortName) ||
-    areaFeatures.find((f) => String(f?.properties?.name || "").toLowerCase().includes(normalizedResortName)) ||
-    areaFeatures.find((f) => normalizedResortName.includes(String(f?.properties?.name || "").toLowerCase().trim()));
-
-  if (!matchedArea) {
-    throw new Error(`Aucune ski_area OpenSkiMap trouvée pour ${resort.name}`);
+  if (!Number.isFinite(Number(resort.latitude)) || !Number.isFinite(Number(resort.longitude))) {
+    throw new Error(`Coordonnées manquantes pour ${resort.slug}`);
   }
 
-  const areaName = matchedArea?.properties?.name || resort.name;
-  const areaBBoxRaw = getBBoxFromGeometry(matchedArea.geometry);
-  if (!areaBBoxRaw) {
-    throw new Error(`Impossible de calculer la bbox pour ${areaName}`);
-  }
-  const areaBBox = expandBBox(areaBBoxRaw, 0.005);
+  const lat = Number(resort.latitude);
+  const lon = Number(resort.longitude);
 
-  console.log(`Zone trouvée: ${areaName}`);
+  console.log(`Import OSM/Overpass pour: ${resort.name} (${resort.slug})`);
 
-  const matchedRuns = runFeatures.filter((f) => {
-    const bbox = getBBoxFromGeometry(f.geometry);
-    return bbox ? bboxesIntersect(areaBBox, bbox) : false;
+  const overpass = await fetchOverpass(lat, lon, DEFAULT_RADIUS_M);
+  const elements = Array.isArray(overpass?.elements) ? overpass.elements : [];
+
+  const rawRuns = elements.filter((el) => {
+    const tags = el?.tags || {};
+    return tags["piste:type"] === "downhill" || tags.route === "piste";
   });
 
-  const matchedLifts = liftFeatures.filter((f) => {
-    const bbox = getBBoxFromGeometry(f.geometry);
-    return bbox ? bboxesIntersect(areaBBox, bbox) : false;
+  const rawLifts = elements.filter((el) => {
+    const tags = el?.tags || {};
+    return Boolean(tags.aerialway) && tags.aerialway !== "station";
   });
+
+  const matchedRuns = dedupeByKey(rawRuns, (el) => `${el.type}:${el.id}`);
+  const matchedLifts = dedupeByKey(rawLifts, (el) => `${el.type}:${el.id}`);
 
   console.log(`Runs trouvés: ${matchedRuns.length}`);
   console.log(`Lifts trouvés: ${matchedLifts.length}`);
@@ -195,8 +253,29 @@ async function run() {
     await q(`delete from piste where resort_id = $1`, [resort.id]);
     await q(`delete from lift where resort_id = $1`, [resort.id]);
 
-    for (const f of matchedRuns) {
-      const p = f?.properties || {};
+    for (const el of matchedRuns) {
+      const tags = el?.tags || {};
+
+      const name =
+        tags.name ||
+        tags["piste:name"] ||
+        tags.ref ||
+        `Piste ${el.id}`;
+
+      const difficulty = normalizeDifficulty(
+        tags["piste:difficulty"] ||
+          tags.difficulty ||
+          tags.colour ||
+          tags.color
+      );
+
+      const lengthM =
+        toNumber(tags["piste:length"]) ||
+        toNumber(tags.length) ||
+        estimateLengthMeters(el);
+
+      const elevationDiffM =
+        estimateElevationDiff(tags);
 
       await q(
         `insert into piste (
@@ -217,16 +296,28 @@ async function run() {
         )`,
         [
           resort.id,
-          p.name || null,
-          normalizeDifficulty(p.difficulty || p.piste_difficulty || p.color),
-          toNumber(p.length_m || p.length),
-          toNumber(p.elevation_diff_m || p.vertical_drop || p.vertical)
+          name || null,
+          difficulty,
+          lengthM,
+          elevationDiffM,
         ]
       );
     }
 
-    for (const f of matchedLifts) {
-      const p = f?.properties || {};
+    for (const el of matchedLifts) {
+      const tags = el?.tags || {};
+
+      const name =
+        tags.name ||
+        tags.ref ||
+        `Lift ${el.id}`;
+
+      const type = normalizeLiftType(tags.aerialway || tags.type);
+      const capacity =
+        toNumber(tags.capacity) ||
+        toNumber(tags["aerialway:capacity"]) ||
+        toNumber(tags["capacity:persons"]) ||
+        null;
 
       await q(
         `insert into lift (
@@ -245,9 +336,9 @@ async function run() {
         )`,
         [
           resort.id,
-          p.name || null,
-          normalizeLiftType(p.type || p.lift_type || p.aerialway),
-          toNumber(p.capacity_per_hour || p.capacity)
+          name || null,
+          type,
+          capacity,
         ]
       );
     }
