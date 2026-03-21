@@ -1,4 +1,4 @@
-﻿import 'dotenv/config';
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
@@ -56,30 +56,52 @@ async function loadResortBySlug(slug) {
      where slug = $1`,
     [slug]
   );
+
   if (!r1.rowCount) return null;
 
-    const resort = r1.rows[0];
+  const resort = r1.rows[0];
 
-  // lecture des widgets depuis station_widgets.config (JSON string)
   const r2 = await q(
+    `select *
+     from piste
+     where resort_id = $1
+     order by id asc`,
+    [resort.id]
+  );
+
+  const r3 = await q(
+    `select *
+     from lift
+     where resort_id = $1
+     order by id asc`,
+    [resort.id]
+  );
+
+  const r4 = await q(
     `select config
      from station_widgets
      where station_slug = $1`,
     [slug]
   );
 
-  const widgets = r2.rowCount
+  const widgets = r4.rowCount
     ? (() => {
         try {
-          return JSON.parse(r2.rows[0].config);
+          return typeof r4.rows[0].config === 'string'
+            ? JSON.parse(r4.rows[0].config)
+            : (r4.rows[0].config || {});
         } catch {
           return {};
         }
       })()
     : {};
 
-  return { resort, widgets };
-
+  return {
+    resort,
+    pistes: r2.rows,
+    lifts: r3.rows,
+    widgets,
+  };
 }
 
 /* =========================
@@ -89,7 +111,9 @@ app.get('/api/regions', async (_req, res) => {
   try {
     const { rows } = await q(`select id, name, country_code from regions order by name asc`);
     res.json(rows);
-  } catch (e) { res.status(500).send(e.message); }
+  } catch (e) {
+    res.status(500).send(e.message);
+  }
 });
 
 app.get('/api/departments', async (req, res) => {
@@ -108,7 +132,9 @@ app.get('/api/departments', async (req, res) => {
       ({ rows } = await q(`select code, name, region_id from departments order by name asc`));
     }
     res.json(rows);
-  } catch (e) { res.status(500).send(e.message); }
+  } catch (e) {
+    res.status(500).send(e.message);
+  }
 });
 
 /* =========================
@@ -133,11 +159,13 @@ app.get(['/api/resorts', '/api/ski/resorts'], async (req, res) => {
       from resort
       ${where}
       order by name asc
-      limit $${params.length-1} offset $${params.length};
+      limit $${params.length - 1} offset $${params.length};
     `;
     const { rows } = await q(sql, params);
     res.json(rows);
-  } catch (e) { res.status(500).send(e.message || 'error'); }
+  } catch (e) {
+    res.status(500).send(e.message || 'error');
+  }
 });
 
 /* Détail station par slug (lecture) + alias */
@@ -146,7 +174,9 @@ app.get(['/api/resorts/:slug', '/api/ski/resorts/:slug'], async (req, res) => {
     const data = await loadResortBySlug(req.params.slug);
     if (!data) return res.status(404).send('Not found');
     res.json(data);
-  } catch (e) { res.status(500).send(e.message); }
+  } catch (e) {
+    res.status(500).send(e.message);
+  }
 });
 
 /* =========================
@@ -155,16 +185,18 @@ app.get(['/api/resorts/:slug', '/api/ski/resorts/:slug'], async (req, res) => {
 for (const base of [
   '/api/admin/stations',
   '/api/admin/resorts',
-  '/api/ski/admin/stations',   // alias legacy
-  '/api/ski/admin/resorts'     // alias legacy
+  '/api/ski/admin/stations',
+  '/api/ski/admin/resorts'
 ]) {
-  // GET resort + widgets
+  // GET resort + widgets + pistes + lifts
   app.get(`${base}/:slug`, async (req, res) => {
     try {
       const data = await loadResortBySlug(req.params.slug);
       if (!data) return res.status(404).send('Not found');
       res.json(data);
-    } catch (e) { res.status(500).send(e.message); }
+    } catch (e) {
+      res.status(500).send(e.message);
+    }
   });
 
   // PATCH resort fields
@@ -176,8 +208,24 @@ for (const base of [
 
       const body = req.body || {};
       const fields = [
-        'name','latitude','longitude','website_url','cover_image_url','description_md',
-        'region_id','department','altitude_min_m','altitude_max_m','season_open_date','season_close_date'
+        'name',
+        'latitude',
+        'longitude',
+        'website_url',
+        'cover_image_url',
+        'logo_url',
+        'description_md',
+        'region_id',
+        'department',
+        'altitude_base_m',
+        'altitude_top_m',
+        'altitude_min_m',
+        'altitude_max_m',
+        'ski_area_km',
+        'lifts_count',
+        'pistes_count',
+        'season_open_date',
+        'season_close_date'
       ];
 
       const set = [];
@@ -188,6 +236,7 @@ for (const base of [
           vals.push(body[k] === '' ? null : body[k]);
         }
       }
+
       if (set.length) {
         vals.push(slug);
         await q(`update resort set ${set.join(', ')} where slug = $${vals.length}`, vals);
@@ -195,7 +244,9 @@ for (const base of [
 
       const data = await loadResortBySlug(slug);
       res.json(data);
-    } catch (e) { res.status(500).send(`PATCH failed: ${e.message}`); }
+    } catch (e) {
+      res.status(500).send(`PATCH failed: ${e.message}`);
+    }
   });
 
   // GET widgets
@@ -210,7 +261,7 @@ for (const base of [
     }
   });
 
-  // PATCH widgets (jsonb complet)
+  // PATCH widgets
   app.patch(`${base}/:slug/widgets`, async (req, res) => {
     try {
       const { slug } = req.params;
@@ -218,16 +269,19 @@ for (const base of [
       if (!found) return res.status(404).send('Not found');
 
       const widgets = req.body || {};
+
       await q(
-        `insert into resort_widgets (resort_id, data)
+        `insert into station_widgets (station_slug, config)
          values ($1, $2::jsonb)
-         on conflict (resort_id) do update set data = excluded.data`,
-        [found.resort.id, widgets]
+         on conflict (station_slug) do update set config = excluded.config`,
+        [slug, JSON.stringify(widgets)]
       );
 
       const data = await loadResortBySlug(slug);
       res.json(data);
-    } catch (e) { res.status(500).send(`PATCH widgets failed: ${e.message}`); }
+    } catch (e) {
+      res.status(500).send(`PATCH widgets failed: ${e.message}`);
+    }
   });
 }
 
