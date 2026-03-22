@@ -225,7 +225,9 @@ for (const base of [
         'lifts_count',
         'pistes_count',
         'season_open_date',
-        'season_close_date'
+        'season_close_date',
+        'pistes_small_map_url',
+        'pistes_large_map_url'
       ];
 
       const set = [];
