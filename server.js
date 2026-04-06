@@ -21,6 +21,62 @@ const pool = new Pool({
 const q = (sql, params = []) => pool.query(sql, params);
 const PORT = process.env.PORT || 5001;
 
+function normalizeForfaitColumns(columns) {
+  if (!Array.isArray(columns)) return [];
+  return columns.map((column, index) => {
+    const safe = column && typeof column === 'object' ? column : {};
+    const generatedId = `c-${index + 1}`;
+    return {
+      id: safe.id ? String(safe.id) : generatedId,
+      label: safe.label == null ? '' : String(safe.label),
+      value: safe.value == null ? '' : String(safe.value),
+    };
+  });
+}
+
+function normalizeForfaitItem(item, index) {
+  const safe = item && typeof item === 'object' ? item : {};
+  const normalizedColumns = normalizeForfaitColumns(safe.columns);
+
+  if (normalizedColumns.length > 0) {
+    return {
+      ...safe,
+      id: safe.id ? String(safe.id) : `f-${index + 1}`,
+      columns: normalizedColumns,
+    };
+  }
+
+  // Compatibilité rétroactive : ancien format title/price/url
+  const columns = [];
+  if (safe.title != null && safe.title !== '') {
+    columns.push({ id: `c-${index + 1}-1`, label: 'title', value: String(safe.title) });
+  }
+  if (safe.price != null && safe.price !== '') {
+    columns.push({ id: `c-${index + 1}-2`, label: 'price', value: String(safe.price) });
+  }
+  if (safe.url != null && safe.url !== '') {
+    columns.push({ id: `c-${index + 1}-3`, label: 'url', value: String(safe.url) });
+  }
+
+  return {
+    ...safe,
+    id: safe.id ? String(safe.id) : `f-${index + 1}`,
+    columns,
+  };
+}
+
+function normalizeWidgetsConfig(widgets) {
+  const safeWidgets = widgets && typeof widgets === 'object' ? { ...widgets } : {};
+  const forfaits = safeWidgets.forfaits && typeof safeWidgets.forfaits === 'object'
+    ? { ...safeWidgets.forfaits }
+    : {};
+  const items = Array.isArray(forfaits.items) ? forfaits.items : [];
+
+  forfaits.items = items.map((item, index) => normalizeForfaitItem(item, index));
+  safeWidgets.forfaits = forfaits;
+  return safeWidgets;
+}
+
 /* =========================
  * Health
  * =======================*/
@@ -87,9 +143,10 @@ async function loadResortBySlug(slug) {
   const widgets = r4.rowCount
     ? (() => {
         try {
-          return typeof r4.rows[0].config === 'string'
+          const parsed = typeof r4.rows[0].config === 'string'
             ? JSON.parse(r4.rows[0].config)
             : (r4.rows[0].config || {});
+          return normalizeWidgetsConfig(parsed);
         } catch {
           return {};
         }
@@ -270,7 +327,7 @@ for (const base of [
       const found = await loadResortBySlug(slug);
       if (!found) return res.status(404).send('Not found');
 
-      const widgets = req.body || {};
+      const widgets = normalizeWidgetsConfig(req.body || {});
 
       await q(
         `insert into station_widgets (station_slug, config)
