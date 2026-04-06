@@ -30,6 +30,59 @@ def _slugify(s: str) -> str:
     return s or str(uuid.uuid4())[:8]
 
 
+def _normalize_forfait_columns(columns):
+    if not isinstance(columns, list):
+        return []
+    out = []
+    for i, col in enumerate(columns, start=1):
+        c = col if isinstance(col, dict) else {}
+        out.append({
+            "id": str(c.get("id") or f"c-{i}"),
+            "label": "" if c.get("label") is None else str(c.get("label")),
+            "value": "" if c.get("value") is None else str(c.get("value")),
+        })
+    return out
+
+
+def _normalize_forfait_item(item, idx):
+    itm = item if isinstance(item, dict) else {}
+    columns = _normalize_forfait_columns(itm.get("columns"))
+    if columns:
+        merged = dict(itm)
+        merged["id"] = str(itm.get("id") or f"f-{idx}")
+        merged["columns"] = columns
+        return merged
+
+    # Compatibilité rétroactive avec l'ancien format title/price/url
+    legacy_columns = []
+    if itm.get("title") not in (None, ""):
+        legacy_columns.append({"id": f"c-{idx}-1", "label": "title", "value": str(itm.get("title"))})
+    if itm.get("price") not in (None, ""):
+        legacy_columns.append({"id": f"c-{idx}-2", "label": "price", "value": str(itm.get("price"))})
+    if itm.get("url") not in (None, ""):
+        legacy_columns.append({"id": f"c-{idx}-3", "label": "url", "value": str(itm.get("url"))})
+
+    merged = dict(itm)
+    merged["id"] = str(itm.get("id") or f"f-{idx}")
+    merged["columns"] = legacy_columns
+    return merged
+
+
+def _normalize_widgets_config(cfg):
+    if not isinstance(cfg, dict):
+        return {}
+    out = dict(cfg)
+    forfaits = out.get("forfaits")
+    if not isinstance(forfaits, dict):
+        forfaits = {}
+    items = forfaits.get("items")
+    if not isinstance(items, list):
+        items = []
+    forfaits["items"] = [_normalize_forfait_item(item, i) for i, item in enumerate(items, start=1)]
+    out["forfaits"] = forfaits
+    return out
+
+
 # ============ LIST ============
 @bp_admin_st.get("/")
 def list_resorts():
@@ -139,6 +192,7 @@ def get_resort_admin(slug):
         abort(404, "Not found")
     w = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
     cfg = StationWidgets.from_json(w.config) if w else {}
+    cfg = _normalize_widgets_config(cfg)
 
     return jsonify({
         "resort": r.to_dict(),
@@ -206,12 +260,14 @@ def patch_resort_admin(slug):
 @bp_admin_st.patch("/<string:slug>/widgets")
 def patch_widgets_admin(slug):
     payload = request.get_json(silent=True) or {}
+    payload = _normalize_widgets_config(payload)
     w = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
     if not w:
         StationWidgets.create(station_slug=slug, config=json.dumps(payload))
         return jsonify({"ok": True, "created": True})
     current = StationWidgets.from_json(w.config)
     merged = deep_merge(current if isinstance(current, dict) else {}, payload)
+    merged = _normalize_widgets_config(merged)
     w.config = StationWidgets.to_json(merged)
     w.save()
     return jsonify({"ok": True, "merged": True})

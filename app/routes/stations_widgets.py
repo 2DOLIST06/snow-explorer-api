@@ -24,6 +24,57 @@ DEFAULT_CFG = {
     "snow": {"enabled": False, "iframeUrl": None},
 }
 
+
+def _normalize_forfait_columns(columns):
+    if not isinstance(columns, list):
+        return []
+    out = []
+    for i, col in enumerate(columns, start=1):
+        c = col if isinstance(col, dict) else {}
+        out.append({
+            "id": str(c.get("id") or f"c-{i}"),
+            "label": "" if c.get("label") is None else str(c.get("label")),
+            "value": "" if c.get("value") is None else str(c.get("value")),
+        })
+    return out
+
+
+def _normalize_forfait_item(item, idx):
+    itm = item if isinstance(item, dict) else {}
+    columns = _normalize_forfait_columns(itm.get("columns"))
+    if columns:
+        merged = dict(itm)
+        merged["id"] = str(itm.get("id") or f"f-{idx}")
+        merged["columns"] = columns
+        return merged
+
+    legacy_columns = []
+    if itm.get("title") not in (None, ""):
+        legacy_columns.append({"id": f"c-{idx}-1", "label": "title", "value": str(itm.get("title"))})
+    if itm.get("price") not in (None, ""):
+        legacy_columns.append({"id": f"c-{idx}-2", "label": "price", "value": str(itm.get("price"))})
+    if itm.get("url") not in (None, ""):
+        legacy_columns.append({"id": f"c-{idx}-3", "label": "url", "value": str(itm.get("url"))})
+    merged = dict(itm)
+    merged["id"] = str(itm.get("id") or f"f-{idx}")
+    merged["columns"] = legacy_columns
+    return merged
+
+
+def _normalize_widgets_config(cfg):
+    if not isinstance(cfg, dict):
+        return {}
+    out = dict(cfg)
+    forfaits = out.get("forfaits")
+    if not isinstance(forfaits, dict):
+        forfaits = {}
+    items = forfaits.get("items")
+    if not isinstance(items, list):
+        items = []
+    forfaits["items"] = [_normalize_forfait_item(item, i) for i, item in enumerate(items, start=1)]
+    out["forfaits"] = forfaits
+    return out
+
 @bp_widgets.get("/<string:slug>/widgets")
 def get_widgets(slug: str):
     try:
@@ -33,6 +84,7 @@ def get_widgets(slug: str):
             cfg["stationSlug"] = slug
             return jsonify(cfg)
         data = StationWidgets.from_json(row.config)
+        data = _normalize_widgets_config(data)
         if "stationSlug" not in data:
             data["stationSlug"] = slug
         return jsonify(data)
@@ -46,6 +98,7 @@ def upsert_widgets(slug: str):
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         abort(400, "Invalid payload")
+    payload = _normalize_widgets_config(payload)
 
     # Deep-merge: DEFAULT_CFG  <- current (if any) <- payload
     current_cfg: dict = {}
@@ -60,6 +113,7 @@ def upsert_widgets(slug: str):
 
     merged = _deep_merge(DEFAULT_CFG, current_cfg)
     merged = _deep_merge(merged, payload)
+    merged = _normalize_widgets_config(merged)
     merged["stationSlug"] = slug
 
     if not row:
@@ -69,4 +123,3 @@ def upsert_widgets(slug: str):
         row.save()
 
     return jsonify({"ok": True, "stationSlug": slug, "merged": True})
-
