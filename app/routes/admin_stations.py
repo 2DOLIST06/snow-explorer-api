@@ -1,5 +1,6 @@
 # app/routes/admin_stations.py
 from flask import Blueprint, request, jsonify, abort
+from peewee import fn
 from app.models.base import db
 from app.models.resort import Resort
 from app.models.station_widgets import StationWidgets
@@ -87,6 +88,11 @@ def _normalize_widgets_config(cfg):
 @bp_admin_st.get("/")
 def list_resorts():
     q = Resort.select().order_by(Resort.name.asc())
+    active_filter = request.args.get("active")
+    if active_filter is not None:
+        if active_filter.lower() not in {"true", "false"}:
+            abort(400, "active doit être true ou false")
+        q = q.where(Resort.is_active == (active_filter.lower() == "true"))
     data = []
     for r in q:
         data.append({
@@ -246,6 +252,14 @@ def patch_resort_admin(slug):
         "season_open_date", "season_close_date",
     ]
 
+
+    unknown_fields = set(payload.keys()) - set(allowed_fields)
+    if unknown_fields:
+        abort(400, f"champs non autorisés: {', '.join(sorted(unknown_fields))}")
+
+    if "is_active" in payload and not isinstance(payload.get("is_active"), bool):
+        abort(400, "is_active doit être un booléen")
+
     with db.atomic():
         for f in allowed_fields:
             if f in payload:
@@ -254,6 +268,25 @@ def patch_resort_admin(slug):
         r.save()
 
     return jsonify({"ok": True, "resort": r.to_dict()})
+
+
+@bp_admin_st.patch("/bulk-activation")
+def bulk_activation():
+    payload = request.get_json(silent=True) or {}
+    is_active = payload.get("is_active")
+    if not isinstance(is_active, bool):
+        abort(400, "is_active doit être un booléen")
+
+    query = Resort.update({Resort.is_active: is_active})
+    slug_prefix = payload.get("slug_prefix")
+    if slug_prefix:
+        query = query.where(Resort.slug.startswith(slug_prefix))
+    region_id = payload.get("region_id")
+    if region_id:
+        query = query.where(Resort.region_id == region_id)
+
+    updated = query.execute()
+    return jsonify({"ok": True, "updated": updated, "is_active": is_active})
 
 
 # ============ PATCH widgets (merge JSON) ============

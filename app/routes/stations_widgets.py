@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify, abort
 from app.models.station_widgets import StationWidgets
+from app.services.resort_access import get_public_active_resort_or_404
 
 bp_widgets = Blueprint("stations_widgets", __name__, url_prefix="/api/stations")
 
@@ -77,6 +78,7 @@ def _normalize_widgets_config(cfg):
 
 @bp_widgets.get("/<string:slug>/widgets")
 def get_widgets(slug: str):
+    get_public_active_resort_or_404(slug)
     try:
         row = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
         if not row:
@@ -93,6 +95,7 @@ def get_widgets(slug: str):
 
 @bp_widgets.post("/<string:slug>/widgets")
 def upsert_widgets(slug: str):
+    get_public_active_resort_or_404(slug)
     if not request.is_json:
         abort(400, "Expected JSON")
     payload = request.get_json(silent=True)

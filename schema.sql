@@ -28,7 +28,8 @@ create table if not exists resorts (
   altitude_min_m integer,
   altitude_max_m integer,
   season_open_date date,
-  season_close_date date
+  season_close_date date,
+  is_active boolean not null default true
 );
 
 -- Widgets par station (JSONB)

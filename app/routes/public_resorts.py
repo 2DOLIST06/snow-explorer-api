@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 from app.models.resort import Resort
+from app.services.resort_access import get_public_active_resort_or_404
 from functools import reduce
 import operator
 
@@ -103,24 +104,5 @@ def list_resorts():
 
 @bp_public.get("/<slug>")
 def get_resort(slug: str):
-    query = _base_query()
-
-    # 1) Recherche par slug si vraie colonne
-    if F_SLUG is not None:
-        r = query.where(F_SLUG == slug).get_or_none()
-        if r:
-            return jsonify(_resort_public_dict(r)), 200
-
-    # 2) Fallback par nom normalisé (si pas de colonne slug)
-    if F_NAME is not None and fn is not None:
-        slug_norm = slug.replace("-", " ").strip().lower()
-        r = query.where(fn.LOWER(F_NAME) == slug_norm).get_or_none()
-        if r:
-            return jsonify(_resort_public_dict(r)), 200
-
-        # Dernier filet: LIKE sur le nom
-        r = query.where(F_NAME.ilike(f"%{slug_norm}%")).get_or_none()
-        if r:
-            return jsonify(_resort_public_dict(r)), 200
-
-    return jsonify({"error": "not_found"}), 404
+    r = get_public_active_resort_or_404(slug)
+    return jsonify(_resort_public_dict(r)), 200
