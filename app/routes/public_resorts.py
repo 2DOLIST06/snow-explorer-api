@@ -33,12 +33,7 @@ F_SLUG = _get_field(Resort, ["slug", "slug_text", "slug_field"])
 
 
 def _base_query():
-    q = Resort.select()
-    if F_IS_ACTIVE is not None:
-        return q.where(F_IS_ACTIVE == True)
-    if F_STATUS is not None:
-        return q.where(F_STATUS == "published")
-    return q
+    return Resort.select().where(Resort.is_active == True)
 
 
 def _resort_public_dict(r: Resort) -> dict:

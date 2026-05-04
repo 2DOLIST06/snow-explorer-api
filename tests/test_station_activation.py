@@ -1,3 +1,7 @@
+import sys
+import types
+sys.modules.setdefault("boto3", types.SimpleNamespace())
+
 import unittest
 from unittest.mock import patch
 from flask import Flask

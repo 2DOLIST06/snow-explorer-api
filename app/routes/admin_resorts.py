@@ -29,10 +29,13 @@ ALLOWED = {
     "season_open_date", "season_close_date",
     "ski_area_km", "lifts_count", "pistes_count",
     "amenities",
+    "is_active",
 }
 INTS  = {"altitude_base_m", "altitude_top_m", "altitude_min_m", "altitude_max_m", "ski_area_km", "lifts_count", "pistes_count"}
 FLTS  = {"latitude", "longitude"}
 DATES = {"season_open_date", "season_close_date"}
+
+BOOLS = {"is_active"}
 
 def _i(v):
     if v in (None, ""): return None
@@ -82,6 +85,9 @@ def patch_admin_resort(slug: str):
             setattr(r, k, _f(v))
         elif k in DATES:
             setattr(r, k, _d(v))
+        elif k in BOOLS:
+            if isinstance(v, bool):
+                setattr(r, k, v)
         else:
             setattr(r, k, (v if v != "" else None))
 
