@@ -72,6 +72,8 @@ def patch_admin_resort(slug: str):
         return jsonify({"error": "not_found"}), 404
 
     payload = request.get_json(silent=True) or {}
+    if "is_active" in payload and not isinstance(payload.get("is_active"), bool):
+        return jsonify({"error": "is_active_must_be_boolean"}), 400
     for k, v in payload.items():
         if k not in ALLOWED:
             continue
@@ -86,8 +88,7 @@ def patch_admin_resort(slug: str):
         elif k in DATES:
             setattr(r, k, _d(v))
         elif k in BOOLS:
-            if isinstance(v, bool):
-                setattr(r, k, v)
+            setattr(r, k, v)
         else:
             setattr(r, k, (v if v != "" else None))
 
