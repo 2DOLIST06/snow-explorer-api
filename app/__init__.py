@@ -23,17 +23,7 @@ def create_app():
     app = Flask(__name__)
 
     # CORS pour le front Next.js
-    CORS(
-        app,
-        resources={r"/api/*": {"origins": [
-            "http://localhost:3000",
-            "http://localhost:3001",
-            "http://127.0.0.1:3000",
-            "http://127.0.0.1:3001",
-        ]}},
-        supports_credentials=False,
-        max_age=86400,
-    )
+    CORS(app)
 
     # Connexion à la base et création des tables
     db.connect(reuse_if_open=True)
