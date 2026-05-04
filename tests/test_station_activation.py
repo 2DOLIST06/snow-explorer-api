@@ -69,6 +69,20 @@ class StationActivationTests(unittest.TestCase):
             resp = self.client.patch('/api/admin/stations/a', json={'is_active': 'false'})
         self.assertEqual(resp.status_code, 400)
 
+    def test_admin_patch_accepts_is_active_camel_case(self):
+        class R:
+            slug = 'a'
+            is_active = True
+            def save(self):
+                pass
+            def to_dict(self):
+                return {'slug': 'a', 'is_active': self.is_active}
+
+        with patch('app.routes.admin_stations.Resort.get_or_none', return_value=R()):
+            resp = self.client.patch('/api/admin/stations/a', json={'isActive': False})
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.get_json()['resort']['is_active'])
+
     def test_reactivation_restores_access(self):
         with patch('app.routes.public_resorts.get_public_active_resort_or_404', return_value=DummyResort('reactivated', True)):
             resp = self.client.get('/api/resorts/reactivated')

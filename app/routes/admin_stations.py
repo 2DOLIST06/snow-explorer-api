@@ -12,6 +12,15 @@ import uuid
 bp_admin_st = Blueprint("admin_stations", __name__, url_prefix="/api/admin/stations")
 
 
+def _with_activation_alias(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    out = dict(payload)
+    if "is_active" not in out and "isActive" in out:
+        out["is_active"] = out["isActive"]
+    return out
+
+
 def deep_merge(dst, src):
     if not isinstance(dst, dict) or not isinstance(src, dict):
         return src
@@ -104,6 +113,7 @@ def list_resorts():
             "longitude": r.longitude,
             "region": r.region_name,
             "is_active": bool(r.is_active) if r.is_active is not None else True,
+            "isActive": bool(r.is_active) if r.is_active is not None else True,
         })
     return jsonify({"items": data, "count": len(data)})
 
@@ -111,7 +121,7 @@ def list_resorts():
 # ============ CREATE ============
 @bp_admin_st.post("/")
 def create_resort():
-    payload = request.get_json(silent=True) or {}
+    payload = _with_activation_alias(request.get_json(silent=True) or {})
     name = (payload.get("name") or "").strip()
     if not name:
         abort(400, "name requis")
@@ -221,7 +231,7 @@ def patch_resort_admin(slug):
     r = Resort.get_or_none(Resort.slug == slug)
     if not r:
         abort(404, "Not found")
-    payload = request.get_json(silent=True) or {}
+    payload = _with_activation_alias(request.get_json(silent=True) or {})
 
     allowed_fields = [
         # Activation
@@ -255,7 +265,8 @@ def patch_resort_admin(slug):
     ]
 
 
-    unknown_fields = set(payload.keys()) - set(allowed_fields)
+    payload_for_validation = {k: v for k, v in payload.items() if k != "isActive"}
+    unknown_fields = set(payload_for_validation.keys()) - set(allowed_fields)
     if unknown_fields:
         abort(400, f"champs non autorisés: {', '.join(sorted(unknown_fields))}")
 
@@ -279,7 +290,7 @@ def patch_resort_admin(slug):
 
 @bp_admin_st.patch("/bulk-activation")
 def bulk_activation():
-    payload = request.get_json(silent=True) or {}
+    payload = _with_activation_alias(request.get_json(silent=True) or {})
     is_active = payload.get("is_active")
     if not isinstance(is_active, bool):
         abort(400, "is_active doit être un booléen")
