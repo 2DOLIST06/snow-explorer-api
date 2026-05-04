@@ -1,0 +1,14 @@
+BEGIN;
+
+ALTER TABLE resort
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN;
+
+UPDATE resort
+SET is_active = TRUE
+WHERE is_active IS NULL;
+
+ALTER TABLE resort
+  ALTER COLUMN is_active SET DEFAULT TRUE,
+  ALTER COLUMN is_active SET NOT NULL;
+
+COMMIT;
