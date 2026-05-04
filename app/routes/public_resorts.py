@@ -73,6 +73,11 @@ def _resort_public_dict(r: Resort) -> dict:
     base["season_open_date"] = getattr(r, "season_open_date", None)
     base["season_close_date"] = getattr(r, "season_close_date", None)
 
+    # Activation: forcé dans la réponse publique même si to_dict/fallback diverge
+    is_active = getattr(r, "is_active", None)
+    base["is_active"] = bool(is_active) if is_active is not None else True
+    base["resort_is_active"] = base["is_active"]
+
     return base
 
 
