@@ -94,3 +94,40 @@ def patch_admin_resort(slug: str):
 
     r.save()
     return jsonify(r.to_dict()), 200
+
+
+# Compatibilité: certains fronts appellent /api/admin/stations
+bp_admin_stations_compat = Blueprint("admin_stations_compat", __name__, url_prefix="/api/admin/stations")
+
+
+@bp_admin_stations_compat.get("/")
+def list_admin_stations_compat():
+    data = []
+    for r in Resort.select().order_by(Resort.name.asc()):
+        data.append({
+            "id": str(r.id),
+            "slug": r.slug,
+            "name": r.name,
+            "latitude": r.latitude,
+            "longitude": r.longitude,
+            "region": r.region_name,
+            "is_active": bool(r.is_active) if r.is_active is not None else True,
+        })
+    return jsonify({"items": data, "count": len(data)}), 200
+
+
+@bp_admin_stations_compat.patch("/<string:slug>")
+def patch_admin_station_compat(slug: str):
+    r = Resort.get_or_none(Resort.slug == slug)
+    if not r:
+        return jsonify({"error": "not_found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    if "is_active" not in payload:
+        return jsonify({"error": "is_active_required"}), 400
+    if not isinstance(payload.get("is_active"), bool):
+        return jsonify({"error": "is_active_must_be_boolean"}), 400
+
+    r.is_active = payload["is_active"]
+    r.save()
+    return jsonify({"ok": True, "resort": r.to_dict()}), 200
