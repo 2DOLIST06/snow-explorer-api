@@ -4,6 +4,7 @@ from peewee import fn
 from app.models.base import db
 from app.models.resort import Resort
 from app.models.station_widgets import StationWidgets
+from app.services.public_cache import bump_public_resorts_version
 import json
 import re
 import uuid
@@ -187,6 +188,7 @@ def create_resort():
             })
         )
 
+    bump_public_resorts_version()
     return jsonify({"ok": True, "resort": r.to_dict()}), 201
 
 
@@ -260,12 +262,17 @@ def patch_resort_admin(slug):
     if "is_active" in payload and not isinstance(payload.get("is_active"), bool):
         abort(400, "is_active doit être un booléen")
 
+    is_active_changed = "is_active" in payload and bool(payload.get("is_active")) != bool(r.is_active)
+
     with db.atomic():
         for f in allowed_fields:
             if f in payload:
                 setattr(r, f, payload[f])
         # le slug n’est pas modifié ici (stabilité des URLs)
         r.save()
+
+    if is_active_changed:
+        bump_public_resorts_version()
 
     return jsonify({"ok": True, "resort": r.to_dict()})
 
@@ -286,6 +293,8 @@ def bulk_activation():
         query = query.where(Resort.region_id == region_id)
 
     updated = query.execute()
+    if updated > 0:
+        bump_public_resorts_version()
     return jsonify({"ok": True, "updated": updated, "is_active": is_active})
 
 

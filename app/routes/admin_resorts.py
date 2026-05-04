@@ -29,10 +29,13 @@ ALLOWED = {
     "season_open_date", "season_close_date",
     "ski_area_km", "lifts_count", "pistes_count",
     "amenities",
+    "is_active",
 }
 INTS  = {"altitude_base_m", "altitude_top_m", "altitude_min_m", "altitude_max_m", "ski_area_km", "lifts_count", "pistes_count"}
 FLTS  = {"latitude", "longitude"}
 DATES = {"season_open_date", "season_close_date"}
+
+BOOLS = {"is_active"}
 
 def _i(v):
     if v in (None, ""): return None
@@ -69,6 +72,8 @@ def patch_admin_resort(slug: str):
         return jsonify({"error": "not_found"}), 404
 
     payload = request.get_json(silent=True) or {}
+    if "is_active" in payload and not isinstance(payload.get("is_active"), bool):
+        return jsonify({"error": "is_active_must_be_boolean"}), 400
     for k, v in payload.items():
         if k not in ALLOWED:
             continue
@@ -82,6 +87,8 @@ def patch_admin_resort(slug: str):
             setattr(r, k, _f(v))
         elif k in DATES:
             setattr(r, k, _d(v))
+        elif k in BOOLS:
+            setattr(r, k, v)
         else:
             setattr(r, k, (v if v != "" else None))
 

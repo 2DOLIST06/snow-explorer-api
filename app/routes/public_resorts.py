@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from app.models.resort import Resort
 from app.services.resort_access import get_public_active_resort_or_404
+from app.services.public_cache import get_public_resorts_version
 from functools import reduce
 import operator
 
@@ -32,12 +33,7 @@ F_SLUG = _get_field(Resort, ["slug", "slug_text", "slug_field"])
 
 
 def _base_query():
-    q = Resort.select()
-    if F_IS_ACTIVE is not None:
-        return q.where(F_IS_ACTIVE == True)
-    if F_STATUS is not None:
-        return q.where(F_STATUS == "published")
-    return q
+    return Resort.select().where(Resort.is_active == True)
 
 
 def _resort_public_dict(r: Resort) -> dict:
@@ -99,10 +95,16 @@ def list_resorts():
         query = query.order_by(F_NAME.asc())
 
     data = [_resort_public_dict(r) for r in query.limit(200)]
-    return jsonify(data), 200
+    response = jsonify(data)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
+    return response, 200
 
 
 @bp_public.get("/<slug>")
 def get_resort(slug: str):
     r = get_public_active_resort_or_404(slug)
-    return jsonify(_resort_public_dict(r)), 200
+    response = jsonify(_resort_public_dict(r))
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
+    return response, 200
