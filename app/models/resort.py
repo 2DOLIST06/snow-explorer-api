@@ -41,7 +41,7 @@ class Resort(Model):
     slug = CharField(null=False, unique=True)
 
     # Activation
-    is_active = BooleanField(null=True, default=True)
+    is_active = BooleanField(null=False, default=True)
 
     # Localisation
     region_id = CharField(null=True)

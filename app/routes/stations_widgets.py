@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, abort
 from app.models.station_widgets import StationWidgets
 from app.services.resort_access import get_public_active_resort_or_404
+from app.services.public_cache import get_public_resorts_version
 
 bp_widgets = Blueprint("stations_widgets", __name__, url_prefix="/api/stations")
 
@@ -84,12 +85,18 @@ def get_widgets(slug: str):
         if not row:
             cfg = dict(DEFAULT_CFG)
             cfg["stationSlug"] = slug
-            return jsonify(cfg)
+            response = jsonify(cfg)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
+            return response
         data = StationWidgets.from_json(row.config)
         data = _normalize_widgets_config(data)
         if "stationSlug" not in data:
             data["stationSlug"] = slug
-        return jsonify(data)
+        response = jsonify(data)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
+        return response
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
