@@ -14,6 +14,9 @@ except Exception:  # garde-fou si import différent
 
 bp_public = Blueprint("public_resorts", __name__, url_prefix="/api/resorts")
 
+DEFAULT_LIMIT = 200
+MAX_LIMIT = 200
+
 
 def _get_field(model, candidates):
     """Retourne le champ Peewee si présent et bien un Field, sinon None."""
@@ -33,7 +36,25 @@ F_SLUG = _get_field(Resort, ["slug", "slug_text", "slug_field"])
 
 
 def _base_query():
-    return Resort.select().where(Resort.is_active == True)
+    """Build the public-navigation query (never includes drafts)."""
+    return Resort.select().where(
+        Resort.is_active
+        & Resort.slug.is_null(False)
+        & (fn.TRIM(Resort.slug) != "")
+    )
+
+
+def _requested_limit() -> int:
+    raw_limit = request.args.get("limit")
+    if raw_limit is None:
+        return DEFAULT_LIMIT
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        limit = 0
+    if limit <= 0 or limit > MAX_LIMIT or str(limit) != raw_limit.strip():
+        raise ValueError(f"limit must be a positive integer no greater than {MAX_LIMIT}")
+    return limit
 
 
 def _resort_public_dict(r: Resort) -> dict:
@@ -83,6 +104,15 @@ def _resort_public_dict(r: Resort) -> dict:
 
 @bp_public.get("/")
 def list_resorts():
+    active = request.args.get("active")
+    if active is not None and active.strip().lower() != "true":
+        return jsonify({"error": "active must be true on the public resorts endpoint"}), 400
+
+    try:
+        limit = _requested_limit()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     q_str = (request.args.get("q") or "").strip()
     query = _base_query()
 
@@ -97,11 +127,12 @@ def list_resorts():
             query = query.where(reduce(operator.or_, conds))
 
     if F_NAME is not None:
-        query = query.order_by(F_NAME.asc())
+        # Name is the existing technical ordering; id makes ties deterministic.
+        query = query.order_by(F_NAME.asc(), Resort.id.asc())
 
-    data = [_resort_public_dict(r) for r in query.limit(200)]
+    data = [_resort_public_dict(r) for r in query.limit(limit)]
     response = jsonify(data)
-    response.headers["Cache-Control"] = "no-store"
+    response.headers["Cache-Control"] = "public, max-age=300, s-maxage=3600"
     response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
     return response, 200
 

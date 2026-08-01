@@ -78,7 +78,8 @@ class StationActivationTests(unittest.TestCase):
             def to_dict(self):
                 return {'slug': 'a', 'is_active': self.is_active}
 
-        with patch('app.routes.admin_stations.Resort.get_or_none', return_value=R()):
+        with patch('app.routes.admin_stations.Resort.get_or_none', return_value=R()), \
+             patch('app.routes.admin_stations.db.atomic'):
             resp = self.client.patch('/api/admin/stations/a', json={'isActive': False})
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(resp.get_json()['resort']['is_active'])
