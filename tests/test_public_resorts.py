@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+from datetime import date
 
 from flask import Flask
 from peewee import SqliteDatabase
@@ -8,22 +9,27 @@ from peewee import SqliteDatabase
 sys.modules.setdefault("boto3", types.SimpleNamespace())
 
 from app.models.resort import Resort  # noqa: E402
+from app.models.region import Region  # noqa: E402
+from app.models.piste import Piste  # noqa: E402
+from app.models.lift import Lift  # noqa: E402
+from app.models.station_widgets import StationWidgets  # noqa: E402
 from app.routes.public_resorts import bp_public  # noqa: E402
 
 
 class PublicResortsTests(unittest.TestCase):
     def setUp(self):
         self.database = SqliteDatabase(":memory:")
-        self.database.bind([Resort])
+        self.models = [Region, Resort, Piste, Lift, StationWidgets]
+        self.database.bind(self.models)
         self.database.connect()
-        self.database.create_tables([Resort])
+        self.database.create_tables(self.models)
 
         app = Flask(__name__)
         app.register_blueprint(bp_public)
         self.client = app.test_client()
 
     def tearDown(self):
-        self.database.drop_tables([Resort])
+        self.database.drop_tables(self.models)
         self.database.close()
 
     def create_resort(self, identifier, name, slug, is_active=True, **fields):
@@ -109,6 +115,66 @@ class PublicResortsTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), [])
+
+    def test_public_detail_contract_counts_region_dates_urls_and_cfg(self):
+        Region.create(id="paca", name="Provence-Alpes-Côte d’Azur")
+        resort = self.create_resort(
+            "1", "Auron", "auron", region_id="paca", region_name=None,
+            pistes_count=None, lifts_count=None,
+            season_open_date=date(2025, 12, 6), season_close_date=date(2026, 4, 12),
+            cover_image_url="  ", logo_url="", website_url=" https://auron.com ",
+            pistes_small_map_url="", pistes_large_map_url=" ", snowpark_map_url="",
+        )
+        Piste.create(id="p1", resort=resort, name="Verte", difficulty="green")
+        Piste.create(id="p2", resort=resort, name="Bleue", difficulty="blue")
+        Lift.create(id="l1", resort=resort, name="Télésiège", type="chair")
+        StationWidgets.create(
+            station_slug="auron",
+            config=StationWidgets.to_json({
+                "widgets": {"widgets": {"pistes": {"enabled": True}}},
+                "adminToken": "secret",
+            }),
+        )
+
+        response = self.client.get("/api/resorts/auron")
+        data = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Cache-Control"], "public, max-age=300, s-maxage=3600")
+        self.assertEqual(data["region"], {"id": "paca", "name": "Provence-Alpes-Côte d’Azur"})
+        self.assertEqual(data["pistes_count"], 2)
+        self.assertEqual(data["lifts_count"], 1)
+        self.assertEqual(data["season_open_date"], "2025-12-06")
+        self.assertEqual(data["season_close_date"], "2026-04-12")
+        for field in ("cover_image_url", "logo_url", "pistes_small_map_url",
+                      "pistes_large_map_url", "snowpark_map_url"):
+            self.assertIsNone(data[field])
+        self.assertEqual(data["website_url"], "https://auron.com")
+        self.assertNotIn("widgets", data["cfg"])
+        self.assertNotIn("adminToken", data)
+        self.assertNotIn("adminToken", data["cfg"])
+        self.assertEqual(data["cfg"]["pistes"], {"enabled": True})
+
+    def test_stored_non_negative_counts_are_authoritative(self):
+        resort = self.create_resort("1", "Stored", "stored", pistes_count=7, lifts_count=4)
+        Piste.create(id="p1", resort=resort, name="One", difficulty="green")
+        response = self.client.get("/api/resorts/stored")
+        self.assertEqual(response.get_json()["pistes_count"], 7)
+        self.assertEqual(response.get_json()["lifts_count"], 4)
+
+    def test_missing_and_inactive_detail_are_clean_json_404(self):
+        self.create_resort("1", "Inactive", "inactive", is_active=False)
+        for slug in ("missing", "inactive"):
+            with self.subTest(slug=slug):
+                response = self.client.get(f"/api/resorts/{slug}")
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(response.content_type, "application/json")
+                self.assertEqual(response.get_json()["error"], "resort_not_found")
+
+    def test_empty_database_detail_is_404_not_500(self):
+        response = self.client.get("/api/resorts/anything")
+        self.assertEqual(response.status_code, 404)
+        self.assertIsInstance(response.get_json(), dict)
 
 
 if __name__ == "__main__":

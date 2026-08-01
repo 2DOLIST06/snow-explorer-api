@@ -47,7 +47,7 @@ class StationActivationTests(unittest.TestCase):
         self.assertEqual(payload[0]['slug'], 'active-1')
 
     def test_public_detail_inactive_is_404(self):
-        with patch('app.routes.public_resorts.get_public_active_resort_or_404', side_effect=lambda slug: (_ for _ in ()).throw(__import__('werkzeug.exceptions').exceptions.NotFound())):
+        with patch('app.routes.public_resorts.get_public_resort', return_value=None):
             resp = self.client.get('/api/resorts/inactive')
         self.assertEqual(resp.status_code, 404)
 
@@ -85,7 +85,7 @@ class StationActivationTests(unittest.TestCase):
         self.assertFalse(resp.get_json()['resort']['is_active'])
 
     def test_reactivation_restores_access(self):
-        with patch('app.routes.public_resorts.get_public_active_resort_or_404', return_value=DummyResort('reactivated', True)):
+        with patch('app.routes.public_resorts.get_public_resort', return_value=DummyResort('reactivated', True).to_dict()):
             resp = self.client.get('/api/resorts/reactivated')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json()['slug'], 'reactivated')
