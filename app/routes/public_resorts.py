@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from app.models.resort import Resort
-from app.services.resort_access import get_public_active_resort_or_404
+from app.services.public_resort import get_public_resort
 from app.services.public_cache import get_public_resorts_version
 from functools import reduce
 import operator
@@ -139,8 +139,10 @@ def list_resorts():
 
 @bp_public.get("/<slug>")
 def get_resort(slug: str):
-    r = get_public_active_resort_or_404(slug)
-    response = jsonify(_resort_public_dict(r))
-    response.headers["Cache-Control"] = "no-store"
+    data = get_public_resort(slug)
+    if data is None:
+        return jsonify({"error": "resort_not_found", "message": "Station not found"}), 404
+    response = jsonify(data)
+    response.headers["Cache-Control"] = "public, max-age=300, s-maxage=3600"
     response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
     return response, 200
