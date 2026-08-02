@@ -1,4 +1,6 @@
-﻿from flask import Flask
+﻿import os
+
+from flask import Flask
 from dotenv import load_dotenv
 from flask_cors import CORS
 from app.models.base import db
@@ -9,6 +11,9 @@ from app.models.lift import Lift
 from app.models.resort_map import ResortMap
 from app.models.station_widgets import StationWidgets   
 from app.models.resort_import_history import ResortImportHistory
+from app.models.admin_user import AdminUser
+from app.models.admin_session import AdminSession
+from app.models.admin_login_attempt import AdminLoginAttempt
 from app.routes.public_resorts import bp_public
 from app.routes.admin_resorts import bp_admin, bp_admin_stations_compat
 from app.routes.stations_widgets import bp_widgets      
@@ -18,24 +23,54 @@ from app.routes.public_departments import bp_departments
 from app.routes.uploads import bp_uploads
 from app.routes.admin_resort_import import bp_resort_json
 from app.services.admin_auth import protect_admin_routes
+from app.routes.admin_auth import bp_admin_auth
+from app.cli import register_admin_commands
 
 
 
-def create_app():
+def _env_bool(name, default):
+    value = os.getenv(name)
+    return default if value is None else value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def create_app(config=None):
     load_dotenv()
     app = Flask(__name__)
+    app.config.update(
+        ADMIN_SESSION_SECRET=os.getenv("ADMIN_SESSION_SECRET"),
+        ADMIN_SESSION_COOKIE_NAME=os.getenv("ADMIN_SESSION_COOKIE_NAME", "admin_session"),
+        ADMIN_SESSION_TTL_SECONDS=int(os.getenv("ADMIN_SESSION_TTL_SECONDS", "28800")),
+        ADMIN_SESSION_TOUCH_INTERVAL_SECONDS=int(os.getenv("ADMIN_SESSION_TOUCH_INTERVAL_SECONDS", "300")),
+        ADMIN_COOKIE_SECURE=_env_bool("ADMIN_COOKIE_SECURE", True),
+        ADMIN_COOKIE_SAMESITE=os.getenv("ADMIN_COOKIE_SAMESITE", "Lax"),
+        ADMIN_ALLOWED_ORIGINS=[x.strip() for x in os.getenv("ADMIN_ALLOWED_ORIGINS", "").split(",") if x.strip()],
+        ADMIN_LOGIN_RATE_LIMIT=int(os.getenv("ADMIN_LOGIN_RATE_LIMIT", "5")),
+        ADMIN_LOGIN_RATE_WINDOW_SECONDS=int(os.getenv("ADMIN_LOGIN_RATE_WINDOW_SECONDS", "900")),
+        TRUST_PROXY_HEADERS=_env_bool("TRUST_PROXY_HEADERS", False),
+    )
+    if config:
+        app.config.update(config)
 
     # La protection est centralisée afin qu'aucune route d'administration,
     # présente ou ajoutée plus tard, ne puisse être oubliée.
     protect_admin_routes(app)
 
     # CORS pour le front Next.js
-    CORS(app)
+    CORS(app, resources={
+        r"/api/admin/*": {
+            "origins": app.config["ADMIN_ALLOWED_ORIGINS"],
+            "supports_credentials": True,
+            "allow_headers": ["Content-Type", "X-CSRF-Token"],
+        },
+        r"/api/*": {"origins": "*", "supports_credentials": False},
+    })
 
     # Connexion à la base et création des tables
-    db.connect(reuse_if_open=True)
-    db.create_tables([Region, Resort, Piste, Lift, ResortMap, StationWidgets, ResortImportHistory])
-    db.close()
+    if not app.config.get("SKIP_DATABASE_INIT"):
+        db.connect(reuse_if_open=True)
+        db.create_tables([Region, Resort, Piste, Lift, ResortMap, StationWidgets, ResortImportHistory,
+                          AdminUser, AdminSession, AdminLoginAttempt])
+        db.close()
 
     # Enregistrement des blueprints
     app.register_blueprint(bp_public)
@@ -47,6 +82,7 @@ def create_app():
     app.register_blueprint(bp_departments)
     app.register_blueprint(bp_uploads)
     app.register_blueprint(bp_resort_json)
+    app.register_blueprint(bp_admin_auth)
     # Le front historique utilise ``/api/admin/stations`` tandis que les
     # routes d'import/export ont d'abord été publiées sous ``resorts``.
     # Enregistrer le même blueprint une seconde fois garde les deux contrats
@@ -57,4 +93,5 @@ def create_app():
         name="admin_station_json",
     )
 
+    register_admin_commands(app)
     return app

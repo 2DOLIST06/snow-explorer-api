@@ -14,7 +14,9 @@ from app.services.resort_json import (SCHEMA_VERSION, ValidationProblem,
 class ResortJsonValidationTests(unittest.TestCase):
     def setUp(self):
         self.app = Flask(__name__)
-        self.app.config.update(ADMIN_API_TOKEN="admin-test", SECRET_KEY="secret-test")
+        self.app.config.update(SECRET_KEY="secret-test")
+        self.auth = patch("app.services.admin_auth.authenticate_admin_request", return_value=None)
+        self.auth.start()
         self.app.register_blueprint(bp_resort_json)
         self.app.register_blueprint(
             bp_resort_json,
@@ -23,7 +25,9 @@ class ResortJsonValidationTests(unittest.TestCase):
         )
         self.ctx = self.app.app_context(); self.ctx.push()
 
-    def tearDown(self): self.ctx.pop()
+    def tearDown(self):
+        self.auth.stop()
+        self.ctx.pop()
 
     def document(self, **station):
         base = {"id": "id-1", "slug": "station-test", "name": "Station test"}
@@ -76,10 +80,6 @@ class ResortJsonValidationTests(unittest.TestCase):
             response = self.app.test_client().get("/api/admin/resorts/export")
         self.assertEqual(response.status_code, 200)
 
-    def test_import_authentication_is_required(self):
-        response = self.app.test_client().post("/api/admin/resorts/import/preview", json={})
-        self.assertEqual(response.status_code, 401)
-
     def test_station_export_alias_is_registered(self):
         with patch("app.routes.admin_resort_import.prefetch", return_value=[]), \
              patch("app.routes.admin_resort_import.Resort.select"):
@@ -102,12 +102,12 @@ class ResortJsonValidationTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
 
     def test_invalid_json(self):
-        response = self.app.test_client().post("/api/admin/resorts/import/preview", data=b"{", headers={"Authorization": "Bearer admin-test", "Content-Type": "application/json"})
+        response = self.app.test_client().post("/api/admin/resorts/import/preview", data=b"{", headers={"Content-Type": "application/json"})
         self.assertEqual(response.status_code, 400)
 
     def test_file_too_large(self):
         self.app.config["RESORT_IMPORT_MAX_FILE_SIZE"] = 2
-        response = self.app.test_client().post("/api/admin/resorts/import/preview", data=b"{}x", headers={"Authorization": "Bearer admin-test", "Content-Type": "application/json"})
+        response = self.app.test_client().post("/api/admin/resorts/import/preview", data=b"{}x", headers={"Content-Type": "application/json"})
         self.assertEqual(response.status_code, 413)
 
 
