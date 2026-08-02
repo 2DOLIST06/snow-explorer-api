@@ -11,12 +11,13 @@ dans `StationWidgets.config`. L'API d'administration historique utilise à la fo
 `StationWidgets` imbriqué. Il n'existait ni authentification Flask ni mécanisme
 d'import JSON réutilisable (le script OpenSkiMap Node est un traitement hors API).
 
-Les routes d'écriture sensibles exigent `Authorization: Bearer <ADMIN_API_TOKEN>` (ou
-`X-Admin-Token`). Le serveur refuse aussi de fonctionner avec un jeton de preview
-signé sans `SECRET_KEY`. `X-Admin-User` peut identifier l'administrateur dans
-l'historique. Les anciennes routes d'administration ne sont pas changées par ce
-lot; leur sécurisation globale doit être traitée séparément pour éviter une
-rupture de compatibilité.
+Les routes d'écriture sont protégées par la session administrateur et le jeton
+CSRF. Les jetons de preview sont signés avec `RESORT_IMPORT_SECRET` lorsqu'il est
+défini, puis avec `SECRET_KEY` ou `ADMIN_SESSION_SECRET` comme solutions de repli.
+Le serveur refuse de signer sans aucun de ces secrets. `X-Admin-User` peut
+identifier l'administrateur dans l'historique. Les anciennes routes
+d'administration ne sont pas changées par ce lot; leur sécurisation globale doit
+être traitée séparément pour éviter une rupture de compatibilité.
 
 ## Contrat 1.0
 

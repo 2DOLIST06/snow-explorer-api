@@ -138,8 +138,23 @@ def checksum(document): return hashlib.sha256(canonical_bytes(document)).hexdige
 
 
 def preview_token(document, options):
-    secret = current_app.config.get("SECRET_KEY") or os.getenv("SECRET_KEY")
-    if not secret: raise RuntimeError("SECRET_KEY must be configured")
+    # The application uses ADMIN_SESSION_SECRET for browser authentication and
+    # does not otherwise need Flask's SECRET_KEY.  Requiring only SECRET_KEY here
+    # made every valid preview fail with an unhandled 500 in that deployment.
+    # Prefer a purpose-specific secret, while retaining both historical and
+    # application-secret fallbacks for existing installations.
+    secret = (
+        current_app.config.get("RESORT_IMPORT_SECRET")
+        or current_app.config.get("SECRET_KEY")
+        or current_app.config.get("ADMIN_SESSION_SECRET")
+        or os.getenv("RESORT_IMPORT_SECRET")
+        or os.getenv("SECRET_KEY")
+        or os.getenv("ADMIN_SESSION_SECRET")
+    )
+    if not secret:
+        raise RuntimeError(
+            "RESORT_IMPORT_SECRET, SECRET_KEY, or ADMIN_SESSION_SECRET must be configured"
+        )
     payload = checksum(document) + ":" + json.dumps(options, sort_keys=True, separators=(",", ":"))
     return hmac.new(str(secret).encode(), payload.encode(), hashlib.sha256).hexdigest()
 
