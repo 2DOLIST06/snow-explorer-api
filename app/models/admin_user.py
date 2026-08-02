@@ -1,12 +1,7 @@
-from datetime import datetime, timezone
+from peewee import BooleanField, CharField, TextField
 
-from peewee import BooleanField, CharField, DateTimeField, TextField
-
+from app.datetime_utils import UTCDateTimeField, utcnow
 from .base import BaseModel
-
-
-def utcnow():
-    return datetime.now(timezone.utc)
 
 
 class AdminUser(BaseModel):
@@ -14,10 +9,10 @@ class AdminUser(BaseModel):
     password_hash = TextField()
     role = CharField(max_length=50, default="admin")
     is_active = BooleanField(default=True, index=True)
-    created_at = DateTimeField(default=utcnow)
-    updated_at = DateTimeField(default=utcnow)
-    last_login_at = DateTimeField(null=True)
-    password_changed_at = DateTimeField(default=utcnow)
+    created_at = UTCDateTimeField(default=utcnow)
+    updated_at = UTCDateTimeField(default=utcnow)
+    last_login_at = UTCDateTimeField(null=True)
+    password_changed_at = UTCDateTimeField(default=utcnow)
 
     class Meta:
         table_name = "admin_users"
