@@ -1,7 +1,7 @@
 import logging
 import os
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from flask import Flask, jsonify
@@ -12,7 +12,8 @@ from app.models.admin_login_attempt import AdminLoginAttempt
 from app.models.admin_session import AdminSession
 from app.models.admin_user import AdminUser
 from app.routes.admin_auth import bp_admin_auth
-from app.services.admin_auth import hash_password, protect_admin_routes, revoke_all_sessions, utcnow
+from app.datetime_utils import ensure_utc, utcnow
+from app.services.admin_auth import hash_password, protect_admin_routes, revoke_all_sessions
 
 MODELS = [AdminUser, AdminSession, AdminLoginAttempt]
 
@@ -46,6 +47,14 @@ class AdminAuthenticationTests(unittest.TestCase):
         @app.post("/api/admin/probe")
         def admin_write_probe():
             return jsonify({"ok": True})
+
+        @app.get("/api/admin/stations/")
+        def admin_station_list():
+            return jsonify({"items": []})
+
+        @app.post("/api/admin/stations/import/preview")
+        def admin_station_import_preview():
+            return jsonify({"valid": True})
 
         @app.get("/api/public/probe")
         def public_probe():
@@ -106,6 +115,31 @@ class AdminAuthenticationTests(unittest.TestCase):
         session.revoked_at = utcnow()
         session.save()
         self.assertEqual(self.client.get("/api/admin/probe").status_code, 401)
+
+    def test_aware_and_database_naive_expiration_are_normalized(self):
+        self.login()
+        session = AdminSession.get()
+        self.assertEqual(ensure_utc(session.expires_at).utcoffset(), timedelta(0))
+
+        # Simulate a legacy TIMESTAMP value returned without tzinfo.
+        naive_expiration = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=1)
+        AdminSession.update(expires_at=naive_expiration).where(AdminSession.id == session.id).execute()
+        loaded = AdminSession.get_by_id(session.id)
+        self.assertIsNotNone(loaded.expires_at.tzinfo)
+        response = self.client.get("/api/admin/probe")
+        self.assertEqual(response.status_code, 200)
+
+    def test_station_routes_validate_session_without_500(self):
+        csrf = self.login().get_json()["csrf_token"]
+        listing = self.client.get("/api/admin/stations/")
+        preview = self.client.post(
+            "/api/admin/stations/import/preview",
+            json={"stations": []},
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual((listing.status_code, preview.status_code), (200, 200))
+        self.assertNotEqual(listing.status_code, 500)
+        self.assertNotEqual(preview.status_code, 500)
 
     def test_logout_requires_csrf_and_revokes(self):
         csrf = self.login().get_json()["csrf_token"]

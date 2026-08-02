@@ -1,13 +1,13 @@
-from peewee import CharField, DateTimeField
+from peewee import CharField
 
-from .admin_user import utcnow
+from app.datetime_utils import UTCDateTimeField, utcnow
 from .base import BaseModel
 
 
 class AdminLoginAttempt(BaseModel):
     ip_address = CharField(max_length=64, index=True)
     email = CharField(max_length=320, index=True)
-    attempted_at = DateTimeField(default=utcnow, index=True)
+    attempted_at = UTCDateTimeField(default=utcnow, index=True)
 
     class Meta:
         table_name = "admin_login_attempts"

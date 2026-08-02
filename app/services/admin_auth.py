@@ -12,6 +12,7 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 from flask import current_app, g, jsonify, request
 from peewee import fn
 
+from app.datetime_utils import ensure_utc, utcnow
 from app.models.admin_login_attempt import AdminLoginAttempt
 from app.models.admin_session import AdminSession
 from app.models.admin_user import AdminUser
@@ -20,10 +21,6 @@ logger = logging.getLogger("security.admin")
 _password_hasher = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4, hash_len=32, salt_len=16, type=Type.ID)
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-
-
-def utcnow():
-    return datetime.now(timezone.utc)
 
 
 def normalize_email(email):
@@ -107,7 +104,7 @@ def _cookie_settings():
 def create_admin_session(user):
     raw_token = secrets.token_urlsafe(48)
     csrf_token = _csrf_for_session_token(raw_token)
-    now = utcnow()
+    now = datetime.now(timezone.utc)
     ttl = current_app.config["ADMIN_SESSION_TTL_SECONDS"]
     session = AdminSession.create(
         admin_user=user,
@@ -148,14 +145,22 @@ def _load_session():
                .join(AdminUser)
                .where(AdminSession.token_hash == _digest(raw, b"session:"))
                .first())
-    now = utcnow()
-    if not session or session.revoked_at is not None or session.expires_at <= now:
+    now = datetime.now(timezone.utc)
+    if not session:
+        return None
+    expires_at = ensure_utc(session.expires_at)
+    revoked_at = ensure_utc(session.revoked_at)
+    if revoked_at is not None or expires_at is None or expires_at <= now:
         return None
     user = session.admin_user
-    if not user.is_active or user.role != "admin" or user.password_changed_at > session.created_at:
+    created_at = ensure_utc(session.created_at)
+    password_changed_at = ensure_utc(user.password_changed_at)
+    if (not user.is_active or user.role != "admin" or created_at is None or
+            (password_changed_at is not None and password_changed_at > created_at)):
         return None
     interval = current_app.config["ADMIN_SESSION_TOUCH_INTERVAL_SECONDS"]
-    if session.last_seen_at + timedelta(seconds=interval) <= now:
+    last_seen_at = ensure_utc(session.last_seen_at)
+    if last_seen_at is None or last_seen_at + timedelta(seconds=interval) <= now:
         AdminSession.update(last_seen_at=now).where(AdminSession.id == session.id).execute()
         session.last_seen_at = now
     g.admin_session = session
