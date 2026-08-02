@@ -11,7 +11,7 @@ Appliquer d'abord `migrations/20260802_add_admin_authentication.sql`, puis défi
 | `ADMIN_SESSION_TTL_SECONDS` | `28800` (expiration absolue de 8 heures) |
 | `ADMIN_SESSION_TOUCH_INTERVAL_SECONDS` | `300` (limite les écritures `last_seen_at`) |
 | `ADMIN_COOKIE_SECURE` | `true` en production; `false` explicitement en HTTP local uniquement |
-| `ADMIN_COOKIE_SAMESITE` | `Lax`; n'utiliser `None` avec `Secure=true` que pour un front réellement cross-site |
+| `ADMIN_COOKIE_SAMESITE` | `None` pour le front de production cross-site (la chaîne littérale, avec `ADMIN_COOKIE_SECURE=true`) |
 | `ADMIN_ALLOWED_ORIGINS` | origines exactes séparées par des virgules, p. ex. `https://<front-production>` |
 | `ADMIN_LOGIN_RATE_LIMIT` | `5` |
 | `ADMIN_LOGIN_RATE_WINDOW_SECONDS` | `900` |
@@ -38,6 +38,6 @@ Sur une console sans entrée interactive, définir temporairement `ADMIN_BOOTSTR
 
 Le navigateur doit envoyer `credentials: "include"`, conserver le jeton CSRF uniquement en mémoire et l'ajouter aux écritures. Il ne doit jamais lire, demander ou transmettre `ADMIN_API_TOKEN`. Ce dernier reste uniquement dans le serveur Node historique pour ses éventuels consommateurs techniques et n'est pas accepté par l'authentification Flask des navigateurs.
 
-Les cookies de production sont `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`. CORS n'autorise les credentials que pour les origines exactes de `ADMIN_ALLOWED_ORIGINS`; aucun couple wildcard + credentials n'est émis. Les routes publiques existantes `/api/*` restent accessibles sans session et sans credentials CORS.
+Les cookies de production sont `HttpOnly`, `Secure`, `SameSite=None`, `Path=/`. Les mêmes attributs sont appliqués à leur création et à leur suppression. CORS n'autorise les credentials que pour les origines exactes de `ADMIN_ALLOWED_ORIGINS`; aucun couple wildcard + credentials n'est émis. Les routes publiques existantes `/api/*` restent accessibles sans session et sans credentials CORS.
 
 Lors d'un changement de mot de passe futur, le service doit enregistrer `password_changed_at` et appeler `revoke_all_sessions(user.id)`. La vérification rejette déjà toute session antérieure à ce changement.

@@ -33,6 +33,14 @@ def _env_bool(name, default):
     return default if value is None else value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_cookie_samesite():
+    value = os.getenv("ADMIN_COOKIE_SAMESITE", "Lax").strip().lower()
+    values = {"lax": "Lax", "strict": "Strict", "none": "None"}
+    if value not in values:
+        raise ValueError("ADMIN_COOKIE_SAMESITE must be Lax, Strict, or None")
+    return values[value]
+
+
 def create_app(config=None):
     load_dotenv()
     app = Flask(__name__)
@@ -42,7 +50,7 @@ def create_app(config=None):
         ADMIN_SESSION_TTL_SECONDS=int(os.getenv("ADMIN_SESSION_TTL_SECONDS", "28800")),
         ADMIN_SESSION_TOUCH_INTERVAL_SECONDS=int(os.getenv("ADMIN_SESSION_TOUCH_INTERVAL_SECONDS", "300")),
         ADMIN_COOKIE_SECURE=_env_bool("ADMIN_COOKIE_SECURE", True),
-        ADMIN_COOKIE_SAMESITE=os.getenv("ADMIN_COOKIE_SAMESITE", "Lax"),
+        ADMIN_COOKIE_SAMESITE=_env_cookie_samesite(),
         ADMIN_ALLOWED_ORIGINS=[x.strip() for x in os.getenv("ADMIN_ALLOWED_ORIGINS", "").split(",") if x.strip()],
         ADMIN_LOGIN_RATE_LIMIT=int(os.getenv("ADMIN_LOGIN_RATE_LIMIT", "5")),
         ADMIN_LOGIN_RATE_WINDOW_SECONDS=int(os.getenv("ADMIN_LOGIN_RATE_WINDOW_SECONDS", "900")),
