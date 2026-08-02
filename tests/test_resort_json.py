@@ -3,6 +3,7 @@ import types
 sys.modules.setdefault("boto3", types.SimpleNamespace())
 
 import unittest
+from unittest.mock import MagicMock, patch
 from flask import Flask
 
 from app.routes.admin_resort_import import bp_resort_json
@@ -69,25 +70,36 @@ class ResortJsonValidationTests(unittest.TestCase):
         self.app.config["RESORT_IMPORT_MAX_STATIONS"] = 1
         self.assertInvalid({"schema_version": SCHEMA_VERSION, "stations": [self.document()["station"], self.document()["station"]]})
 
-    def test_admin_authentication_is_required(self):
-        response = self.app.test_client().get("/api/admin/resorts/export")
+    def test_export_is_available_to_admin_front(self):
+        with patch("app.routes.admin_resort_import.prefetch", return_value=[]), \
+             patch("app.routes.admin_resort_import.Resort.select"):
+            response = self.app.test_client().get("/api/admin/resorts/export")
+        self.assertEqual(response.status_code, 200)
+
+    def test_import_authentication_is_required(self):
+        response = self.app.test_client().post("/api/admin/resorts/import/preview", json={})
         self.assertEqual(response.status_code, 401)
 
     def test_station_export_alias_is_registered(self):
-        response = self.app.test_client().get("/api/admin/stations/export")
-        self.assertEqual(response.status_code, 401)
+        with patch("app.routes.admin_resort_import.prefetch", return_value=[]), \
+             patch("app.routes.admin_resort_import.Resort.select"):
+            response = self.app.test_client().get("/api/admin/stations/export")
+        self.assertEqual(response.status_code, 200)
 
     def test_station_template_alias_is_registered(self):
-        for path in ("template", "import-template"):
+        for path in ("template", "import-template", "import/template"):
             with self.subTest(path=path):
                 response = self.app.test_client().get(f"/api/admin/stations/{path}")
-                self.assertEqual(response.status_code, 401)
+                self.assertEqual(response.status_code, 200)
 
     def test_station_history_alias_is_registered(self):
-        for path in ("history", "import-history"):
+        query = MagicMock()
+        query.order_by.return_value.limit.return_value = []
+        for path in ("history", "import-history", "imports/history"):
             with self.subTest(path=path):
-                response = self.app.test_client().get(f"/api/admin/stations/{path}")
-                self.assertEqual(response.status_code, 401)
+                with patch("app.routes.admin_resort_import.ResortImportHistory.select", return_value=query):
+                    response = self.app.test_client().get(f"/api/admin/stations/{path}")
+                self.assertEqual(response.status_code, 200)
 
     def test_invalid_json(self):
         response = self.app.test_client().post("/api/admin/resorts/import/preview", data=b"{", headers={"Authorization": "Bearer admin-test", "Content-Type": "application/json"})

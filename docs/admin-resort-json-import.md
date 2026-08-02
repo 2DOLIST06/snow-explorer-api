@@ -11,7 +11,7 @@ dans `StationWidgets.config`. L'API d'administration historique utilise à la fo
 `StationWidgets` imbriqué. Il n'existait ni authentification Flask ni mécanisme
 d'import JSON réutilisable (le script OpenSkiMap Node est un traitement hors API).
 
-Ces routes sensibles exigent `Authorization: Bearer <ADMIN_API_TOKEN>` (ou
+Les routes d'écriture sensibles exigent `Authorization: Bearer <ADMIN_API_TOKEN>` (ou
 `X-Admin-Token`). Le serveur refuse aussi de fonctionner avec un jeton de preview
 signé sans `SECRET_KEY`. `X-Admin-User` peut identifier l'administrateur dans
 l'historique. Les anciennes routes d'administration ne sont pas changées par ce
@@ -55,12 +55,14 @@ sont jamais exportés.
 | GET | `/api/admin/resorts/<id-ou-slug>/export` | export unitaire |
 | GET | `/api/admin/resorts/export?active=true` | export stable global |
 | GET | `/api/admin/resorts/import-template` | modèle sans donnée réelle |
+| GET | `/api/admin/stations/import/template` | alias utilisé par le front pour le modèle |
 | POST | `/api/admin/resorts/<id-ou-slug>/import/preview` | preview unitaire |
 | POST | `/api/admin/resorts/<id-ou-slug>/import/confirm` | confirmation unitaire |
 | POST | `/api/admin/resorts/import/preview` | preview multiple |
 | POST | `/api/admin/resorts/import/confirm` | confirmation multiple |
 | GET | `/api/admin/resorts/import-history` | 100 derniers imports |
 | GET | `/api/admin/resorts/import-history/<id>` | détail d'historique |
+| GET | `/api/admin/stations/imports/history` | alias utilisé par le front pour l'historique |
 
 Les POST acceptent `multipart/form-data` (`file`) ou un corps JSON brut. La
 confirmation renvoie exactement le même fichier et le `preview_token` dans le
