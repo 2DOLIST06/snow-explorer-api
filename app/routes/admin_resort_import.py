@@ -100,7 +100,7 @@ def preview_one(identifier):
 def confirm_one(identifier):
     resort = _find(identifier)
     if not resort: return jsonify({"error": "not_found"}), 404
-    token = request.form.get("preview_token") or request.headers.get("X-Preview-Token")
+    token = _submitted_preview_token()
     try: document, filename = parse_upload(request); record = validate_document(document)[0]
     except (OverflowError, ValueError, ValidationProblem) as exc: return _error(exc)
     options = {"type": "single", "target": str(resort.id)}
@@ -124,6 +124,16 @@ def _bulk_options():
     return {"type": "bulk", "create_missing": flag("create_missing", False), "all_or_nothing": flag("all_or_nothing", True)}
 
 
+def _submitted_preview_token():
+    payload = request.get_json(silent=True)
+    payload = payload if isinstance(payload, dict) else {}
+    return (
+        request.form.get("preview_token")
+        or request.headers.get("X-Preview-Token")
+        or payload.get("preview_token")
+    )
+
+
 @bp_resort_json.post("/import/preview")
 @admin_required
 def preview_bulk():
@@ -138,7 +148,7 @@ def preview_bulk():
 @bp_resort_json.post("/import/confirm")
 @admin_required
 def confirm_bulk():
-    options = _bulk_options(); token = request.form.get("preview_token") or request.headers.get("X-Preview-Token")
+    options = _bulk_options(); token = _submitted_preview_token()
     try: document, filename = parse_upload(request); records = validate_document(document, bulk=True)
     except (OverflowError, ValueError, ValidationProblem) as exc: return _error(exc)
     if not verify_token(document, options, token): return jsonify({"error": "invalid_preview_token"}), 409
@@ -179,7 +189,7 @@ def _classify(records, create):
         elif not found: status = "create" if create else "missing"; counts["missing"] += 1
         else:
             changes, _ = differences(found, record); status = "update" if changes else "unchanged"; counts["existing"] += 1; counts["unchanged"] += not bool(changes)
-        result.append({"id": identity.get("id"), "slug": identity.get("slug"), "status": status, "changes": [] if not found or found == "conflict" else differences(found, record)[0]})
+        result.append({"id": identity.get("id"), "slug": identity.get("slug"), "name": identity.get("name"), "status": status, "changes": [] if not found or found == "conflict" else differences(found, record)[0]})
     return result, counts, errors
 
 

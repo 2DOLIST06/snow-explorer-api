@@ -76,8 +76,11 @@ enveloppe JSON `{ "file": <document JSON>, "create_missing": true }` (la clé
 passé directement à `JSON.stringify`, car il deviendrait `{}` sans transmettre
 le contenu du fichier. Dans ce cas, l'API répond `file_content_missing`. La
 confirmation renvoie exactement le même fichier et le `preview_token` dans le
-formulaire ou `X-Preview-Token`. Le token HMAC couvre le contenu canonique, la
-cible et toutes les options: un fichier ou mode différent reçoit HTTP 409.
+formulaire, dans l'enveloppe JSON, ou via `X-Preview-Token`. Chaque station de la
+prévisualisation contient `id`, `slug`, `name`, `status` et `changes`, afin de
+pouvoir être affichée directement par l'interface. Le token HMAC couvre le
+contenu canonique, la cible et toutes les options: un fichier ou mode différent
+reçoit HTTP 409.
 
 En multiple, `create_missing=false` et `all_or_nothing=true` sont les valeurs par
 défaut. Les options sont des champs de formulaire ou paramètres de requête. La
