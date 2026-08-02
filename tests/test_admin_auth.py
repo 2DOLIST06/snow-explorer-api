@@ -1,10 +1,13 @@
 import logging
+import os
 import unittest
 from datetime import timedelta
+from unittest.mock import patch
 
 from flask import Flask, jsonify
 from peewee import SqliteDatabase
 
+from app import create_app
 from app.models.admin_login_attempt import AdminLoginAttempt
 from app.models.admin_session import AdminSession
 from app.models.admin_user import AdminUser
@@ -28,7 +31,7 @@ class AdminAuthenticationTests(unittest.TestCase):
             ADMIN_SESSION_TTL_SECONDS=28800,
             ADMIN_SESSION_TOUCH_INTERVAL_SECONDS=300,
             ADMIN_COOKIE_SECURE=True,
-            ADMIN_COOKIE_SAMESITE="Lax",
+            ADMIN_COOKIE_SAMESITE="None",
             ADMIN_LOGIN_RATE_LIMIT=5,
             ADMIN_LOGIN_RATE_WINDOW_SECONDS=900,
             TRUST_PROXY_HEADERS=False,
@@ -70,7 +73,8 @@ class AdminAuthenticationTests(unittest.TestCase):
         cookie = response.headers["Set-Cookie"]
         self.assertIn("HttpOnly", cookie)
         self.assertIn("Secure", cookie)
-        self.assertIn("SameSite=Lax", cookie)
+        self.assertIn("SameSite=None", cookie)
+        self.assertIn("Path=/", cookie)
         self.assertNotIn(AdminSession.get().token_hash, cookie)
 
     def test_wrong_and_unknown_credentials_are_identical(self):
@@ -109,7 +113,12 @@ class AdminAuthenticationTests(unittest.TestCase):
         response = self.client.post("/api/admin/auth/logout", headers={"X-CSRF-Token": csrf})
         self.assertEqual(response.status_code, 200)
         self.assertIsNotNone(AdminSession.get().revoked_at)
-        self.assertIn("Expires=Thu, 01 Jan 1970", response.headers["Set-Cookie"])
+        cookie = response.headers["Set-Cookie"]
+        self.assertIn("Expires=Thu, 01 Jan 1970", cookie)
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("Secure", cookie)
+        self.assertIn("SameSite=None", cookie)
+        self.assertIn("Path=/", cookie)
 
     def test_logout_all_revokes_every_session(self):
         csrf = self.login().get_json()["csrf_token"]
@@ -121,6 +130,11 @@ class AdminAuthenticationTests(unittest.TestCase):
         response = self.client.post("/api/admin/auth/logout-all", headers={"X-CSRF-Token": csrf})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(AdminSession.select().where(AdminSession.revoked_at.is_null()).count(), 0)
+        cookie = response.headers["Set-Cookie"]
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("Secure", cookie)
+        self.assertIn("SameSite=None", cookie)
+        self.assertIn("Path=/", cookie)
 
     def test_global_protection_csrf_options_and_public_route(self):
         self.assertEqual(self.client.get("/api/admin/probe").status_code, 401)
@@ -145,6 +159,24 @@ class AdminAuthenticationTests(unittest.TestCase):
         with self.assertLogs("security.admin", level=logging.WARNING) as logs:
             self.login(password=password)
         self.assertNotIn(password, "\n".join(logs.output))
+
+    def test_samesite_environment_and_admin_cors(self):
+        origin = "https://www.snow-explorer.com"
+        with patch.dict(os.environ, {"ADMIN_COOKIE_SAMESITE": "None"}):
+            app = create_app({
+                "TESTING": True,
+                "SKIP_DATABASE_INIT": True,
+                "ADMIN_SESSION_SECRET": "s" * 64,
+                "ADMIN_ALLOWED_ORIGINS": [origin],
+            })
+
+        self.assertEqual(app.config["ADMIN_COOKIE_SAMESITE"], "None")
+        response = app.test_client().options(
+            "/api/admin/auth/login",
+            headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
+        )
+        self.assertEqual(response.headers["Access-Control-Allow-Credentials"], "true")
+        self.assertEqual(response.headers["Access-Control-Allow-Origin"], origin)
 
 
 if __name__ == "__main__":
