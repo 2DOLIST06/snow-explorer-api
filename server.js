@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
+import crypto from 'node:crypto';
 import pkg from 'pg';
 const { Pool } = pkg;
 
@@ -20,6 +21,28 @@ const pool = new Pool({
 });
 const q = (sql, params = []) => pool.query(sql, params);
 const PORT = process.env.PORT || 5001;
+
+function adminTokenIsValid(req) {
+  const expected = process.env.ADMIN_API_TOKEN;
+  const authorization = req.get('authorization') || '';
+  const supplied = authorization.startsWith('Bearer ')
+    ? authorization.slice(7)
+    : req.get('x-admin-token');
+
+  if (!expected || !supplied) return false;
+  const expectedBuffer = Buffer.from(expected);
+  const suppliedBuffer = Buffer.from(supplied);
+  return expectedBuffer.length === suppliedBuffer.length
+    && crypto.timingSafeEqual(expectedBuffer, suppliedBuffer);
+}
+
+// Protect the whole namespace rather than individual handlers: new admin
+// endpoints inherit authentication automatically. OPTIONS remains available
+// so browser CORS preflights can complete.
+app.use(['/api/admin', '/api/ski/admin'], (req, res, next) => {
+  if (req.method === 'OPTIONS' || adminTokenIsValid(req)) return next();
+  return res.status(401).json({ error: 'admin_authentication_required' });
+});
 
 function normalizeForfaitColumns(columns) {
   if (!Array.isArray(columns)) return [];

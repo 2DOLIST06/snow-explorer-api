@@ -17,12 +17,17 @@ from app.routes.public_regions import bp_regions
 from app.routes.public_departments import bp_departments
 from app.routes.uploads import bp_uploads
 from app.routes.admin_resort_import import bp_resort_json
+from app.services.admin_auth import protect_admin_routes
 
 
 
 def create_app():
     load_dotenv()
     app = Flask(__name__)
+
+    # La protection est centralisée afin qu'aucune route d'administration,
+    # présente ou ajoutée plus tard, ne puisse être oubliée.
+    protect_admin_routes(app)
 
     # CORS pour le front Next.js
     CORS(app)
