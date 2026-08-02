@@ -77,9 +77,17 @@ class ResortJsonValidationTests(unittest.TestCase):
         response = self.app.test_client().get("/api/admin/stations/export")
         self.assertEqual(response.status_code, 401)
 
-    def test_station_import_template_alias_is_registered(self):
-        response = self.app.test_client().get("/api/admin/stations/import-template")
-        self.assertEqual(response.status_code, 401)
+    def test_station_template_alias_is_registered(self):
+        for path in ("template", "import-template"):
+            with self.subTest(path=path):
+                response = self.app.test_client().get(f"/api/admin/stations/{path}")
+                self.assertEqual(response.status_code, 401)
+
+    def test_station_history_alias_is_registered(self):
+        for path in ("history", "import-history"):
+            with self.subTest(path=path):
+                response = self.app.test_client().get(f"/api/admin/stations/{path}")
+                self.assertEqual(response.status_code, 401)
 
     def test_invalid_json(self):
         response = self.app.test_client().post("/api/admin/resorts/import/preview", data=b"{", headers={"Authorization": "Bearer admin-test", "Content-Type": "application/json"})

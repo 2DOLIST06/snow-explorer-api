@@ -47,6 +47,7 @@ def export_all():
     return _json_file(data, f"snow-explorer-stations-{datetime.now(timezone.utc).date().isoformat()}.json")
 
 
+@bp_resort_json.get("/template")
 @bp_resort_json.get("/import-template")
 @admin_required
 def template():
@@ -55,12 +56,14 @@ def template():
     return _json_file({"schema_version": SCHEMA_VERSION, "exported_at": None, "station": station}, "snow-explorer-station-import-template.json")
 
 
+@bp_resort_json.get("/history")
 @bp_resort_json.get("/import-history")
 @admin_required
 def histories():
     return jsonify({"items": [_history_dict(h) for h in ResortImportHistory.select().order_by(ResortImportHistory.created_at.desc()).limit(100)]})
 
 
+@bp_resort_json.get("/history/<history_id>")
 @bp_resort_json.get("/import-history/<history_id>")
 @admin_required
 def history(history_id):
