@@ -29,6 +29,11 @@ STATION_FIELDS = (
     "ski_area_km", "pistes_count", "lifts_count", "season_open_date",
     "season_close_date", "latitude", "longitude",
 )
+STATION_MUTABLE_FIELDS = tuple(field for field in STATION_FIELDS if field != "id")
+# Resort uses an application-provided CharField primary key, so imports may set
+# an id while creating a station. This allow-list is deliberately separate from
+# the update allow-list: a primary key is never mutable after creation.
+STATION_CREATE_FIELDS = STATION_FIELDS
 # Identity fields may be omitted in partial imports.  When present, the slug and
 # name cannot be cleared; the id is explicitly allowed to be null so an export
 # can be used to create or match a station by slug.
@@ -248,6 +253,8 @@ def differences(resort, record):
     for block, values in record.items():
         if block not in current or not isinstance(values, dict): continue
         for field, new in values.items():
+            # Identity metadata must never become a previewed change.
+            if block == "station" and field == "id": continue
             # Aggregate counters are informative; item arrays are authoritative relations.
             if block in {"pistes", "remontees"} and field not in {"enabled", "small_map_url", "large_map_url", "caption", "items"}: continue
             old = current[block].get(field)
@@ -267,7 +274,7 @@ def apply_record(resort, record):
     cfg = _load_widgets(old_slug)
     station = record.get("station", {})
     for field, value in station.items():
-        if field == "id": continue
+        if field not in STATION_MUTABLE_FIELDS: continue
         if field in DATE_FIELDS and value is not None: value = date.fromisoformat(value)
         if getattr(resort, field) != value:
             setattr(resort, field, value); updated.append("station." + field)
