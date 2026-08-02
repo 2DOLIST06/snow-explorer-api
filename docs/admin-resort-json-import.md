@@ -25,6 +25,10 @@ rupture de compatibilité.
 `webcams`, `meteo`, `snow` et `forfaits`. Un document multiple remplace les blocs
 par `stations: [{station, ...}]`. Les dates utilisent `YYYY-MM-DD`, le timestamp
 d'export est ISO 8601 UTC, et seules les URL HTTP(S) valides sont admises.
+Les routes d'import multiple acceptent les deux formes : le document unitaire
+avec `station` (une seule station) et le document multiple avec `stations` (une
+ou plusieurs stations). Il est interdit de mélanger les deux formes dans un même
+document.
 
 `station` est une liste blanche des champs éditables de `Resort`. `pistes.items`
 et `remontees.items` représentent les vraies relations. Un tableau `items` présent
@@ -37,10 +41,11 @@ sont jamais exportés.
 ### Absent, `null`, vide
 
 * absent: aucune modification;
-* `null`: effacement uniquement pour un champ nullable (interdit pour les champs
-  requis);
-* `""`: devient `null` pour un texte facultatif, mais est refusé pour `id`,
-  `slug` et `name`; jamais converti en zéro;
+* `null`: effacement uniquement pour un champ nullable; `id: null` est accepté
+  afin de retrouver la station par son `slug` (ou de générer un identifiant lors
+  d'une création);
+* `""`: devient `null` pour un texte facultatif, mais est refusé pour `slug` et
+  `name`; jamais converti en zéro;
 * objet absent: bloc conservé;
 * `enabled: false`: seul `enabled` et les autres clés explicitement présentes
   changent;

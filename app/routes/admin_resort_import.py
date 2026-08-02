@@ -150,7 +150,9 @@ def confirm_bulk():
                 resort = _resolve(record)
                 if not resort:
                     station = record["station"]
-                    resort = Resort.create(**{k: v for k, v in station.items() if k in Resort._meta.fields}); created += 1
+                    values = {k: v for k, v in station.items() if k in Resort._meta.fields}
+                    values["id"] = values.get("id") or str(uuid.uuid4())
+                    resort = Resort.create(**values); created += 1
                 changes, _ = differences(resort, record); apply_record(resort, record)
                 if changes: updated += 1; all_changes.extend(changes)
                 else: ignored += 1

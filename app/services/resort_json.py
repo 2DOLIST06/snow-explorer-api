@@ -29,7 +29,10 @@ STATION_FIELDS = (
     "ski_area_km", "pistes_count", "lifts_count", "season_open_date",
     "season_close_date", "latitude", "longitude",
 )
-REQUIRED = {"id", "slug", "name"}
+# Identity fields may be omitted in partial imports.  When present, the slug and
+# name cannot be cleared; the id is explicitly allowed to be null so an export
+# can be used to create or match a station by slug.
+REQUIRED = {"slug", "name"}
 BOOL_FIELDS = {"is_active"}
 INT_FIELDS = {"altitude_min_m", "altitude_max_m", "altitude_base_m", "altitude_top_m", "ski_area_km", "pistes_count", "lifts_count"}
 FLOAT_FIELDS = {"latitude", "longitude"}
@@ -158,11 +161,22 @@ def validate_document(document, bulk=False):
     errors = []
     if not isinstance(document, dict): raise ValidationProblem("root must be an object")
     check_structure(document)
-    allowed_root = {"schema_version", "exported_at", "stations" if bulk else "station", *(() if bulk else BLOCKS)}
+    allowed_root = {"schema_version", "exported_at", "station", *BLOCKS}
+    if bulk:
+        allowed_root.add("stations")
     for key in set(document) - allowed_root: errors.append({"path": key, "message": "unknown field"})
     if document.get("schema_version") != SCHEMA_VERSION: errors.append({"path": "schema_version", "message": "missing or unsupported schema version"})
-    records = document.get("stations") if bulk else [{k: v for k, v in document.items() if k not in {"schema_version", "exported_at"}}]
-    if bulk and not isinstance(records, list): errors.append({"path": "stations", "message": "must be an array"}); records = []
+    if bulk and "stations" in document:
+        records = document.get("stations")
+        if not isinstance(records, list):
+            errors.append({"path": "stations", "message": "must be an array"})
+            records = []
+        if "station" in document or BLOCKS & set(document):
+            errors.append({"path": "$", "message": "use either station or stations, not both"})
+    else:
+        # The bulk routes also accept the canonical single-station export.  This
+        # lets clients use one endpoint for files containing one or many items.
+        records = [{k: v for k, v in document.items() if k not in {"schema_version", "exported_at"}}]
     if len(records) > int(current_app.config.get("RESORT_IMPORT_MAX_STATIONS", MAX_STATIONS)): errors.append({"path": "stations", "message": "too many stations"})
     normalized = []
     for index, record in enumerate(records):
