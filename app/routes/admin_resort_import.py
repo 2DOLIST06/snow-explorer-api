@@ -30,7 +30,7 @@ def _json_file(data, filename):
 
 def _error(exc):
     if isinstance(exc, OverflowError): return jsonify({"error": "file_too_large"}), 413
-    if isinstance(exc, ValueError): return jsonify({"error": "invalid_json"}), 400
+    if isinstance(exc, ValueError): return jsonify({"error": str(exc) or "invalid_json"}), 400
     return jsonify({"valid": False, "errors": exc.errors}), 422
 
 
@@ -116,8 +116,10 @@ def confirm_one(identifier):
 
 
 def _bulk_options():
+    payload = request.get_json(silent=True)
+    payload = payload if isinstance(payload, dict) else {}
     def flag(name, default):
-        value = request.form.get(name, request.args.get(name))
+        value = request.form.get(name, request.args.get(name, payload.get(name)))
         return default if value is None else str(value).lower() == "true"
     return {"type": "bulk", "create_missing": flag("create_missing", False), "all_or_nothing": flag("all_or_nothing", True)}
 
@@ -150,7 +152,9 @@ def confirm_bulk():
                 resort = _resolve(record)
                 if not resort:
                     station = record["station"]
-                    resort = Resort.create(**{k: v for k, v in station.items() if k in Resort._meta.fields}); created += 1
+                    values = {k: v for k, v in station.items() if k in Resort._meta.fields}
+                    values["id"] = values.get("id") or str(uuid.uuid4())
+                    resort = Resort.create(**values); created += 1
                 changes, _ = differences(resort, record); apply_record(resort, record)
                 if changes: updated += 1; all_changes.extend(changes)
                 else: ignored += 1

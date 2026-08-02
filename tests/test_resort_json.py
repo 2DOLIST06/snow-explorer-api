@@ -74,6 +74,70 @@ class ResortJsonValidationTests(unittest.TestCase):
         self.app.config["RESORT_IMPORT_MAX_STATIONS"] = 1
         self.assertInvalid({"schema_version": SCHEMA_VERSION, "stations": [self.document()["station"], self.document()["station"]]})
 
+    def test_bulk_validation_accepts_single_station_document(self):
+        document = self.document(id=None)
+
+        records = validate_document(document, bulk=True)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["station"]["slug"], "station-test")
+        self.assertIsNone(records[0]["station"]["id"])
+
+    def test_bulk_validation_still_accepts_multiple_station_document(self):
+        first = self.document()["station"]
+        second = self.document(id="id-2", slug="station-2", name="Station 2")["station"]
+
+        records = validate_document(
+            {"schema_version": SCHEMA_VERSION, "stations": [{"station": first}, {"station": second}]},
+            bulk=True,
+        )
+
+        self.assertEqual([record["station"]["slug"] for record in records], ["station-test", "station-2"])
+
+    def test_bulk_validation_rejects_mixed_single_and_multiple_shapes(self):
+        document = self.document()
+        document["stations"] = [{"station": self.document()["station"]}]
+
+        with self.assertRaises(ValidationProblem) as raised:
+            validate_document(document, bulk=True)
+
+        self.assertIn("use either station or stations", str(raised.exception.errors))
+
+    @patch("app.routes.admin_resort_import._classify")
+    def test_bulk_preview_accepts_single_station_json_from_browser(self, classify):
+        classify.return_value = ([{"slug": "station-test", "status": "missing", "changes": []}],
+                                 {"existing": 0, "missing": 1, "unchanged": 0}, [])
+
+        response = self.app.test_client().post(
+            "/api/admin/stations/import/preview?create_missing=true",
+            json=self.document(id=None),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["valid"])
+
+    @patch("app.routes.admin_resort_import._classify")
+    def test_bulk_preview_accepts_parsed_file_envelope(self, classify):
+        classify.return_value = ([{"slug": "station-test", "status": "missing", "changes": []}],
+                                 {"existing": 0, "missing": 1, "unchanged": 0}, [])
+
+        response = self.app.test_client().post(
+            "/api/admin/stations/import/preview",
+            json={"file": self.document(id=None), "create_missing": True},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["valid"])
+
+    def test_bulk_preview_explains_empty_serialized_browser_file(self):
+        response = self.app.test_client().post(
+            "/api/admin/stations/import/preview",
+            json={"file": {}, "create_missing": True},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "file_content_missing")
+
     def test_export_is_available_to_admin_front(self):
         with patch("app.routes.admin_resort_import.prefetch", return_value=[]), \
              patch("app.routes.admin_resort_import.Resort.select"):

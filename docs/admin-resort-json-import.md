@@ -25,6 +25,10 @@ rupture de compatibilité.
 `webcams`, `meteo`, `snow` et `forfaits`. Un document multiple remplace les blocs
 par `stations: [{station, ...}]`. Les dates utilisent `YYYY-MM-DD`, le timestamp
 d'export est ISO 8601 UTC, et seules les URL HTTP(S) valides sont admises.
+Les routes d'import multiple acceptent les deux formes : le document unitaire
+avec `station` (une seule station) et le document multiple avec `stations` (une
+ou plusieurs stations). Il est interdit de mélanger les deux formes dans un même
+document.
 
 `station` est une liste blanche des champs éditables de `Resort`. `pistes.items`
 et `remontees.items` représentent les vraies relations. Un tableau `items` présent
@@ -37,10 +41,11 @@ sont jamais exportés.
 ### Absent, `null`, vide
 
 * absent: aucune modification;
-* `null`: effacement uniquement pour un champ nullable (interdit pour les champs
-  requis);
-* `""`: devient `null` pour un texte facultatif, mais est refusé pour `id`,
-  `slug` et `name`; jamais converti en zéro;
+* `null`: effacement uniquement pour un champ nullable; `id: null` est accepté
+  afin de retrouver la station par son `slug` (ou de générer un identifiant lors
+  d'une création);
+* `""`: devient `null` pour un texte facultatif, mais est refusé pour `slug` et
+  `name`; jamais converti en zéro;
 * objet absent: bloc conservé;
 * `enabled: false`: seul `enabled` et les autres clés explicitement présentes
   changent;
@@ -64,7 +69,11 @@ sont jamais exportés.
 | GET | `/api/admin/resorts/import-history/<id>` | détail d'historique |
 | GET | `/api/admin/stations/imports/history` | alias utilisé par le front pour l'historique |
 
-Les POST acceptent `multipart/form-data` (`file`) ou un corps JSON brut. La
+Les POST acceptent `multipart/form-data` (`file`), un corps JSON brut ou une
+enveloppe JSON `{ "file": <document JSON>, "create_missing": true }` (la clé
+`document` est également acceptée). Un objet JavaScript `File` ne doit pas être
+passé directement à `JSON.stringify`, car il deviendrait `{}` sans transmettre
+le contenu du fichier. Dans ce cas, l'API répond `file_content_missing`. La
 confirmation renvoie exactement le même fichier et le `preview_token` dans le
 formulaire ou `X-Preview-Token`. Le token HMAC couvre le contenu canonique, la
 cible et toutes les options: un fichier ou mode différent reçoit HTTP 409.
