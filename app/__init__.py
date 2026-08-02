@@ -42,5 +42,14 @@ def create_app():
     app.register_blueprint(bp_departments)
     app.register_blueprint(bp_uploads)
     app.register_blueprint(bp_resort_json)
+    # Le front historique utilise ``/api/admin/stations`` tandis que les
+    # routes d'import/export ont d'abord été publiées sous ``resorts``.
+    # Enregistrer le même blueprint une seconde fois garde les deux contrats
+    # disponibles (Flask exige un nom distinct pour ce second montage).
+    app.register_blueprint(
+        bp_resort_json,
+        url_prefix="/api/admin/stations",
+        name="admin_station_json",
+    )
 
     return app

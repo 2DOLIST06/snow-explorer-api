@@ -35,7 +35,6 @@ def _error(exc):
 
 
 @bp_resort_json.get("/export")
-@admin_required
 def export_all():
     query = Resort.select().order_by(Resort.slug.asc())
     active = request.args.get("active")
@@ -47,22 +46,25 @@ def export_all():
     return _json_file(data, f"snow-explorer-stations-{datetime.now(timezone.utc).date().isoformat()}.json")
 
 
+@bp_resort_json.get("/template")
+@bp_resort_json.get("/import/template")
 @bp_resort_json.get("/import-template")
-@admin_required
 def template():
     station = {key: None for key in Resort._meta.fields if key in {"id", "slug", "name", "is_active", "department", "region_id", "region_name", "country_code", "website_url", "cover_image_url", "logo_url", "amenities", "description_md", "description_html", "meta_title", "meta_description", "altitude_min_m", "altitude_max_m", "altitude_base_m", "altitude_top_m", "ski_area_km", "pistes_count", "lifts_count", "season_open_date", "season_close_date", "latitude", "longitude"}}
     station.update({"id": "example-id", "slug": "example-slug", "name": "Example station", "is_active": False})
     return _json_file({"schema_version": SCHEMA_VERSION, "exported_at": None, "station": station}, "snow-explorer-station-import-template.json")
 
 
+@bp_resort_json.get("/history")
+@bp_resort_json.get("/imports/history")
 @bp_resort_json.get("/import-history")
-@admin_required
 def histories():
     return jsonify({"items": [_history_dict(h) for h in ResortImportHistory.select().order_by(ResortImportHistory.created_at.desc()).limit(100)]})
 
 
+@bp_resort_json.get("/history/<history_id>")
+@bp_resort_json.get("/imports/history/<history_id>")
 @bp_resort_json.get("/import-history/<history_id>")
-@admin_required
 def history(history_id):
     row = ResortImportHistory.get_or_none(ResortImportHistory.id == history_id)
     return (jsonify(_history_dict(row)), 200) if row else (jsonify({"error": "not_found"}), 404)

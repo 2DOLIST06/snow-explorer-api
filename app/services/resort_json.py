@@ -197,7 +197,7 @@ def validate_document(document, bulk=False):
             data = record[block]
             if not isinstance(data, dict): errors.append({"path": prefix + block, "message": "must be an object"}); continue
             for field in set(data) - BLOCK_FIELDS[block]: errors.append({"path": prefix + block + "." + field, "message": "unknown field"})
-            for field in ("items", "columns") & set(data):
+            for field in {"items", "columns"} & set(data):
                 if not isinstance(data[field], list): errors.append({"path": prefix + block + "." + field, "message": "must be an array"})
             if "enabled" in data and type(data["enabled"]) is not bool: errors.append({"path": prefix + block + ".enabled", "message": "must be a boolean"})
             for field, value in data.items():
