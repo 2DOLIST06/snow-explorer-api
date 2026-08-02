@@ -45,6 +45,7 @@ def create_app(config=None):
     load_dotenv()
     app = Flask(__name__)
     app.config.update(
+        RESORT_IMPORT_SECRET=os.getenv("RESORT_IMPORT_SECRET"),
         ADMIN_SESSION_SECRET=os.getenv("ADMIN_SESSION_SECRET"),
         ADMIN_SESSION_COOKIE_NAME=os.getenv("ADMIN_SESSION_COOKIE_NAME", "admin_session"),
         ADMIN_SESSION_TTL_SECONDS=int(os.getenv("ADMIN_SESSION_TTL_SECONDS", "28800")),

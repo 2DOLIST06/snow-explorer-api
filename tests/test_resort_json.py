@@ -129,6 +129,21 @@ class ResortJsonValidationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["valid"])
 
+    @patch("app.routes.admin_resort_import._classify")
+    def test_bulk_preview_uses_admin_session_secret(self, classify):
+        classify.return_value = ([{"slug": "station-test", "status": "missing", "changes": []}],
+                                 {"existing": 0, "missing": 1, "unchanged": 0}, [])
+        self.app.config.update(SECRET_KEY=None, ADMIN_SESSION_SECRET="a" * 32)
+
+        response = self.app.test_client().post(
+            "/api/admin/stations/import/preview",
+            json={"file": self.document(id=None), "create_missing": True},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["valid"])
+        self.assertTrue(response.get_json()["preview_token"])
+
     def test_bulk_preview_explains_empty_serialized_browser_file(self):
         response = self.app.test_client().post(
             "/api/admin/stations/import/preview",
