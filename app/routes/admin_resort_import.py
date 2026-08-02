@@ -14,7 +14,7 @@ from app.models.station_widgets import StationWidgets
 from app.services.admin_auth import admin_required
 from app.services.resort_json import (SCHEMA_VERSION, ValidationProblem, apply_record,
     checksum, differences, export_document, parse_upload, preview_token,
-    serialize_station, validate_document, verify_token)
+    serialize_station, STATION_CREATE_FIELDS, validate_document, verify_token)
 
 bp_resort_json = Blueprint("admin_resort_json", __name__, url_prefix="/api/admin/resorts")
 
@@ -86,11 +86,8 @@ def preview_one(identifier):
     try:
         document, filename = parse_upload(request); record = validate_document(document)[0]
     except (OverflowError, ValueError, ValidationProblem) as exc: return _error(exc)
-    identity = record["station"]
-    if identity.get("id") != str(resort.id) and identity.get("slug") != resort.slug:
-        return jsonify({"valid": False, "errors": [{"path": "station", "message": "target id or slug does not match"}]}), 422
-    if identity.get("id") and identity.get("slug") and identity["id"] != str(resort.id) and identity["slug"] == resort.slug:
-        return jsonify({"valid": False, "errors": [{"path": "station", "message": "id/slug conflict"}]}), 422
+    identity_error = _target_identity_error(resort, record["station"])
+    if identity_error: return jsonify({"valid": False, "errors": [identity_error]}), 422
     changes, unchanged = differences(resort, record); options = {"type": "single", "target": str(resort.id)}
     return jsonify({"valid": True, "schema_version": SCHEMA_VERSION, "target": {"id": str(resort.id), "slug": resort.slug, "name": resort.name}, "changes": changes, "unchanged_fields": unchanged, "warnings": [], "errors": [], "checksum": checksum(document), "preview_token": preview_token(document, options)})
 
@@ -103,6 +100,8 @@ def confirm_one(identifier):
     token = _submitted_preview_token()
     try: document, filename = parse_upload(request); record = validate_document(document)[0]
     except (OverflowError, ValueError, ValidationProblem) as exc: return _error(exc)
+    identity_error = _target_identity_error(resort, record["station"])
+    if identity_error: return jsonify({"error": "identity_conflict", "errors": [identity_error]}), 422
     options = {"type": "single", "target": str(resort.id)}
     if not verify_token(document, options, token): return jsonify({"error": "invalid_preview_token"}), 409
     changes, _ = differences(resort, record)
@@ -162,7 +161,7 @@ def confirm_bulk():
                 resort = _resolve(record)
                 if not resort:
                     station = record["station"]
-                    values = {k: v for k, v in station.items() if k in Resort._meta.fields}
+                    values = {k: v for k, v in station.items() if k in STATION_CREATE_FIELDS and k in Resort._meta.fields}
                     values["id"] = values.get("id") or str(uuid.uuid4())
                     resort = Resort.create(**values); created += 1
                 changes, _ = differences(resort, record); apply_record(resort, record)
@@ -177,8 +176,23 @@ def confirm_bulk():
 def _resolve(record):
     identity = record["station"]; by_id = Resort.get_or_none(Resort.id == identity.get("id")) if identity.get("id") else None
     by_slug = Resort.get_or_none(Resort.slug == identity.get("slug")) if identity.get("slug") else None
-    if by_id and by_slug and by_id.id != by_slug.id: return "conflict"
+    # If slug found an existing station, any non-null supplied id is an
+    # assertion about that station and must match exactly. It is not a new id.
+    if by_slug and identity.get("id") is not None and str(by_slug.id) != str(identity["id"]): return "conflict"
+    if by_id and by_slug and str(by_id.id) != str(by_slug.id): return "conflict"
     return by_id or by_slug
+
+
+def _target_identity_error(resort, identity):
+    """Validate identity assertions for an import targeting one station."""
+    supplied_id = identity.get("id")
+    if supplied_id is not None and str(supplied_id) != str(resort.id):
+        return {"path": "station.id", "message": "id conflicts with the existing station"}
+    # With an absent/null id, the slug is what identifies the target. With an
+    # exact id, a changed slug remains an ordinary mutable-field update.
+    if supplied_id is None and identity.get("slug") != resort.slug:
+        return {"path": "station", "message": "target id or slug does not match"}
+    return None
 
 
 def _classify(records, create):

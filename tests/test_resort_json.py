@@ -3,12 +3,13 @@ import types
 sys.modules.setdefault("boto3", types.SimpleNamespace())
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from flask import Flask
 
 from app.routes.admin_resort_import import bp_resort_json
 from app.services.resort_json import (SCHEMA_VERSION, ValidationProblem,
-    sanitize_html, validate_document, valid_url)
+    apply_record, differences, sanitize_html, validate_document, valid_url)
 
 
 class ResortJsonValidationTests(unittest.TestCase):
@@ -59,6 +60,93 @@ class ResortJsonValidationTests(unittest.TestCase):
     def test_null_optional_is_kept_for_clear(self):
         record = validate_document(self.document(meta_title=None))[0]
         self.assertIsNone(record["station"]["meta_title"])
+
+    def test_existing_station_id_is_never_a_preview_change(self):
+        resort = SimpleNamespace(id="existing-id", slug="station-test")
+        current = {"station": {"id": "existing-id", "slug": "station-test", "name": "Old name"}}
+        with patch("app.services.resort_json.serialize_station", return_value=current), \
+             patch("app.services.resort_json._load_widgets", return_value={}):
+            for imported_id in (None, "existing-id"):
+                with self.subTest(imported_id=imported_id):
+                    changes, unchanged = differences(resort, {"station": {
+                        "id": imported_id, "slug": "station-test", "name": "New name",
+                    }})
+                    self.assertNotIn("station.id", unchanged)
+                    self.assertFalse(any(change["path"] == "station.id" for change in changes))
+                    self.assertEqual(changes[0]["path"], "station.name")
+
+    def test_existing_station_absent_id_is_never_a_preview_change(self):
+        resort = SimpleNamespace(id="existing-id", slug="station-test")
+        current = {"station": {"id": "existing-id", "slug": "station-test", "name": "Old name"}}
+        with patch("app.services.resort_json.serialize_station", return_value=current), \
+             patch("app.services.resort_json._load_widgets", return_value={}):
+            changes, unchanged = differences(
+                resort, {"station": {"slug": "station-test", "name": "New name"}},
+            )
+        self.assertFalse(any(change["path"] == "station.id" for change in changes))
+        self.assertNotIn("station.id", unchanged)
+
+    def test_confirmation_never_writes_existing_primary_key(self):
+        resort = SimpleNamespace(id="existing-id", slug="station-test", name="Old name")
+        resort.save = MagicMock()
+        with patch("app.services.resort_json._load_widgets", return_value={}), \
+             patch("app.services.resort_json.StationWidgets.get_or_none", return_value=None):
+            updated, _ = apply_record(resort, {"station": {
+                "id": None, "slug": "station-test", "name": "New name",
+            }})
+        self.assertEqual(resort.id, "existing-id")
+        self.assertNotIn("station.id", updated)
+        self.assertEqual(resort.name, "New name")
+
+    @patch("app.routes.admin_resort_import.Resort.get_or_none")
+    def test_existing_slug_accepts_null_absent_and_identical_id(self, get_or_none):
+        existing = SimpleNamespace(id="existing-id", slug="station-test")
+        from app.routes.admin_resort_import import _resolve
+
+        for identity in (
+            {"slug": "station-test"},
+            {"id": None, "slug": "station-test"},
+            {"id": "existing-id", "slug": "station-test"},
+        ):
+            with self.subTest(identity=identity):
+                get_or_none.side_effect = ([existing] if identity.get("id") else []) + [existing]
+                self.assertIs(_resolve({"station": identity}), existing)
+
+    @patch("app.routes.admin_resort_import.Resort.get_or_none")
+    def test_existing_slug_rejects_different_id_as_blocking_conflict(self, get_or_none):
+        from app.routes.admin_resort_import import _classify
+        existing = SimpleNamespace(id="existing-id", slug="station-test")
+        get_or_none.side_effect = [None, existing]
+        record = {"station": {"id": "different-id", "slug": "station-test", "name": "Station test"}}
+
+        stations, _, errors = _classify([record], create=True)
+
+        self.assertEqual(stations[0]["status"], "conflict")
+        self.assertTrue(errors)
+
+    def test_creation_with_null_id_is_allowed(self):
+        record = validate_document(self.document(id=None))[0]
+        self.assertIsNone(record["station"]["id"])
+
+    @patch("app.routes.admin_resort_import.differences")
+    @patch("app.routes.admin_resort_import._resolve")
+    def test_la_clusaz_slug_match_remains_update_without_id_change(self, resolve, diff):
+        from app.routes.admin_resort_import import _classify
+        existing_id = "e4c1a8f3-7b2e-4bb5-86b9-3f2849e8b805"
+        resolve.return_value = SimpleNamespace(id=existing_id, slug="la-clusaz")
+        diff.return_value = ([{
+            "path": "station.name", "old_value": "La Clusaz", "new_value": "La Clusaz Ski",
+            "action": "update",
+        }], [])
+        record = {"station": {"id": None, "slug": "la-clusaz", "name": "La Clusaz Ski"}}
+
+        stations, counts, errors = _classify([record], create=True)
+
+        self.assertEqual(stations[0]["status"], "update")
+        self.assertEqual(counts["existing"], 1)
+        self.assertFalse(errors)
+        self.assertFalse(any(change["path"] == "station.id" for change in stations[0]["changes"]))
+        self.assertEqual(resolve.return_value.id, existing_id)
     def test_empty_optional_text_normalized(self):
         record = validate_document(self.document(meta_title=""))[0]
         self.assertIsNone(record["station"]["meta_title"])
