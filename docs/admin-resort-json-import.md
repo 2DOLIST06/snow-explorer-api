@@ -69,7 +69,11 @@ sont jamais exportés.
 | GET | `/api/admin/resorts/import-history/<id>` | détail d'historique |
 | GET | `/api/admin/stations/imports/history` | alias utilisé par le front pour l'historique |
 
-Les POST acceptent `multipart/form-data` (`file`) ou un corps JSON brut. La
+Les POST acceptent `multipart/form-data` (`file`), un corps JSON brut ou une
+enveloppe JSON `{ "file": <document JSON>, "create_missing": true }` (la clé
+`document` est également acceptée). Un objet JavaScript `File` ne doit pas être
+passé directement à `JSON.stringify`, car il deviendrait `{}` sans transmettre
+le contenu du fichier. Dans ce cas, l'API répond `file_content_missing`. La
 confirmation renvoie exactement le même fichier et le `preview_token` dans le
 formulaire ou `X-Preview-Token`. Le token HMAC couvre le contenu canonique, la
 cible et toutes les options: un fichier ou mode différent reçoit HTTP 409.

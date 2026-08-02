@@ -103,6 +103,41 @@ class ResortJsonValidationTests(unittest.TestCase):
 
         self.assertIn("use either station or stations", str(raised.exception.errors))
 
+    @patch("app.routes.admin_resort_import._classify")
+    def test_bulk_preview_accepts_single_station_json_from_browser(self, classify):
+        classify.return_value = ([{"slug": "station-test", "status": "missing", "changes": []}],
+                                 {"existing": 0, "missing": 1, "unchanged": 0}, [])
+
+        response = self.app.test_client().post(
+            "/api/admin/stations/import/preview?create_missing=true",
+            json=self.document(id=None),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["valid"])
+
+    @patch("app.routes.admin_resort_import._classify")
+    def test_bulk_preview_accepts_parsed_file_envelope(self, classify):
+        classify.return_value = ([{"slug": "station-test", "status": "missing", "changes": []}],
+                                 {"existing": 0, "missing": 1, "unchanged": 0}, [])
+
+        response = self.app.test_client().post(
+            "/api/admin/stations/import/preview",
+            json={"file": self.document(id=None), "create_missing": True},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["valid"])
+
+    def test_bulk_preview_explains_empty_serialized_browser_file(self):
+        response = self.app.test_client().post(
+            "/api/admin/stations/import/preview",
+            json={"file": {}, "create_missing": True},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "file_content_missing")
+
     def test_export_is_available_to_admin_front(self):
         with patch("app.routes.admin_resort_import.prefetch", return_value=[]), \
              patch("app.routes.admin_resort_import.Resort.select"):

@@ -296,6 +296,19 @@ def parse_upload(req):
     uploaded = req.files.get("file")
     raw = uploaded.read(limit + 1) if uploaded else req.get_data(cache=True)
     if len(raw) > limit: raise OverflowError
-    try: document = json.loads(raw.decode("utf-8"))
+    try: payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError): raise ValueError("invalid_json")
+
+    # Besides a raw export, accept the JSON envelope used by admin clients that
+    # parse the selected file in the browser before posting it.  A JavaScript
+    # File serialized directly becomes ``{}``; reject that explicitly because
+    # the server cannot recover bytes that were never transmitted.
+    document = payload
+    if not uploaded and isinstance(payload, dict):
+        candidate = payload.get("document", payload.get("file"))
+        if candidate is not None:
+            if not isinstance(candidate, dict) or not candidate:
+                raise ValueError("file_content_missing")
+            document = candidate
+
     return document, (uploaded.filename if uploaded else req.headers.get("X-File-Name", "import.json"))
