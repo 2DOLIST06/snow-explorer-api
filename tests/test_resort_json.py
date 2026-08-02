@@ -129,6 +129,21 @@ class ResortJsonValidationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["valid"])
 
+    @patch("app.routes.admin_resort_import._classify")
+    def test_bulk_preview_uses_admin_session_secret(self, classify):
+        classify.return_value = ([{"slug": "station-test", "status": "missing", "changes": []}],
+                                 {"existing": 0, "missing": 1, "unchanged": 0}, [])
+        self.app.config.update(SECRET_KEY=None, ADMIN_SESSION_SECRET="a" * 32)
+
+        response = self.app.test_client().post(
+            "/api/admin/stations/import/preview",
+            json={"file": self.document(id=None), "create_missing": True},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["valid"])
+        self.assertTrue(response.get_json()["preview_token"])
+
     def test_bulk_preview_explains_empty_serialized_browser_file(self):
         response = self.app.test_client().post(
             "/api/admin/stations/import/preview",
@@ -137,6 +152,30 @@ class ResortJsonValidationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["error"], "file_content_missing")
+
+    @patch("app.routes.admin_resort_import._resolve", return_value=None)
+    def test_bulk_preview_station_includes_display_name(self, resolve):
+        response = self.app.test_client().post(
+            "/api/admin/stations/import/preview",
+            json={"file": self.document(id=None), "create_missing": True},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["stations"][0]["name"], "Station test")
+
+    @patch("app.routes.admin_resort_import.verify_token", return_value=False)
+    def test_bulk_confirm_reads_preview_token_from_json_envelope(self, verify_token):
+        response = self.app.test_client().post(
+            "/api/admin/stations/import/confirm",
+            json={
+                "file": self.document(id=None),
+                "create_missing": True,
+                "preview_token": "browser-preview-token",
+            },
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(verify_token.call_args.args[2], "browser-preview-token")
 
     def test_export_is_available_to_admin_front(self):
         with patch("app.routes.admin_resort_import.prefetch", return_value=[]), \
