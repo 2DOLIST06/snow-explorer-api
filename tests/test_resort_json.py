@@ -15,6 +15,11 @@ class ResortJsonValidationTests(unittest.TestCase):
         self.app = Flask(__name__)
         self.app.config.update(ADMIN_API_TOKEN="admin-test", SECRET_KEY="secret-test")
         self.app.register_blueprint(bp_resort_json)
+        self.app.register_blueprint(
+            bp_resort_json,
+            url_prefix="/api/admin/stations",
+            name="admin_station_json",
+        )
         self.ctx = self.app.app_context(); self.ctx.push()
 
     def tearDown(self): self.ctx.pop()
@@ -66,6 +71,14 @@ class ResortJsonValidationTests(unittest.TestCase):
 
     def test_admin_authentication_is_required(self):
         response = self.app.test_client().get("/api/admin/resorts/export")
+        self.assertEqual(response.status_code, 401)
+
+    def test_station_export_alias_is_registered(self):
+        response = self.app.test_client().get("/api/admin/stations/export")
+        self.assertEqual(response.status_code, 401)
+
+    def test_station_import_template_alias_is_registered(self):
+        response = self.app.test_client().get("/api/admin/stations/import-template")
         self.assertEqual(response.status_code, 401)
 
     def test_invalid_json(self):
