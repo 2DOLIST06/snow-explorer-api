@@ -41,6 +41,10 @@ def _env_cookie_samesite():
     return values[value]
 
 
+def _env_list(name, default=""):
+    return [value.strip() for value in os.getenv(name, default).split(",") if value.strip()]
+
+
 def create_app(config=None):
     load_dotenv()
     app = Flask(__name__)
@@ -52,7 +56,9 @@ def create_app(config=None):
         ADMIN_SESSION_TOUCH_INTERVAL_SECONDS=int(os.getenv("ADMIN_SESSION_TOUCH_INTERVAL_SECONDS", "300")),
         ADMIN_COOKIE_SECURE=_env_bool("ADMIN_COOKIE_SECURE", True),
         ADMIN_COOKIE_SAMESITE=_env_cookie_samesite(),
-        ADMIN_ALLOWED_ORIGINS=[x.strip() for x in os.getenv("ADMIN_ALLOWED_ORIGINS", "").split(",") if x.strip()],
+        ADMIN_ALLOWED_ORIGINS=_env_list("ADMIN_ALLOWED_ORIGINS"),
+        API_ALLOWED_ORIGINS=_env_list("API_ALLOWED_ORIGINS", "https://www.snow-explorer.com"),
+        S3_ALLOWED_ORIGINS=_env_list("S3_ALLOWED_ORIGINS", "https://www.snow-explorer.com"),
         ADMIN_LOGIN_RATE_LIMIT=int(os.getenv("ADMIN_LOGIN_RATE_LIMIT", "5")),
         ADMIN_LOGIN_RATE_WINDOW_SECONDS=int(os.getenv("ADMIN_LOGIN_RATE_WINDOW_SECONDS", "900")),
         TRUST_PROXY_HEADERS=_env_bool("TRUST_PROXY_HEADERS", False),
@@ -66,12 +72,22 @@ def create_app(config=None):
 
     # CORS pour le front Next.js
     CORS(app, resources={
+        r"/api/s3/presign": {
+            "origins": app.config["S3_ALLOWED_ORIGINS"],
+            "supports_credentials": True,
+            "allow_headers": ["Content-Type", "X-CSRF-Token"],
+            "methods": ["OPTIONS", "POST"],
+        },
         r"/api/admin/*": {
             "origins": app.config["ADMIN_ALLOWED_ORIGINS"],
             "supports_credentials": True,
             "allow_headers": ["Content-Type", "X-CSRF-Token"],
         },
-        r"/api/*": {"origins": "*", "supports_credentials": False},
+        r"/api/*": {
+            "origins": app.config["API_ALLOWED_ORIGINS"],
+            "supports_credentials": False,
+            "allow_headers": ["Content-Type", "X-CSRF-Token"],
+        },
     })
 
     # Connexion à la base et création des tables
