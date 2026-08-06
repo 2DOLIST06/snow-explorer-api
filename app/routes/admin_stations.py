@@ -278,7 +278,10 @@ def patch_resort_admin(slug):
     with db.atomic():
         for f in allowed_fields:
             if f in payload:
-                setattr(r, f, payload[f])
+                if f == "is_active":
+                    r.is_active = bool(payload["is_active"])
+                else:
+                    setattr(r, f, payload[f])
         # le slug n’est pas modifié ici (stabilité des URLs)
         r.save()
 
