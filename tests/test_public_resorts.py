@@ -116,11 +116,11 @@ class PublicResortsTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), [])
 
-    def test_public_detail_contract_metrics_region_dates_urls_and_cfg(self):
+    def test_public_detail_contract_counts_region_dates_urls_and_cfg(self):
         Region.create(id="paca", name="Provence-Alpes-Côte d’Azur")
         resort = self.create_resort(
             "1", "Auron", "auron", region_id="paca", region_name=None,
-            pistes_count=2, lifts_count=1, ski_area_km=135,
+            pistes_count=None, lifts_count=None,
             season_open_date=date(2025, 12, 6), season_close_date=date(2026, 4, 12),
             cover_image_url="  ", logo_url="", website_url=" https://auron.com ",
             pistes_small_map_url="", pistes_large_map_url=" ", snowpark_map_url="",
@@ -131,10 +131,7 @@ class PublicResortsTests(unittest.TestCase):
         StationWidgets.create(
             station_slug="auron",
             config=StationWidgets.to_json({
-                "widgets": {"widgets": {
-                    "pistes": {"enabled": True, "green": 4, "blue": 8},
-                    "remontees": {"telesieges": 6, "enabled": True},
-                }},
+                "widgets": {"widgets": {"pistes": {"enabled": True}}},
                 "adminToken": "secret",
             }),
         )
@@ -145,14 +142,10 @@ class PublicResortsTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["Cache-Control"], "public, max-age=300, s-maxage=3600")
         self.assertEqual(data["region"], {"id": "paca", "name": "Provence-Alpes-Côte d’Azur"})
-        self.assertEqual(data["ski_area_km"], 135)
-        self.assertEqual(data["snowparks_count"], 2)
-        self.assertEqual(data["family_parks_count"], 1)
-        self.assertNotIn("pistes_count", data)
-        self.assertNotIn("lifts_count", data)
+        self.assertEqual(data["pistes_count"], 2)
+        self.assertEqual(data["lifts_count"], 1)
         self.assertEqual(data["season_open_date"], "2025-12-06")
         self.assertEqual(data["season_close_date"], "2026-04-12")
-        self.assertEqual(data["season_label"], "2025-2026")
         for field in ("cover_image_url", "logo_url", "pistes_small_map_url",
                       "pistes_large_map_url", "snowpark_map_url"):
             self.assertIsNone(data[field])
@@ -161,30 +154,13 @@ class PublicResortsTests(unittest.TestCase):
         self.assertNotIn("adminToken", data)
         self.assertNotIn("adminToken", data["cfg"])
         self.assertEqual(data["cfg"]["pistes"], {"enabled": True})
-        self.assertEqual(data["cfg"]["remontees"], {"enabled": True})
 
-    def test_historical_columns_supply_new_public_metrics(self):
+    def test_stored_non_negative_counts_are_authoritative(self):
         resort = self.create_resort("1", "Stored", "stored", pistes_count=7, lifts_count=4)
         Piste.create(id="p1", resort=resort, name="One", difficulty="green")
         response = self.client.get("/api/resorts/stored")
-        self.assertEqual(response.get_json()["snowparks_count"], 7)
-        self.assertEqual(response.get_json()["family_parks_count"], 4)
-
-    def test_list_uses_new_metrics_and_season_years(self):
-        self.create_resort(
-            "1", "Auron", "auron", pistes_count=2, lifts_count=3,
-            ski_area_km=135, season_open_date=date(2026, 12, 5),
-            season_close_date=date(2027, 4, 11),
-        )
-
-        resort = self.client.get("/api/resorts/?active=true").get_json()[0]
-
-        self.assertEqual(resort["ski_area_km"], 135)
-        self.assertEqual(resort["snowparks_count"], 2)
-        self.assertEqual(resort["family_parks_count"], 3)
-        self.assertEqual(resort["season_open_date"], "2026-12-05")
-        self.assertEqual(resort["season_close_date"], "2027-04-11")
-        self.assertEqual(resort["season_label"], "2026-2027")
+        self.assertEqual(response.get_json()["pistes_count"], 7)
+        self.assertEqual(response.get_json()["lifts_count"], 4)
 
     def test_missing_and_inactive_detail_are_clean_json_404(self):
         self.create_resort("1", "Inactive", "inactive", is_active=False)
