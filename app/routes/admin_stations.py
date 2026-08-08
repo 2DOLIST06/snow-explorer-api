@@ -8,6 +8,7 @@ from app.services.public_cache import bump_public_resorts_version
 import json
 import re
 import uuid
+from urllib.parse import urlparse
 
 bp_admin_st = Blueprint("admin_stations", __name__, url_prefix="/api/admin/stations")
 
@@ -91,6 +92,42 @@ def _normalize_widgets_config(cfg):
         items = []
     forfaits["items"] = [_normalize_forfait_item(item, i) for i, item in enumerate(items, start=1)]
     out["forfaits"] = forfaits
+    return out
+
+
+def _normalize_official_map_url(payload):
+    """Validate and normalize pistes.officialMapUrl when it is patched."""
+    pistes = payload.get("pistes")
+    if not isinstance(pistes, dict) or "officialMapUrl" not in pistes:
+        return payload
+
+    value = pistes["officialMapUrl"]
+    if value is None:
+        return payload
+    if not isinstance(value, str):
+        abort(400, "pistes.officialMapUrl doit être une URL HTTP(S) absolue ou null")
+
+    value = value.strip()
+    if not value:
+        pistes["officialMapUrl"] = None
+        return payload
+
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        abort(400, "pistes.officialMapUrl doit être une URL absolue avec le protocole http: ou https:")
+    pistes["officialMapUrl"] = value
+    return payload
+
+
+def _with_official_map_url(cfg):
+    """Expose a nullable field for widget records created before it existed."""
+    if not isinstance(cfg, dict):
+        cfg = {}
+    out = dict(cfg)
+    pistes = out.get("pistes")
+    pistes = dict(pistes) if isinstance(pistes, dict) else {"enabled": False}
+    pistes.setdefault("officialMapUrl", None)
+    out["pistes"] = pistes
     return out
 
 
@@ -189,7 +226,7 @@ def create_resort():
             station_slug=slug,
             config=StationWidgets.to_json({
                 "stationSlug": slug,
-                "pistes": {"enabled": False, "smallMapUrl": None, "largeMapUrl": None, "caption": None},
+                "pistes": {"enabled": False, "smallMapUrl": None, "largeMapUrl": None, "officialMapUrl": None, "caption": None},
                 "meteo": {"enabled": False, "iframeUrl": None},
                 "description": {"enabled": False, "html": None, "metaTitle": None, "metaDescription": None},
                 "forfaits": {"enabled": False, "items": []},
@@ -211,6 +248,7 @@ def get_resort_admin(slug):
     w = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
     cfg = StationWidgets.from_json(w.config) if w else {}
     cfg = _normalize_widgets_config(cfg)
+    cfg = _with_official_map_url(cfg)
 
     return jsonify({
         "resort": r.to_dict(),
@@ -315,7 +353,10 @@ def bulk_activation():
 # ============ PATCH widgets (merge JSON) ============
 @bp_admin_st.patch("/<string:slug>/widgets")
 def patch_widgets_admin(slug):
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        abort(400, "Invalid payload")
+    payload = _normalize_official_map_url(payload)
     payload = _normalize_widgets_config(payload)
     w = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
     if not w:

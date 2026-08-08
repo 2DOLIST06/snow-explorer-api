@@ -18,7 +18,7 @@ def _deep_merge(dst: dict, src: dict) -> dict:
 
 DEFAULT_CFG = {
     "stationSlug": "",
-    "pistes": {"enabled": False, "smallMapUrl": None, "largeMapUrl": None, "caption": None},
+    "pistes": {"enabled": False, "smallMapUrl": None, "largeMapUrl": None, "officialMapUrl": None, "caption": None},
     "meteo": {"enabled": False, "iframeUrl": None},
     "description": {"enabled": False, "html": None, "metaTitle": None, "metaDescription": None},
     "forfaits": {"enabled": False, "items": []},
@@ -75,6 +75,10 @@ def _normalize_widgets_config(cfg):
         items = []
     forfaits["items"] = [_normalize_forfait_item(item, i) for i, item in enumerate(items, start=1)]
     out["forfaits"] = forfaits
+    pistes = out.get("pistes")
+    pistes = dict(pistes) if isinstance(pistes, dict) else {"enabled": False}
+    pistes.setdefault("officialMapUrl", None)
+    out["pistes"] = pistes
     return out
 
 @bp_widgets.get("/<string:slug>/widgets")
