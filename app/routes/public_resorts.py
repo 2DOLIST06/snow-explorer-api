@@ -3,7 +3,6 @@ from app.models.resort import Resort
 from app.services.public_resort import get_public_resort
 from app.services.public_cache import get_public_resorts_version
 from functools import reduce
-from datetime import date
 import operator
 
 try:
@@ -92,18 +91,8 @@ def _resort_public_dict(r: Resort) -> dict:
     base["altitude_base_m"] = getattr(r, "altitude_base_m", None)
     base["altitude_top_m"] = getattr(r, "altitude_top_m", None)
 
-    open_date = getattr(r, "season_open_date", None)
-    close_date = getattr(r, "season_close_date", None)
-    base["season_open_date"] = open_date.isoformat() if isinstance(open_date, date) else open_date
-    base["season_close_date"] = close_date.isoformat() if isinstance(close_date, date) else close_date
-
-    # Keep the historical database columns, but publish their current business
-    # meaning instead of piste/lift totals.
-    base["snowparks_count"] = base.pop("pistes_count", None)
-    base["family_parks_count"] = base.pop("lifts_count", None)
-    base["season_label"] = (
-        f"{open_date.year}-{close_date.year}" if open_date and close_date else None
-    )
+    base["season_open_date"] = getattr(r, "season_open_date", None)
+    base["season_close_date"] = getattr(r, "season_close_date", None)
 
     # Activation: forcé dans la réponse publique même si to_dict/fallback diverge
     is_active = getattr(r, "is_active", None)

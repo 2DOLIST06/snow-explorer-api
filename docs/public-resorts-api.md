@@ -67,7 +67,7 @@ GET /api/resorts/<slug>
 `slug` est un segment de chemin obligatoire. Cette route est publique et ne
 demande aucune authentification. Elle renvoie directement le DTO station (pas
 d'enveloppe `resort`) avec les champs d'identité, localisation, médias, contenu
-existant, altitudes, chiffres-clés, dates ISO `YYYY-MM-DD` et une configuration
+existant, altitudes, compteurs, dates ISO `YYYY-MM-DD` et une configuration
 publique sous `cfg`. Une station absente ou inactive renvoie `404` et
 `{"error":"resort_not_found","message":"Station not found"}`. Les réponses
 `200` portent `Cache-Control: public, max-age=300, s-maxage=3600`.
@@ -75,15 +75,11 @@ publique sous `cfg`. Une station absente ou inactive renvoie `404` et
 `region.name` provient en priorité de la table `region`, recherchée par
 `resort.region_id`; la colonne historique `resort.region_name` est seulement le
 repli si le référentiel ne contient pas cet identifiant. Aucune valeur n'est
-inventée. Les chiffres-clés publics sont `ski_area_km`, `snowparks_count` et
-`family_parks_count`. Pour éviter une migration, les deux derniers lisent
-respectivement les colonnes historiques `pistes_count` et `lifts_count`; ces
-anciens noms, ainsi que les compteurs par couleur de piste ou type de remontée,
-ne sont plus exposés publiquement.
-
-`season_open_date` et `season_close_date` contiennent la date complète avec son
-année. `season_label` fournit les années prêtes à afficher dans un titre de type
-« Saison 2026-2027 »; il vaut `null` lorsqu'une des deux dates manque.
+inventée. Les compteurs stockés, lorsqu'ils sont des entiers positifs ou nuls,
+sont la source de vérité. Lorsqu'ils sont absents ou invalides, le service
+compte les lignes `piste` ou `lift`. Ces modèles ne possédant actuellement pas
+de statut de publication, toutes leurs lignes sont considérées publiques. Il
+n'existe pas de compteurs par couleur ou catégorie dans le modèle courant.
 
 La cause des anciennes chaînes `widgets.widgets` est le stockage d'une réponse
 déjà enveloppée dans la propriété `widgets`, puis sa réutilisation comme
@@ -94,7 +90,8 @@ exactement un objet `cfg` contenant `pistes`, `meteo`, `description`,
 n'expose ni clé `widgets`, ni configuration d'administration.
 
 La sérialisation effectue un nombre constant de lectures (station, région,
-configuration). Elle ne parcourt aucune relation et ne peut donc pas produire de
+configuration et, seulement en l'absence de compteurs valides, agrégats pistes
+et remontées). Elle ne parcourt aucune relation et ne peut donc pas produire de
 requête N+1. Les modèles actuels ne définissent pas de relations webcams,
 snowparks ou forfaits : leurs seules données publiques éventuelles sont les
 sections déjà stockées dans `cfg`.

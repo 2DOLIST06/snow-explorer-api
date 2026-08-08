@@ -59,9 +59,7 @@ class Resort(Model):
     altitude_min_m  = IntegerField(null=True)
     altitude_max_m  = IntegerField(null=True)
 
-    # Chiffres-clés du domaine. Les noms de colonnes historiques sont conservés
-    # pour éviter une migration de la base : pistes_count contient le nombre de
-    # snowparks et lifts_count le nombre de family parks.
+    # Domaine skiable
     lifts_count  = IntegerField(null=True)
     pistes_count = IntegerField(null=True)
     ski_area_km  = IntegerField(null=True)
@@ -151,3 +149,4 @@ class Resort(Model):
 
     def __str__(self) -> str:
         return f"<Resort {self.id} {self.name}>"
+
