@@ -1,7 +1,9 @@
 from peewee import (
-    Model, CharField, TextField, IntegerField, FloatField, BooleanField, DateField
+    Model, CharField, TextField, IntegerField, FloatField, BooleanField, DateField,
+    PeeweeException,
 )
 from app.models.base import db
+from app.models.region import Region, slugify_region
 from datetime import date
 import unicodedata, re
 
@@ -44,6 +46,8 @@ class Resort(Model):
     is_active = BooleanField(null=False, default=True)
 
     # Localisation
+    # Kept as a scalar for compatibility with databases on which the region
+    # migration has not been deployed yet. The SQL migration owns the FK.
     region_id = CharField(null=True)
     region_name = CharField(null=True)
     country_code = CharField(null=True)
@@ -91,7 +95,7 @@ class Resort(Model):
         database = db
         table_name = "resort"
 
-    def to_dict(self):
+    def to_dict(self, region=None):
         alt_min = self.altitude_min_m
         alt_max = self.altitude_max_m
         alt_base = self.altitude_base_m
@@ -104,11 +108,7 @@ class Resort(Model):
             "name": self.name,
             "slug": self.slug or _slugify(self.name or ""),
 
-            "region": {
-                "id": _as_str(self.region_id),
-                "name": _as_str(self.region_name),
-                "country_code": _as_str(self.country_code),
-            },
+            "region": self._region_dict(region),
             "region_id": _as_str(self.region_id),
             "department": _as_str(self.department),
 
@@ -147,6 +147,25 @@ class Resort(Model):
             "is_active": bool(self.is_active) if self.is_active is not None else True,
         }
 
+    def _region_dict(self, region=None):
+        # Callers serving lists pass the already-loaded region to avoid N+1
+        # queries. Legacy callers still get a useful canonical object.
+        if region is None and self.region_id:
+            try:
+                region = Region.get_or_none(Region.id == self.region_id)
+            except PeeweeException:
+                region = None
+        if isinstance(region, Region):
+            return {
+                "id": region.id, "name": region.name, "slug": region.slug,
+                "country_code": region.country_code,
+            }
+        legacy_name = _as_str(self.region_name)
+        return {
+            "id": _as_str(self.region_id), "name": legacy_name,
+            "slug": slugify_region(legacy_name or self.region_id or "") or None,
+            "country_code": _as_str(self.country_code) or "FR",
+        }
+
     def __str__(self) -> str:
         return f"<Resort {self.id} {self.name}>"
-
