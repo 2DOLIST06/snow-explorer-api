@@ -43,8 +43,8 @@ class RegionApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/regions/missing").status_code, 404)
 
     def test_resort_contract_and_region_filter(self):
-        Resort.create(id="active", name="Auron", slug="auron", region=self.region)
-        Resort.create(id="inactive", name="Closed", slug="closed", region=self.region,
+        Resort.create(id="active", name="Auron", slug="auron", region_id=self.region.id)
+        Resort.create(id="inactive", name="Closed", slug="closed", region_id=self.region.id,
                       is_active=False)
         search = self.client.get("/api/resorts/?q=auron")
         self.assertEqual(search.status_code, 200)
@@ -56,6 +56,33 @@ class RegionApiTests(unittest.TestCase):
             "/api/regions/provence-alpes-cote-d-azur/resorts?active=true"
         ).get_json()
         self.assertEqual([item["id"] for item in resorts], ["active"])
+
+    def test_legacy_region_schema_never_breaks_public_stations(self):
+        # Reproduce the production rollout state which caused /api/resorts to
+        # fail: regions existed but did not have slug/SEO columns yet.
+        self.database.drop_tables([Region])
+        self.database.execute_sql(
+            "CREATE TABLE regions (id TEXT PRIMARY KEY, name TEXT NOT NULL, "
+            "country_code TEXT DEFAULT 'FR')"
+        )
+        self.database.execute_sql(
+            "INSERT INTO regions VALUES (?, ?, ?)",
+            ("paca", "Provence-Alpes-Côte d’Azur", "FR"),
+        )
+        Resort.create(id="legacy", name="Auron", slug="auron", region_id="paca",
+                      region_name="Provence-Alpes-Côte d’Azur")
+
+        stations = self.client.get("/api/resorts/?q=auron")
+        regions = self.client.get("/api/regions")
+        detail = self.client.get("/api/regions/provence-alpes-cote-d-azur")
+
+        self.assertEqual(stations.status_code, 200)
+        self.assertEqual(stations.get_json()[0]["region"]["slug"],
+                         "provence-alpes-cote-d-azur")
+        self.assertEqual(regions.status_code, 200)
+        self.assertIn("provence-alpes-cote-d-azur",
+                      {item["slug"] for item in regions.get_json()})
+        self.assertEqual(detail.status_code, 200)
 
 
 class AdminRegionProtectionTests(unittest.TestCase):

@@ -2,9 +2,10 @@
 
 from app.models.lift import Lift
 from app.models.piste import Piste
-from app.models.region import Region
+from app.models.region import Region, slugify_region
 from app.models.resort import Resort
 from app.models.station_widgets import StationWidgets
+from peewee import PeeweeException
 
 
 PUBLIC_CFG_KEYS = (
@@ -65,7 +66,10 @@ def get_public_resort(slug):
 
     region = None
     if resort.region_id:
-        region = Region.get_or_none(Region.id == resort.region_id)
+        try:
+            region = Region.get_or_none(Region.id == resort.region_id)
+        except PeeweeException:
+            region = None
     region_name = region.name if region is not None else resort.region_name
 
     widget_row = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
@@ -86,8 +90,8 @@ def get_public_resort(slug):
         "region": {
             "id": _non_empty(resort.region_id),
             "name": _non_empty(region_name),
-            "slug": region.slug if region is not None else None,
-            "country_code": region.country_code if region is not None else _non_empty(resort.country_code),
+            "slug": region.slug if region is not None else slugify_region(region_name or resort.region_id),
+            "country_code": region.country_code if region is not None else (_non_empty(resort.country_code) or "FR"),
         },
         "region_id": _non_empty(resort.region_id),
         "altitude_min_m": resort.altitude_min_m if resort.altitude_min_m is not None else resort.altitude_base_m,

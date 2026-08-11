@@ -1,4 +1,7 @@
 from flask import Blueprint, jsonify, request
+from peewee import PeeweeException
+
+from app.models.region import Region
 from app.models.resort import Resort
 from app.models.region import Region
 from app.services.public_resort import get_public_resort
@@ -58,7 +61,7 @@ def _requested_limit() -> int:
     return limit
 
 
-def _resort_public_dict(r: Resort) -> dict:
+def _resort_public_dict(r: Resort, region=False) -> dict:
     """
     Dict public pour le front Next.js.
     On part de to_dict() puis on force/ajoute les champs nécessaires
@@ -66,7 +69,7 @@ def _resort_public_dict(r: Resort) -> dict:
     """
     base = {}
     if hasattr(r, "to_dict") and callable(getattr(r, "to_dict")):
-        base = r.to_dict()
+        base = r.to_dict(region=region)
     else:
         base = {
             "id": r.id,
@@ -131,7 +134,16 @@ def list_resorts():
         # Name is the existing technical ordering; id makes ties deterministic.
         query = query.order_by(F_NAME.asc(), Resort.id.asc())
 
-    data = [_resort_public_dict(r) for r in query.limit(limit)]
+    resorts = list(query.limit(limit))
+    try:
+        region_ids = {resort.region_id for resort in resorts if resort.region_id}
+        regions = {region.id: region for region in
+                   Region.select().where(Region.id.in_(region_ids))} if region_ids else {}
+    except PeeweeException:
+        # The resort list must remain available during a staggered schema
+        # migration. Resort.to_dict() derives a canonical legacy region object.
+        regions = {}
+    data = [_resort_public_dict(r, regions.get(r.region_id, False)) for r in resorts]
     response = jsonify(data)
     response.headers["Cache-Control"] = "public, max-age=300, s-maxage=3600"
     response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
