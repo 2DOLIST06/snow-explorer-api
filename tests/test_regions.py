@@ -60,6 +60,46 @@ class RegionRoutesTests(unittest.TestCase):
         self.assertEqual(body["id"], "provence-alpes-cote-d-azur")
         self.assertEqual([station["slug"] for station in body["stations"]], ["auron"])
 
+    def test_corrected_paca_url_supports_historical_database_identifier(self):
+        Region.delete().where(
+            Region.id == "provence-alpes-cote-d-azur"
+        ).execute()
+        Region.create(
+            id="provence-alpes-cote-dazur",
+            name="Provence-Alpes-Côte d'Azur",
+        )
+        Resort.create(
+            id="5",
+            slug="legacy-paca",
+            name="Ancienne donnée PACA",
+            region_id="provence-alpes-cote-dazur",
+        )
+
+        response = self.client.get("/api/regions/provence-alpes-cote-d-azur")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertEqual(body["id"], "provence-alpes-cote-d-azur")
+        self.assertEqual(
+            [station["slug"] for station in body["stations"]],
+            ["auron", "legacy-paca"],
+        )
+
+    def test_region_list_canonicalizes_and_deduplicates_historical_paca_id(self):
+        Region.create(
+            id="provence-alpes-cote-dazur",
+            name="Ancien libellé PACA",
+        )
+
+        response = self.client.get("/api/regions")
+
+        paca = [
+            region for region in response.get_json()
+            if region["id"] == "provence-alpes-cote-d-azur"
+        ]
+        self.assertEqual(len(paca), 1)
+        self.assertEqual(paca[0]["name"], "Provence Alpes Côte d'azur")
+
     def test_departments_filter_uses_corrected_database_identifier(self):
         response = self.client.get(
             "/api/departments?region_id=provence-alpes-cote-d-azur"
