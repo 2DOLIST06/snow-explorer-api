@@ -1,9 +1,9 @@
 from peewee import (
     Model, CharField, TextField, IntegerField, FloatField, BooleanField, DateField,
-    PeeweeException,
+    ForeignKeyField,
 )
 from app.models.base import db
-from app.models.region import Region, slugify_region
+from app.models.region import Region
 from datetime import date
 import unicodedata, re
 
@@ -46,9 +46,10 @@ class Resort(Model):
     is_active = BooleanField(null=False, default=True)
 
     # Localisation
-    # Kept as a scalar for compatibility with databases on which the region
-    # migration has not been deployed yet. The SQL migration owns the FK.
-    region_id = CharField(null=True)
+    region = ForeignKeyField(
+        Region, backref="resorts", column_name="region_id", null=True,
+        on_delete="RESTRICT", lazy_load=False,
+    )
     region_name = CharField(null=True)
     country_code = CharField(null=True)
     department = CharField(null=True)
@@ -95,7 +96,7 @@ class Resort(Model):
         database = db
         table_name = "resort"
 
-    def to_dict(self, region=None):
+    def to_dict(self):
         alt_min = self.altitude_min_m
         alt_max = self.altitude_max_m
         alt_base = self.altitude_base_m
@@ -108,7 +109,7 @@ class Resort(Model):
             "name": self.name,
             "slug": self.slug or _slugify(self.name or ""),
 
-            "region": self._region_dict(region),
+            "region": self._region_dict(),
             "region_id": _as_str(self.region_id),
             "department": _as_str(self.department),
 
@@ -147,24 +148,18 @@ class Resort(Model):
             "is_active": bool(self.is_active) if self.is_active is not None else True,
         }
 
-    def _region_dict(self, region=None):
-        # Callers serving lists pass the already-loaded region to avoid N+1
-        # queries. Legacy callers still get a useful canonical object.
-        if region is None and self.region_id:
-            try:
-                region = Region.get_or_none(Region.id == self.region_id)
-            except PeeweeException:
-                region = None
-        if isinstance(region, Region):
+    def _region_dict(self):
+        region = self.region if isinstance(self.region, Region) else None
+        if region is not None:
             return {
                 "id": region.id, "name": region.name, "slug": region.slug,
                 "country_code": region.country_code,
             }
-        legacy_name = _as_str(self.region_name)
+        # Keep a predictable object for unmigrated legacy rows, while making
+        # the incomplete association visible rather than inventing a slug.
         return {
-            "id": _as_str(self.region_id), "name": legacy_name,
-            "slug": slugify_region(legacy_name or self.region_id or "") or None,
-            "country_code": _as_str(self.country_code) or "FR",
+            "id": _as_str(self.region_id), "name": _as_str(self.region_name),
+            "slug": None, "country_code": _as_str(self.country_code),
         }
 
     def __str__(self) -> str:

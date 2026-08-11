@@ -9,10 +9,7 @@ from .base import BaseModel
 
 def slugify_region(value: str) -> str:
     """Return the canonical, accent-free slug shared by every region endpoint."""
-    # Apostrophes are separators, not characters to silently discard: without
-    # this, "d’Azur" incorrectly became "dazur" and did not match the frontend.
     normalized = unicodedata.normalize("NFKD", value or "")
-    normalized = normalized.replace("’", " ").replace("'", " ")
     ascii_value = normalized.encode("ascii", "ignore").decode("ascii").lower()
     return re.sub(r"[^a-z0-9]+", "-", ascii_value).strip("-")
 
