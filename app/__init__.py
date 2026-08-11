@@ -14,7 +14,7 @@ from app.models.resort_import_history import ResortImportHistory
 from app.models.admin_user import AdminUser
 from app.models.admin_session import AdminSession
 from app.models.admin_login_attempt import AdminLoginAttempt
-from app.routes.public_resorts import bp_public
+from app.routes.public_resorts import bp_public, bp_public_stations
 from app.routes.admin_resorts import bp_admin
 from app.routes.stations_widgets import bp_widgets      
 from app.routes.admin_stations import bp_admin_st
@@ -100,6 +100,7 @@ def create_app(config=None):
 
     # Enregistrement des blueprints
     app.register_blueprint(bp_public)
+    app.register_blueprint(bp_public_stations)
     app.register_blueprint(bp_admin)
     app.register_blueprint(bp_widgets)  # ⬅️ Enregistrement widgets
     app.register_blueprint(bp_admin_st)

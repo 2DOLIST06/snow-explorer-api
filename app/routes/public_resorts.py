@@ -13,6 +13,9 @@ except Exception:  # garde-fou si import différent
     fn = None  # type: ignore
 
 bp_public = Blueprint("public_resorts", __name__, url_prefix="/api/resorts")
+bp_public_stations = Blueprint(
+    "public_stations", __name__, url_prefix="/api/stations"
+)
 
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 200
@@ -137,8 +140,7 @@ def list_resorts():
     return response, 200
 
 
-@bp_public.get("/<slug>")
-def get_resort(slug: str):
+def _get_resort_response(slug: str):
     data = get_public_resort(slug)
     if data is None:
         return jsonify({"error": "resort_not_found", "message": "Station not found"}), 404
@@ -146,3 +148,14 @@ def get_resort(slug: str):
     response.headers["Cache-Control"] = "public, max-age=300, s-maxage=3600"
     response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
     return response, 200
+
+
+@bp_public.get("/<slug>")
+def get_resort(slug: str):
+    return _get_resort_response(slug)
+
+
+@bp_public_stations.get("/<slug>")
+def get_station(slug: str):
+    """Expose the station-oriented alias used by public station pages."""
+    return _get_resort_response(slug)

@@ -13,7 +13,7 @@ from app.models.region import Region  # noqa: E402
 from app.models.piste import Piste  # noqa: E402
 from app.models.lift import Lift  # noqa: E402
 from app.models.station_widgets import StationWidgets  # noqa: E402
-from app.routes.public_resorts import bp_public  # noqa: E402
+from app.routes.public_resorts import bp_public, bp_public_stations  # noqa: E402
 
 
 class PublicResortsTests(unittest.TestCase):
@@ -26,6 +26,7 @@ class PublicResortsTests(unittest.TestCase):
 
         app = Flask(__name__)
         app.register_blueprint(bp_public)
+        app.register_blueprint(bp_public_stations)
         self.client = app.test_client()
 
     def tearDown(self):
@@ -179,6 +180,31 @@ class PublicResortsTests(unittest.TestCase):
             "id": "provence-alpes-cote-d-azur",
             "name": "Provence Alpes Côte d'azur",
         })
+
+    def test_station_alias_uses_the_same_canonical_paca_contract(self):
+        Region.create(
+            id="provence-alpes-cote-d-azur",
+            name="Provence-Alpes-Côte d'Azur",
+        )
+        for identifier, name, slug in (
+            ("1", "Isola 2000", "isola-2000"),
+            ("2", "Auron", "auron"),
+        ):
+            self.create_resort(
+                identifier,
+                name,
+                slug,
+                region_id="provence-alpes-cote-d-azur",
+            )
+
+        for slug in ("isola-2000", "auron"):
+            with self.subTest(slug=slug):
+                response = self.client.get(f"/api/stations/{slug}")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.get_json()["region"]["id"],
+                    "provence-alpes-cote-d-azur",
+                )
 
     def test_missing_and_inactive_detail_are_clean_json_404(self):
         self.create_resort("1", "Inactive", "inactive", is_active=False)

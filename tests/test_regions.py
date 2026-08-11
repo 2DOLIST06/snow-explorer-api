@@ -7,6 +7,7 @@ from app.models.region import Region
 from app.models.resort import Resort
 from app.routes.admin_regions import bp_admin_regions
 from app.routes.public_regions import bp_regions
+from app.routes.public_departments import bp_departments
 
 
 class RegionRoutesTests(unittest.TestCase):
@@ -17,6 +18,7 @@ class RegionRoutesTests(unittest.TestCase):
         self.database.create_tables([Region, Resort])
         app = Flask(__name__)
         app.register_blueprint(bp_regions)
+        app.register_blueprint(bp_departments)
         app.register_blueprint(bp_admin_regions)
         self.client = app.test_client()
         Region.create(id="auvergne-rhone-alpes", name="Auvergne-Rhône-Alpes")
@@ -57,6 +59,22 @@ class RegionRoutesTests(unittest.TestCase):
         body = response.get_json()
         self.assertEqual(body["id"], "provence-alpes-cote-d-azur")
         self.assertEqual([station["slug"] for station in body["stations"]], ["auron"])
+
+    def test_departments_filter_uses_corrected_database_identifier(self):
+        response = self.client.get(
+            "/api/departments?region_id=provence-alpes-cote-d-azur"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [department["code"] for department in response.get_json()],
+            ["04", "05", "06", "13", "83", "84"],
+        )
+        self.assertTrue(
+            all(
+                department["region_id"] == "provence-alpes-cote-d-azur"
+                for department in response.get_json()
+            )
+        )
 
     def test_editor_can_read_and_update_sanitized_content(self):
         response = self.client.patch(

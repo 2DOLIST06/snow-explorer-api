@@ -62,10 +62,12 @@ de l'application Flask démarrée par le `Dockerfile`.
 
 ```http
 GET /api/resorts/<slug>
+GET /api/stations/<slug>
 ```
 
-`slug` est un segment de chemin obligatoire. Cette route est publique et ne
-demande aucune authentification. Elle renvoie directement le DTO station (pas
+Les deux chemins renvoient la même fiche publique. `slug` est un segment de
+chemin obligatoire. Ces routes sont publiques et ne demandent aucune
+authentification. Elles renvoient directement le DTO station (pas
 d'enveloppe `resort`) avec les champs d'identité, localisation, médias, contenu
 existant, altitudes, compteurs, dates ISO `YYYY-MM-DD` et une configuration
 publique sous `cfg`. Une station absente ou inactive renvoie `404` et
