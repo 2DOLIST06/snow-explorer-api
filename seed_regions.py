@@ -14,7 +14,7 @@ REGIONS_FR = [
   {'id':'nouvelle-aquitaine','name':'Nouvelle-Aquitaine','country_code':'FR'},
   {'id':'occitanie','name':'Occitanie','country_code':'FR'},
   {'id':'pays-de-la-loire','name':'Pays de la Loire','country_code':'FR'},
-  {'id':'provence-alpes-cote-d-azur','name':"Provence-Alpes-Côte d'Azur",'country_code':'FR'},
+  {'id':'provence-alpes-cote-dazur','name':"Provence-Alpes-Côte d'Azur",'country_code':'FR'},
 ]
 
 with db.connection_context():

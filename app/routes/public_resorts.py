@@ -1,6 +1,5 @@
 from flask import Blueprint, jsonify, request
 from app.models.resort import Resort
-from app.models.region import Region
 from app.services.public_resort import get_public_resort
 from app.services.public_cache import get_public_resorts_version
 from functools import reduce
@@ -38,7 +37,7 @@ F_SLUG = _get_field(Resort, ["slug", "slug_text", "slug_field"])
 
 def _base_query():
     """Build the public-navigation query (never includes drafts)."""
-    return Resort.select(Resort, Region).join_from(Resort, Region, join_type="LEFT OUTER").where(
+    return Resort.select().where(
         Resort.is_active
         & Resort.slug.is_null(False)
         & (fn.TRIM(Resort.slug) != "")

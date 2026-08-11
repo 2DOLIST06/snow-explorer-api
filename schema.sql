@@ -2,13 +2,7 @@
 create table if not exists regions (
   id text primary key,
   name text not null,
-  slug text not null unique,
-  country_code varchar(2) not null default 'FR',
-  seo_text text,
-  meta_title varchar(70),
-  meta_description varchar(170),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  country_code text default 'FR'
 );
 
 -- Departments
@@ -48,9 +42,9 @@ create table if not exists resort_widgets (
 create extension if not exists "pgcrypto";
 
 -- Données de base (optionnelles)
-insert into regions (id, name, slug, country_code) values
-  ('provence-alpes-cote-d-azur','Provence-Alpes-Côte d’Azur','provence-alpes-cote-d-azur','FR'),
-  ('auvergne-rhone-alpes','Auvergne-Rhône-Alpes','auvergne-rhone-alpes','FR')
+insert into regions (id, name, country_code) values
+  ('provence-alpes-cote-d-azur','Provence-Alpes-Côte d’Azur','FR'),
+  ('auvergne-rhone-alpes','Auvergne-Rhône-Alpes','FR')
 on conflict (id) do nothing;
 
 insert into departments (code, name, region_id) values
