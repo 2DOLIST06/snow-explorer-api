@@ -162,6 +162,24 @@ class PublicResortsTests(unittest.TestCase):
         self.assertEqual(response.get_json()["pistes_count"], 7)
         self.assertEqual(response.get_json()["lifts_count"], 4)
 
+    def test_corrected_paca_id_resolves_region_name_from_database(self):
+        Region.create(
+            id="provence-alpes-cote-d-azur",
+            name="Provence Alpes Côte d'azur",
+        )
+        self.create_resort(
+            "1", "Isola 2000", "isola-2000",
+            region_id="provence-alpes-cote-d-azur", region_name=None,
+        )
+
+        response = self.client.get("/api/resorts/isola-2000")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["region"], {
+            "id": "provence-alpes-cote-d-azur",
+            "name": "Provence Alpes Côte d'azur",
+        })
+
     def test_missing_and_inactive_detail_are_clean_json_404(self):
         self.create_resort("1", "Inactive", "inactive", is_active=False)
         for slug in ("missing", "inactive"):

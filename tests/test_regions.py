@@ -20,11 +20,14 @@ class RegionRoutesTests(unittest.TestCase):
         app.register_blueprint(bp_admin_regions)
         self.client = app.test_client()
         Region.create(id="auvergne-rhone-alpes", name="Auvergne-Rhône-Alpes")
+        Region.create(id="provence-alpes-cote-d-azur", name="Provence Alpes Côte d'azur")
         Resort.create(id="1", slug="chamonix", name="Chamonix",
                       region_id="auvergne-rhone-alpes")
         Resort.create(id="2", slug="fermee", name="Fermée",
                       region_id="auvergne-rhone-alpes", is_active=False)
         Resort.create(id="3", slug="ailleurs", name="Ailleurs", region_id="occitanie")
+        Resort.create(id="4", slug="auron", name="Auron",
+                      region_id="provence-alpes-cote-d-azur")
 
     def tearDown(self):
         self.database.close()
@@ -39,6 +42,21 @@ class RegionRoutesTests(unittest.TestCase):
 
     def test_unknown_region_returns_404(self):
         self.assertEqual(self.client.get("/api/regions/inconnue").status_code, 404)
+
+    def test_list_uses_database_region_identifiers(self):
+        response = self.client.get("/api/regions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [region["id"] for region in response.get_json()],
+            ["auvergne-rhone-alpes", "provence-alpes-cote-d-azur"],
+        )
+
+    def test_paca_detail_uses_corrected_database_identifier(self):
+        response = self.client.get("/api/regions/provence-alpes-cote-d-azur")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertEqual(body["id"], "provence-alpes-cote-d-azur")
+        self.assertEqual([station["slug"] for station in body["stations"]], ["auron"])
 
     def test_editor_can_read_and_update_sanitized_content(self):
         response = self.client.patch(
