@@ -86,7 +86,10 @@ def get_public_resort(slug):
         "region": {
             "id": _non_empty(resort.region_id),
             "name": _non_empty(region_name),
+            "slug": region.slug if region is not None else None,
+            "country_code": region.country_code if region is not None else _non_empty(resort.country_code),
         },
+        "region_id": _non_empty(resort.region_id),
         "altitude_min_m": resort.altitude_min_m if resort.altitude_min_m is not None else resort.altitude_base_m,
         "altitude_max_m": resort.altitude_max_m if resort.altitude_max_m is not None else resort.altitude_top_m,
         "ski_area_km": resort.ski_area_km,
