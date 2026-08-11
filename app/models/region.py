@@ -1,5 +1,6 @@
 from peewee import CharField, TextField
 from .base import BaseModel
+from app.services.region_ids import canonical_region_id
 
 class Region(BaseModel):
     id = CharField(primary_key=True)     # ex: "auvergne-rhone-alpes"
@@ -13,13 +14,13 @@ class Region(BaseModel):
         table_name = "regions"
 
     def to_dict(self):
+        public_id = canonical_region_id(self.id)
         return {
-            "id": self.id,
-            "slug": self.id,
+            "id": public_id,
+            "slug": public_id,
             "name": self.name,
             "country_code": self.country_code,
             "description_html": self.description_html,
             "meta_title": self.meta_title,
             "meta_description": self.meta_description,
         }
-

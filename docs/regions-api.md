@@ -21,6 +21,13 @@ les stations désactivées sont exclues.
 
 Une région inconnue renvoie un statut `404` et l'erreur `region_not_found`.
 
+L'identifiant public canonique de PACA est
+`provence-alpes-cote-d-azur`. L'API continue de reconnaître l'ancien
+identifiant `provence-alpes-cote-dazur` dans les données existantes et renvoie
+toujours l'identifiant canonique. Cette compatibilité évite qu'un déploiement
+du correctif de slug doive être parfaitement synchronisé avec la migration des
+stations déjà enregistrées.
+
 ## Éditeur d'administration
 
 L'éditeur charge le contenu avec `GET /api/admin/regions/:slug`, puis
