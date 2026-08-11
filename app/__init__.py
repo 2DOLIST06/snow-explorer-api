@@ -24,7 +24,6 @@ from app.routes.uploads import bp_uploads
 from app.routes.admin_resort_import import bp_resort_json
 from app.services.admin_auth import protect_admin_routes
 from app.routes.admin_auth import bp_admin_auth
-from app.routes.admin_regions import bp_admin_regions
 from app.cli import register_admin_commands
 
 
@@ -108,7 +107,6 @@ def create_app(config=None):
     app.register_blueprint(bp_uploads)
     app.register_blueprint(bp_resort_json)
     app.register_blueprint(bp_admin_auth)
-    app.register_blueprint(bp_admin_regions)
     # Le front historique utilise ``/api/admin/stations`` tandis que les
     # routes d'import/export ont d'abord été publiées sous ``resorts``.
     # Enregistrer le même blueprint une seconde fois garde les deux contrats
