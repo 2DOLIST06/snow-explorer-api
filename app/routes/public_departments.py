@@ -118,12 +118,12 @@ DEPARTMENTS_FR = [
     {"code": "85", "name": "Vendée", "region_id": "pays-de-la-loire"},
 
     # Provence-Alpes-Côte d'Azur
-    {"code": "04", "name": "Alpes-de-Haute-Provence", "region_id": "provence-alpes-cote-dazur"},
-    {"code": "05", "name": "Hautes-Alpes", "region_id": "provence-alpes-cote-dazur"},
-    {"code": "06", "name": "Alpes-Maritimes", "region_id": "provence-alpes-cote-dazur"},
-    {"code": "13", "name": "Bouches-du-Rhône", "region_id": "provence-alpes-cote-dazur"},
-    {"code": "83", "name": "Var", "region_id": "provence-alpes-cote-dazur"},
-    {"code": "84", "name": "Vaucluse", "region_id": "provence-alpes-cote-dazur"},
+    {"code": "04", "name": "Alpes-de-Haute-Provence", "region_id": "provence-alpes-cote-d-azur"},
+    {"code": "05", "name": "Hautes-Alpes", "region_id": "provence-alpes-cote-d-azur"},
+    {"code": "06", "name": "Alpes-Maritimes", "region_id": "provence-alpes-cote-d-azur"},
+    {"code": "13", "name": "Bouches-du-Rhône", "region_id": "provence-alpes-cote-d-azur"},
+    {"code": "83", "name": "Var", "region_id": "provence-alpes-cote-d-azur"},
+    {"code": "84", "name": "Vaucluse", "region_id": "provence-alpes-cote-d-azur"},
 ]
 
 
@@ -134,4 +134,3 @@ def list_departments():
     return jsonify(
         [{"code": d["code"], "name": d["name"], "region_id": d["region_id"]} for d in data]
     ), 200
-
