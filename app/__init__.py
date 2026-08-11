@@ -19,6 +19,7 @@ from app.routes.admin_resorts import bp_admin
 from app.routes.stations_widgets import bp_widgets      
 from app.routes.admin_stations import bp_admin_st
 from app.routes.public_regions import bp_regions
+from app.routes.admin_regions import bp_admin_regions
 from app.routes.public_departments import bp_departments
 from app.routes.uploads import bp_uploads
 from app.routes.admin_resort_import import bp_resort_json
@@ -103,6 +104,7 @@ def create_app(config=None):
     app.register_blueprint(bp_widgets)  # ⬅️ Enregistrement widgets
     app.register_blueprint(bp_admin_st)
     app.register_blueprint(bp_regions)
+    app.register_blueprint(bp_admin_regions)
     app.register_blueprint(bp_departments)
     app.register_blueprint(bp_uploads)
     app.register_blueprint(bp_resort_json)
