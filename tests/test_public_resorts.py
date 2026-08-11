@@ -141,7 +141,10 @@ class PublicResortsTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["Cache-Control"], "public, max-age=300, s-maxage=3600")
-        self.assertEqual(data["region"], {"id": "paca", "name": "Provence-Alpes-Côte d’Azur"})
+        self.assertEqual(data["region"], {
+            "id": "paca", "name": "Provence-Alpes-Côte d’Azur",
+            "slug": "provence-alpes-cote-d-azur", "country_code": "FR",
+        })
         self.assertEqual(data["pistes_count"], 2)
         self.assertEqual(data["lifts_count"], 1)
         self.assertEqual(data["season_open_date"], "2025-12-06")

@@ -1,7 +1,9 @@
 from peewee import (
-    Model, CharField, TextField, IntegerField, FloatField, BooleanField, DateField
+    Model, CharField, TextField, IntegerField, FloatField, BooleanField, DateField,
+    ForeignKeyField,
 )
 from app.models.base import db
+from app.models.region import Region
 from datetime import date
 import unicodedata, re
 
@@ -44,7 +46,10 @@ class Resort(Model):
     is_active = BooleanField(null=False, default=True)
 
     # Localisation
-    region_id = CharField(null=True)
+    region = ForeignKeyField(
+        Region, backref="resorts", column_name="region_id", null=True,
+        on_delete="RESTRICT", lazy_load=False,
+    )
     region_name = CharField(null=True)
     country_code = CharField(null=True)
     department = CharField(null=True)
@@ -104,11 +109,7 @@ class Resort(Model):
             "name": self.name,
             "slug": self.slug or _slugify(self.name or ""),
 
-            "region": {
-                "id": _as_str(self.region_id),
-                "name": _as_str(self.region_name),
-                "country_code": _as_str(self.country_code),
-            },
+            "region": self._region_dict(),
             "region_id": _as_str(self.region_id),
             "department": _as_str(self.department),
 
@@ -147,6 +148,19 @@ class Resort(Model):
             "is_active": bool(self.is_active) if self.is_active is not None else True,
         }
 
+    def _region_dict(self):
+        region = self.region if isinstance(self.region, Region) else None
+        if region is not None:
+            return {
+                "id": region.id, "name": region.name, "slug": region.slug,
+                "country_code": region.country_code,
+            }
+        # Keep a predictable object for unmigrated legacy rows, while making
+        # the incomplete association visible rather than inventing a slug.
+        return {
+            "id": _as_str(self.region_id), "name": _as_str(self.region_name),
+            "slug": None, "country_code": _as_str(self.country_code),
+        }
+
     def __str__(self) -> str:
         return f"<Resort {self.id} {self.name}>"
-
