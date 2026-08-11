@@ -2,7 +2,10 @@
 create table if not exists regions (
   id text primary key,
   name text not null,
-  country_code text default 'FR'
+  country_code text default 'FR',
+  description_html text,
+  meta_title text,
+  meta_description text
 );
 
 -- Departments

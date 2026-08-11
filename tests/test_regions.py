@@ -1,0 +1,68 @@
+import unittest
+
+from flask import Flask
+from peewee import SqliteDatabase
+
+from app.models.region import Region
+from app.models.resort import Resort
+from app.routes.admin_regions import bp_admin_regions
+from app.routes.public_regions import bp_regions
+
+
+class RegionRoutesTests(unittest.TestCase):
+    def setUp(self):
+        self.database = SqliteDatabase(":memory:")
+        self.database.bind([Region, Resort])
+        self.database.connect()
+        self.database.create_tables([Region, Resort])
+        app = Flask(__name__)
+        app.register_blueprint(bp_regions)
+        app.register_blueprint(bp_admin_regions)
+        self.client = app.test_client()
+        Region.create(id="auvergne-rhone-alpes", name="Auvergne-Rhône-Alpes")
+        Resort.create(id="1", slug="chamonix", name="Chamonix",
+                      region_id="auvergne-rhone-alpes")
+        Resort.create(id="2", slug="fermee", name="Fermée",
+                      region_id="auvergne-rhone-alpes", is_active=False)
+        Resort.create(id="3", slug="ailleurs", name="Ailleurs", region_id="occitanie")
+
+    def tearDown(self):
+        self.database.close()
+
+    def test_public_detail_contains_region_content_and_active_stations(self):
+        response = self.client.get("/api/regions/auvergne-rhone-alpes")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertEqual(body["slug"], "auvergne-rhone-alpes")
+        self.assertEqual([station["slug"] for station in body["stations"]], ["chamonix"])
+        self.assertIsNone(body["description_html"])
+
+    def test_unknown_region_returns_404(self):
+        self.assertEqual(self.client.get("/api/regions/inconnue").status_code, 404)
+
+    def test_editor_can_read_and_update_sanitized_content(self):
+        response = self.client.patch(
+            "/api/admin/regions/auvergne-rhone-alpes",
+            json={
+                "description_html": "<p>Découvrez <strong>les Alpes</strong>.</p><script>x</script>",
+                "meta_title": "Stations en Auvergne-Rhône-Alpes",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        region = response.get_json()["region"]
+        self.assertEqual(region["description_html"], "<p>Découvrez <strong>les Alpes</strong>.</p>")
+        self.assertEqual(
+            self.client.get("/api/admin/regions/auvergne-rhone-alpes").get_json()["region"],
+            region,
+        )
+
+    def test_editor_rejects_unknown_fields(self):
+        response = self.client.patch(
+            "/api/admin/regions/auvergne-rhone-alpes", json={"name": "Non"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "unknown_fields")
+
+
+if __name__ == "__main__":
+    unittest.main()
