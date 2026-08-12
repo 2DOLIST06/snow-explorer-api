@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from app.models.resort import Resort
 from app.services.public_resort import get_public_resort
 from app.services.public_cache import get_public_resorts_version
@@ -17,7 +17,6 @@ bp_public_stations = Blueprint(
     "public_stations", __name__, url_prefix="/api/stations"
 )
 
-DEFAULT_LIMIT = 200
 MAX_LIMIT = 200
 
 
@@ -47,10 +46,12 @@ def _base_query():
     )
 
 
-def _requested_limit() -> int:
+def _requested_limit():
     raw_limit = request.args.get("limit")
     if raw_limit is None:
-        return DEFAULT_LIMIT
+        # The unfiltered public endpoint is also the navigation source for the
+        # SSR frontend, so omitting pagination must not silently truncate it.
+        return None
     try:
         limit = int(raw_limit)
     except (TypeError, ValueError):
@@ -117,23 +118,30 @@ def list_resorts():
         return jsonify({"error": str(exc)}), 400
 
     q_str = (request.args.get("q") or "").strip()
-    query = _base_query()
+    try:
+        query = _base_query()
 
-    if q_str:
-        like = f"%{q_str}%"
-        conds = []
+        if q_str:
+            like = f"%{q_str}%"
+            conds = []
+            if F_NAME is not None:
+                conds.append(F_NAME.ilike(like))
+            if F_SLUG is not None:
+                conds.append(F_SLUG.ilike(like))
+            if conds:
+                query = query.where(reduce(operator.or_, conds))
+
         if F_NAME is not None:
-            conds.append(F_NAME.ilike(like))
-        if F_SLUG is not None:
-            conds.append(F_SLUG.ilike(like))
-        if conds:
-            query = query.where(reduce(operator.or_, conds))
+            # Name is the existing technical ordering; id makes ties deterministic.
+            query = query.order_by(F_NAME.asc(), Resort.id.asc())
 
-    if F_NAME is not None:
-        # Name is the existing technical ordering; id makes ties deterministic.
-        query = query.order_by(F_NAME.asc(), Resort.id.asc())
+        if limit is not None:
+            query = query.limit(limit)
 
-    data = [_resort_public_dict(r) for r in query.limit(limit)]
+        data = [_resort_public_dict(r) for r in query]
+    except Exception:
+        current_app.logger.exception("Unable to retrieve public stations")
+        return jsonify({"error": "Unable to retrieve stations"}), 500
     response = jsonify(data)
     response.headers["Cache-Control"] = "public, max-age=300, s-maxage=3600"
     response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())

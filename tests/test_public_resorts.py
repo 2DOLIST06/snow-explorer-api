@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+from unittest.mock import patch
 from datetime import date
 
 from flask import Flask
@@ -87,6 +88,38 @@ class PublicResortsTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item["id"] for item in response.get_json()], ["1"])
+
+    def test_missing_or_empty_search_returns_every_active_resort(self):
+        for identifier, name, slug in (
+            ("1", "Auron", "auron"),
+            ("2", "Isola 2000", "isola-2000"),
+            ("3", "La Clusaz", "la-clusaz"),
+            ("4", "Val Thorens", "val-thorens"),
+        ):
+            self.create_resort(identifier, name, slug)
+        self.create_resort("5", "Hidden", "hidden", is_active=False)
+
+        for path in ("/api/resorts/", "/api/resorts/?q="):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    [item["slug"] for item in response.get_json()],
+                    ["auron", "isola-2000", "la-clusaz", "val-thorens"],
+                )
+
+    def test_query_failure_returns_explicit_json_500(self):
+        with patch(
+            "app.routes.public_resorts._base_query",
+            side_effect=RuntimeError("database unavailable"),
+        ):
+            response = self.client.get("/api/resorts/")
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.content_type, "application/json")
+        self.assertEqual(
+            response.get_json(), {"error": "Unable to retrieve stations"}
+        )
 
     def test_limit_and_stable_name_then_id_order(self):
         self.create_resort("2", "Beta", "beta-2")
