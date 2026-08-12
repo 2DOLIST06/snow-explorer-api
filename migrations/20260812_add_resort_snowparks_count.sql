@@ -1,0 +1,6 @@
+BEGIN;
+
+ALTER TABLE resort
+ADD COLUMN IF NOT EXISTS snowparks_count INTEGER;
+
+COMMIT;

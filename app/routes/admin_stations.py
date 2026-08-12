@@ -195,6 +195,7 @@ def create_resort():
             # Domaine skiable
             lifts_count=payload.get("lifts_count"),
             pistes_count=payload.get("pistes_count"),
+            snowparks_count=payload.get("snowparks_count"),
             ski_area_km=payload.get("ski_area_km"),
 
                     # Contenu / SEO
@@ -290,7 +291,7 @@ def patch_resort_admin(slug):
         "altitude_base_m", "altitude_top_m", "altitude_min_m", "altitude_max_m",
 
         # Domaine
-        "lifts_count", "pistes_count", "ski_area_km",
+        "lifts_count", "pistes_count", "snowparks_count", "ski_area_km",
 
         # Plan des pistes
         "pistes_small_map_url", "pistes_large_map_url", "pistes_caption",
@@ -312,6 +313,10 @@ def patch_resort_admin(slug):
         abort(400, "is_active doit être un booléen")
 
     is_active_changed = "is_active" in payload and bool(payload.get("is_active")) != bool(r.is_active)
+    snowparks_count_changed = (
+        "snowparks_count" in payload
+        and payload.get("snowparks_count") != r.snowparks_count
+    )
 
     with db.atomic():
         for f in allowed_fields:
@@ -323,7 +328,7 @@ def patch_resort_admin(slug):
         # le slug n’est pas modifié ici (stabilité des URLs)
         r.save()
 
-    if is_active_changed:
+    if is_active_changed or snowparks_count_changed:
         bump_public_resorts_version()
 
     return jsonify({"ok": True, "resort": r.to_dict()})

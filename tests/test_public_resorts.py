@@ -196,6 +196,33 @@ class PublicResortsTests(unittest.TestCase):
         self.assertEqual(response.get_json()["pistes_count"], 7)
         self.assertEqual(response.get_json()["lifts_count"], 4)
 
+    def test_public_snowparks_count_preserves_value_zero_and_absence(self):
+        for identifier, slug, count in (
+            ("1", "two-parks", 2),
+            ("2", "no-parks", 0),
+            ("3", "unknown-parks", None),
+        ):
+            self.create_resort(
+                identifier,
+                slug.replace("-", " ").title(),
+                slug,
+                snowparks_count=count,
+            )
+        StationWidgets.create(
+            station_slug="two-parks",
+            config=StationWidgets.to_json({"snowpark": {"enabled": False}}),
+        )
+
+        for slug, expected in (
+            ("two-parks", 2),
+            ("no-parks", 0),
+            ("unknown-parks", None),
+        ):
+            with self.subTest(slug=slug):
+                response = self.client.get(f"/api/stations/{slug}")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json()["snowparks_count"], expected)
+
     def test_corrected_paca_id_resolves_region_name_from_database(self):
         Region.create(
             id="provence-alpes-cote-d-azur",

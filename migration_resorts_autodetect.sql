@@ -32,5 +32,6 @@ BEGIN
   EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS ski_area_km INTEGER', chosen);
   EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS lifts_count INTEGER', chosen);
   EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS pistes_count INTEGER', chosen);
+  EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS snowparks_count INTEGER', chosen);
   EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS amenities TEXT', chosen);
 END -l;

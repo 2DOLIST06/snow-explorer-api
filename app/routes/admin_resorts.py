@@ -27,11 +27,11 @@ ALLOWED = {
     "region_id", "department",
     "altitude_base_m", "altitude_top_m", "altitude_min_m", "altitude_max_m",
     "season_open_date", "season_close_date",
-    "ski_area_km", "lifts_count", "pistes_count",
+    "ski_area_km", "lifts_count", "pistes_count", "snowparks_count",
     "amenities",
     "is_active",
 }
-INTS  = {"altitude_base_m", "altitude_top_m", "altitude_min_m", "altitude_max_m", "ski_area_km", "lifts_count", "pistes_count"}
+INTS  = {"altitude_base_m", "altitude_top_m", "altitude_min_m", "altitude_max_m", "ski_area_km", "lifts_count", "pistes_count", "snowparks_count"}
 FLTS  = {"latitude", "longitude"}
 DATES = {"season_open_date", "season_close_date"}
 

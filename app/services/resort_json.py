@@ -26,7 +26,7 @@ STATION_FIELDS = (
     "country_code", "website_url", "cover_image_url", "logo_url", "amenities",
     "description_md", "description_html", "meta_title", "meta_description",
     "altitude_min_m", "altitude_max_m", "altitude_base_m", "altitude_top_m",
-    "ski_area_km", "pistes_count", "lifts_count", "season_open_date",
+    "ski_area_km", "pistes_count", "lifts_count", "snowparks_count", "season_open_date",
     "season_close_date", "latitude", "longitude",
 )
 STATION_MUTABLE_FIELDS = tuple(field for field in STATION_FIELDS if field != "id")
@@ -39,7 +39,7 @@ STATION_CREATE_FIELDS = STATION_FIELDS
 # can be used to create or match a station by slug.
 REQUIRED = {"slug", "name"}
 BOOL_FIELDS = {"is_active"}
-INT_FIELDS = {"altitude_min_m", "altitude_max_m", "altitude_base_m", "altitude_top_m", "ski_area_km", "pistes_count", "lifts_count"}
+INT_FIELDS = {"altitude_min_m", "altitude_max_m", "altitude_base_m", "altitude_top_m", "ski_area_km", "pistes_count", "lifts_count", "snowparks_count"}
 FLOAT_FIELDS = {"latitude", "longitude"}
 DATE_FIELDS = {"season_open_date", "season_close_date"}
 URL_FIELDS = {"website_url", "cover_image_url", "logo_url"}
