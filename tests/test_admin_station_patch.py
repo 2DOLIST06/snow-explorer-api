@@ -20,7 +20,6 @@ class DummyResort:
         self.cover_image_url = "https://cdn.example.test/old-cover.jpg"
         self.website_url = "https://station.example.test"
         self.region_name = "Alpes"
-        self.snowparks_count = None
         self.is_active = False
         self.save_count = 0
 
@@ -36,7 +35,6 @@ class DummyResort:
             "cover_image_url": self.cover_image_url,
             "website_url": self.website_url,
             "region_name": self.region_name,
-            "snowparks_count": self.snowparks_count,
             "is_active": self.is_active,
         }
 
@@ -93,13 +91,6 @@ class AdminStationPatchTests(unittest.TestCase):
             "https://cdn.example.test/old-logo.png",
         )
         self.assertFalse(self.resort.is_active)
-
-    def test_patch_snowparks_count_persists_and_is_serialized(self):
-        response = self.patch_station({"snowparks_count": 2})
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.resort.snowparks_count, 2)
-        self.assertEqual(response.get_json()["resort"]["snowparks_count"], 2)
 
     def test_patch_only_is_active(self):
         response = self.patch_station({"is_active": True})

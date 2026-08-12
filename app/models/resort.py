@@ -62,7 +62,6 @@ class Resort(Model):
     # Domaine skiable
     lifts_count  = IntegerField(null=True)
     pistes_count = IntegerField(null=True)
-    snowparks_count = IntegerField(null=True)
     ski_area_km  = IntegerField(null=True)
 
     # Contenu / médias
@@ -120,7 +119,6 @@ class Resort(Model):
 
             "lifts_count": _as_int(self.lifts_count),
             "pistes_count": _as_int(self.pistes_count),
-            "snowparks_count": _as_int(self.snowparks_count),
             "ski_area_km": _as_int(self.ski_area_km),
 
             "latitude": _as_float(self.latitude),
@@ -151,3 +149,4 @@ class Resort(Model):
 
     def __str__(self) -> str:
         return f"<Resort {self.id} {self.name}>"
+
