@@ -38,7 +38,9 @@ class StationActivationTests(unittest.TestCase):
                 def order_by(self, *args, **kwargs):
                     return self
                 def limit(self, *args, **kwargs):
-                    return [DummyResort('active-1', True)]
+                    return self
+                def __iter__(self):
+                    return iter([DummyResort('active-1', True)])
             query_builder.return_value = Q()
             resp = self.client.get('/api/resorts/')
         self.assertEqual(resp.status_code, 200)

@@ -18,8 +18,13 @@ Paramètres :
 
 - `q` : recherche facultative, insensible à la casse, dans le nom et le slug ;
 - `active=true` : explicite le filtre public déjà appliqué ;
-- `limit` : entier strictement positif, au maximum `200` (valeur par défaut :
-  `200`).
+- `limit` : entier strictement positif, au maximum `200`. Lorsqu'il est omis,
+  la route renvoie toutes les stations publiques actives ; `q` omis, vide ou
+  composé d'espaces n'applique aucun filtre de recherche.
+
+Une erreur de lecture de la base renvoie un statut `500` et le JSON
+`{"error":"Unable to retrieve stations"}` ; elle n'est jamais convertie en
+une liste vide avec un statut `200`.
 
 Le tri est stable : nom croissant, puis identifiant croissant. Il s'agit d'un
 tri technique, pas d'un classement de popularité. La région et l'image sont des
