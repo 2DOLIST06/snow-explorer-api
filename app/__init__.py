@@ -16,7 +16,7 @@ from app.models.admin_session import AdminSession
 from app.models.admin_login_attempt import AdminLoginAttempt
 from app.routes.public_resorts import bp_public, bp_public_stations
 from app.routes.admin_resorts import bp_admin
-from app.routes.stations_widgets import bp_widgets      
+from app.routes.stations_widgets import bp_forfaits, bp_widgets
 from app.routes.admin_stations import bp_admin_st
 from app.routes.public_regions import bp_regions
 from app.routes.admin_regions import bp_admin_regions
@@ -103,6 +103,7 @@ def create_app(config=None):
     app.register_blueprint(bp_public_stations)
     app.register_blueprint(bp_admin)
     app.register_blueprint(bp_widgets)  # ⬅️ Enregistrement widgets
+    app.register_blueprint(bp_forfaits)
     app.register_blueprint(bp_admin_st)
     app.register_blueprint(bp_regions)
     app.register_blueprint(bp_admin_regions)
