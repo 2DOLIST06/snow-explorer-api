@@ -92,6 +92,7 @@ def get_public_resort(slug):
         "ski_area_km": resort.ski_area_km,
         "pistes_count": _valid_count(resort.pistes_count, Piste, resort.id),
         "lifts_count": _valid_count(resort.lifts_count, Lift, resort.id),
+        "snowparks_count": resort.snowparks_count,
         "season_open_date": _date(resort.season_open_date),
         "season_close_date": _date(resort.season_close_date),
         "website_url": _non_empty(resort.website_url),
