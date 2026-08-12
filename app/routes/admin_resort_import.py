@@ -50,7 +50,7 @@ def export_all():
 @bp_resort_json.get("/import/template")
 @bp_resort_json.get("/import-template")
 def template():
-    station = {key: None for key in Resort._meta.fields if key in {"id", "slug", "name", "is_active", "department", "region_id", "region_name", "country_code", "website_url", "cover_image_url", "logo_url", "amenities", "description_md", "description_html", "meta_title", "meta_description", "altitude_min_m", "altitude_max_m", "altitude_base_m", "altitude_top_m", "ski_area_km", "pistes_count", "lifts_count", "snowparks_count", "season_open_date", "season_close_date", "latitude", "longitude"}}
+    station = {key: None for key in Resort._meta.fields if key in {"id", "slug", "name", "is_active", "department", "region_id", "region_name", "country_code", "website_url", "cover_image_url", "logo_url", "amenities", "description_md", "description_html", "meta_title", "meta_description", "altitude_min_m", "altitude_max_m", "altitude_base_m", "altitude_top_m", "ski_area_km", "pistes_count", "lifts_count", "season_open_date", "season_close_date", "latitude", "longitude"}}
     station.update({"id": "example-id", "slug": "example-slug", "name": "Example station", "is_active": False})
     return _json_file({"schema_version": SCHEMA_VERSION, "exported_at": None, "station": station}, "snow-explorer-station-import-template.json")
 
