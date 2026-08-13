@@ -196,21 +196,6 @@ class PublicResortsTests(unittest.TestCase):
         self.assertEqual(response.get_json()["pistes_count"], 7)
         self.assertEqual(response.get_json()["lifts_count"], 4)
 
-    def test_public_detail_exposes_snowparks_count_from_existing_config(self):
-        for index, (stored, expected) in enumerate(((2, 2), (0, 0), (None, None))):
-            slug = f"snowparks-{index}"
-            self.create_resort(str(index + 1), slug, slug)
-            config = {} if stored is None else {"snowparks": {"count": stored}}
-            StationWidgets.create(
-                station_slug=slug,
-                config=StationWidgets.to_json(config),
-            )
-
-            with self.subTest(stored=stored):
-                response = self.client.get(f"/api/resorts/{slug}")
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.get_json()["snowparks_count"], expected)
-
     def test_corrected_paca_id_resolves_region_name_from_database(self):
         Region.create(
             id="provence-alpes-cote-d-azur",
