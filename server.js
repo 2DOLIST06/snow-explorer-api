@@ -235,7 +235,10 @@ app.get(['/api/resorts', '/api/ski/resorts'], async (req, res) => {
     params.push(limit, offset);
 
     const sql = `
-      select id, name, slug, region_id, department, latitude, longitude
+      select id, name, slug, region_id, department, latitude, longitude,
+             (select (sw.config::jsonb -> 'snowparks' ->> 'count')::integer
+                from station_widgets sw
+               where sw.station_slug = resort.slug) as snowparks_count
       from resort
       ${where}
       order by name asc
