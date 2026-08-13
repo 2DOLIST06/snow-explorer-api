@@ -70,6 +70,7 @@ def get_public_resort(slug):
 
     widget_row = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
     raw_cfg = StationWidgets.from_json(widget_row.config) if widget_row else {}
+    cfg = public_cfg(raw_cfg)
 
     return {
         "id": str(resort.id),
@@ -98,5 +99,6 @@ def get_public_resort(slug):
         "pistes_small_map_url": _non_empty(resort.pistes_small_map_url),
         "pistes_large_map_url": _non_empty(resort.pistes_large_map_url),
         "snowpark_map_url": _non_empty(resort.snowpark_map_url),
-        "cfg": public_cfg(raw_cfg),
+        "snowparks_count": cfg["snowparks"].get("count"),
+        "cfg": cfg,
     }
