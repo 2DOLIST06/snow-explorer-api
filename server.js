@@ -230,13 +230,13 @@ app.get(['/api/resorts', '/api/ski/resorts'], async (req, res) => {
     let where = '';
     if (qstr) {
       params.push(`%${qstr}%`);
-      where = `where name ilike $${params.length} or slug ilike $${params.length}`;
+      where = `where r.name ilike $${params.length} or r.slug ilike $${params.length}`;
     }
     params.push(limit, offset);
 
     const sql = `
       select r.id, r.name, r.slug, r.region_id, r.department, r.latitude, r.longitude,
-             (sw.config::jsonb -> 'snowparks' ->> 'count')::integer as snowparks_count
+             (sw.config -> 'snowparks' ->> 'count')::integer as snowparks_count
       from resort r
       left join station_widgets sw on sw.station_slug = r.slug
       ${where}
