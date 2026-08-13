@@ -1,5 +1,6 @@
 from flask import Blueprint, current_app, jsonify, request
 from app.models.resort import Resort
+from app.models.station_widgets import StationWidgets
 from app.services.public_resort import get_public_resort
 from app.services.public_cache import get_public_resorts_version
 from functools import reduce
@@ -61,7 +62,7 @@ def _requested_limit():
     return limit
 
 
-def _resort_public_dict(r: Resort) -> dict:
+def _resort_public_dict(r: Resort, snowparks_count=None) -> dict:
     """
     Dict public pour le front Next.js.
     On part de to_dict() puis on force/ajoute les champs nécessaires
@@ -88,6 +89,7 @@ def _resort_public_dict(r: Resort) -> dict:
     # Snowpark
     base["snowpark_map_url"] = getattr(r, "snowpark_map_url", None)
     base["snowpark_caption"] = getattr(r, "snowpark_caption", None)
+    base["snowparks_count"] = snowparks_count
 
     # Altitudes / saison (au cas où to_dict ne les gère pas)
     base["altitude_min_m"] = getattr(r, "altitude_min_m", None)
@@ -138,7 +140,28 @@ def list_resorts():
         if limit is not None:
             query = query.limit(limit)
 
-        data = [_resort_public_dict(r) for r in query]
+        resorts = list(query)
+        snowparks_counts = {}
+        if resorts:
+            widget_rows = StationWidgets.select().where(
+                StationWidgets.station_slug.in_([resort.slug for resort in resorts])
+            )
+            for widget_row in widget_rows:
+                config = StationWidgets.from_json(widget_row.config)
+                snowparks = config.get("snowparks")
+                count = snowparks.get("count") if isinstance(snowparks, dict) else None
+                snowparks_counts[widget_row.station_slug] = (
+                    count
+                    if isinstance(count, int)
+                    and not isinstance(count, bool)
+                    and count >= 0
+                    else None
+                )
+
+        data = [
+            _resort_public_dict(r, snowparks_counts.get(r.slug))
+            for r in resorts
+        ]
     except Exception:
         current_app.logger.exception("Unable to retrieve public stations")
         return jsonify({"error": "Unable to retrieve stations"}), 500
