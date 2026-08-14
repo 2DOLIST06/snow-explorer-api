@@ -2,7 +2,6 @@ from peewee import (
     Model, CharField, TextField, IntegerField, FloatField, BooleanField, DateField
 )
 from app.models.base import db
-from app.datetime_utils import UTCDateTimeField, isoformat_utc, utcnow
 from datetime import date
 import unicodedata, re
 
@@ -88,11 +87,6 @@ class Resort(Model):
     season_open_date  = DateField(null=True)
     season_close_date = DateField(null=True)
 
-    # Nullable for legacy rows: the migration deliberately does not fabricate
-    # historical instants. New rows receive both values at insertion time.
-    created_at = UTCDateTimeField(null=True, default=utcnow)
-    updated_at = UTCDateTimeField(null=True, default=utcnow)
-
     class Meta:
         database = db
         table_name = "resort"
@@ -151,9 +145,8 @@ class Resort(Model):
             "season_close_date": _fmt_date(self.season_close_date),
 
             "is_active": bool(self.is_active) if self.is_active is not None else True,
-            "created_at": isoformat_utc(self.created_at),
-            "updated_at": isoformat_utc(self.updated_at),
         }
 
     def __str__(self) -> str:
         return f"<Resort {self.id} {self.name}>"
+
