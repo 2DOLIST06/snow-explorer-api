@@ -5,6 +5,7 @@ from app.services.public_resort import get_public_resort
 from app.services.public_cache import get_public_resorts_version
 from functools import reduce
 import operator
+from app.datetime_utils import isoformat_utc
 
 try:
     # Peewee >=3
@@ -62,7 +63,7 @@ def _requested_limit():
     return limit
 
 
-def _resort_public_dict(r: Resort, snowparks_count=None) -> dict:
+def _resort_public_dict(r: Resort, snowparks_count=None, widgets_updated_at=None) -> dict:
     """
     Dict public pour le front Next.js.
     On part de to_dict() puis on force/ajoute les champs nécessaires
@@ -104,6 +105,11 @@ def _resort_public_dict(r: Resort, snowparks_count=None) -> dict:
     is_active = getattr(r, "is_active", None)
     base["is_active"] = bool(is_active) if is_active is not None else True
     base["resort_is_active"] = base["is_active"]
+    modified = max(
+        (value for value in (r.updated_at, widgets_updated_at) if value is not None),
+        default=None,
+    )
+    base["updated_at"] = isoformat_utc(modified)
 
     return base
 
@@ -142,6 +148,7 @@ def list_resorts():
 
         resorts = list(query)
         snowparks_counts = {}
+        widgets_updated = {}
         if resorts:
             widget_rows = StationWidgets.select().where(
                 StationWidgets.station_slug.in_([resort.slug for resort in resorts])
@@ -157,9 +164,10 @@ def list_resorts():
                     and count >= 0
                     else None
                 )
+                widgets_updated[widget_row.station_slug] = widget_row.updated_at
 
         data = [
-            _resort_public_dict(r, snowparks_counts.get(r.slug))
+            _resort_public_dict(r, snowparks_counts.get(r.slug), widgets_updated.get(r.slug))
             for r in resorts
         ]
     except Exception:

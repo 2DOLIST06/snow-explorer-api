@@ -9,6 +9,7 @@ import json
 import re
 import uuid
 from urllib.parse import urlparse
+from app.datetime_utils import utcnow
 
 bp_admin_st = Blueprint("admin_stations", __name__, url_prefix="/api/admin/stations")
 
@@ -312,6 +313,10 @@ def patch_resort_admin(slug):
         abort(400, "is_active doit être un booléen")
 
     is_active_changed = "is_active" in payload and bool(payload.get("is_active")) != bool(r.is_active)
+    content_changed = any(
+        field in payload and getattr(r, field) != payload[field]
+        for field in allowed_fields
+    )
 
     with db.atomic():
         for f in allowed_fields:
@@ -321,6 +326,8 @@ def patch_resort_admin(slug):
                 else:
                     setattr(r, f, payload[f])
         # le slug n’est pas modifié ici (stabilité des URLs)
+        if content_changed:
+            r.updated_at = utcnow()
         r.save()
 
     if is_active_changed:
@@ -336,7 +343,9 @@ def bulk_activation():
     if not isinstance(is_active, bool):
         abort(400, "is_active doit être un booléen")
 
-    query = Resort.update({Resort.is_active: is_active})
+    query = Resort.update({Resort.is_active: is_active, Resort.updated_at: utcnow()}).where(
+        Resort.is_active != is_active
+    )
     slug_prefix = payload.get("slug_prefix")
     if slug_prefix:
         query = query.where(Resort.slug.startswith(slug_prefix))
@@ -365,6 +374,9 @@ def patch_widgets_admin(slug):
     current = StationWidgets.from_json(w.config)
     merged = deep_merge(current if isinstance(current, dict) else {}, payload)
     merged = _normalize_widgets_config(merged)
-    w.config = StationWidgets.to_json(merged)
-    w.save()
+    serialized = StationWidgets.to_json(merged)
+    if merged != current:
+        w.config = serialized
+        w.updated_at = utcnow()
+        w.save()
     return jsonify({"ok": True, "merged": True})

@@ -1,5 +1,6 @@
 from app.models.base import db
 from peewee import Model, CharField, TextField
+from app.datetime_utils import UTCDateTimeField, utcnow
 import json
 
 # Si tu es sur Postgres avec playhouse.postgres_ext tu peux utiliser JSONField :
@@ -15,6 +16,7 @@ class StationWidgets(Model):
     station_slug = CharField(unique=True, max_length=255)
     # Stockage JSON en texte si pas de JSONField natif
     config = TextField(default="{}")
+    updated_at = UTCDateTimeField(null=True, default=utcnow)
 
     class Meta:
         database = db
@@ -32,4 +34,3 @@ class StationWidgets(Model):
             return json.loads(txt)
         except Exception:
             return {}
-
