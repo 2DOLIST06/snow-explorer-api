@@ -3,6 +3,7 @@ from peewee import fn
 
 from app.models.region import Region
 from app.services.resort_json import sanitize_html
+from app.datetime_utils import utcnow
 
 
 bp_admin_regions = Blueprint(
@@ -36,11 +37,15 @@ def patch_region_admin(slug):
     if unknown:
         return jsonify({"error": "unknown_fields", "fields": sorted(unknown)}), 400
 
+    changed = False
     for field, value in payload.items():
         if value is not None and not isinstance(value, str):
             return jsonify({"error": f"{field}_must_be_a_string"}), 400
         if field == "description_html" and value is not None:
             value = sanitize_html(value)
+        changed |= getattr(region, field) != value
         setattr(region, field, value)
+    if changed:
+        region.updated_at = utcnow()
     region.save()
     return jsonify({"ok": True, "region": region.to_dict()}), 200

@@ -2,6 +2,7 @@
 from flask import Blueprint, jsonify, request
 from datetime import date
 from app.models.resort import Resort
+from app.datetime_utils import utcnow
 
 bp_admin = Blueprint("admin_resorts", __name__, url_prefix="/api/admin/resorts")
 
@@ -74,6 +75,7 @@ def patch_admin_resort(slug: str):
     payload = request.get_json(silent=True) or {}
     if "is_active" in payload and not isinstance(payload.get("is_active"), bool):
         return jsonify({"error": "is_active_must_be_boolean"}), 400
+    changed = False
     for k, v in payload.items():
         if k not in ALLOWED:
             continue
@@ -82,15 +84,17 @@ def patch_admin_resort(slug: str):
             continue
 
         if k in INTS:
-            setattr(r, k, _i(v))
+            value = _i(v); changed |= getattr(r, k) != value; setattr(r, k, value)
         elif k in FLTS:
-            setattr(r, k, _f(v))
+            value = _f(v); changed |= getattr(r, k) != value; setattr(r, k, value)
         elif k in DATES:
-            setattr(r, k, _d(v))
+            value = _d(v); changed |= getattr(r, k) != value; setattr(r, k, value)
         elif k in BOOLS:
-            setattr(r, k, v)
+            changed |= getattr(r, k) != v; setattr(r, k, v)
         else:
-            setattr(r, k, (v if v != "" else None))
+            value = v if v != "" else None; changed |= getattr(r, k) != value; setattr(r, k, value)
 
+    if changed:
+        r.updated_at = utcnow()
     r.save()
     return jsonify(r.to_dict()), 200
