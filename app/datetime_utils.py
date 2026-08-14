@@ -27,14 +27,6 @@ def ensure_utc(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
-def isoformat_utc(value: datetime | None) -> str | None:
-    """Serialize persisted datetimes with the backend-wide UTC ``Z`` convention."""
-    normalized = ensure_utc(value)
-    if normalized is None:
-        return None
-    return normalized.isoformat().replace("+00:00", "Z")
-
-
 class UTCDateTimeField(DateTimeField):
     """Peewee datetime field backed by PostgreSQL ``TIMESTAMPTZ``."""
 

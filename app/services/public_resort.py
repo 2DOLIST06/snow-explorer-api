@@ -5,7 +5,6 @@ from app.models.piste import Piste
 from app.models.region import Region
 from app.models.resort import Resort
 from app.models.station_widgets import StationWidgets
-from app.datetime_utils import isoformat_utc
 
 
 PUBLIC_CFG_KEYS = (
@@ -71,10 +70,6 @@ def get_public_resort(slug):
 
     widget_row = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
     raw_cfg = StationWidgets.from_json(widget_row.config) if widget_row else {}
-    modified = max(
-        (value for value in (resort.updated_at, widget_row.updated_at if widget_row else None) if value is not None),
-        default=None,
-    )
 
     return {
         "id": str(resort.id),
@@ -104,6 +99,4 @@ def get_public_resort(slug):
         "pistes_large_map_url": _non_empty(resort.pistes_large_map_url),
         "snowpark_map_url": _non_empty(resort.snowpark_map_url),
         "cfg": public_cfg(raw_cfg),
-        "created_at": isoformat_utc(resort.created_at),
-        "updated_at": isoformat_utc(modified),
     }

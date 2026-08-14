@@ -4,7 +4,6 @@ from app.models.station_widgets import StationWidgets
 from app.models.resort import Resort
 from app.services.resort_access import get_public_active_resort_or_404
 from app.services.public_cache import get_public_resorts_version
-from app.datetime_utils import utcnow
 
 bp_widgets = Blueprint("stations_widgets", __name__, url_prefix="/api/stations")
 bp_forfaits = Blueprint("public_forfaits", __name__, url_prefix="/api/forfaits")
@@ -248,10 +247,7 @@ def upsert_widgets(slug: str):
     if not row:
         row = StationWidgets.create(station_slug=slug, config=StationWidgets.to_json(merged))
     else:
-        serialized = StationWidgets.to_json(merged)
-        if merged != current_cfg:
-            row.config = serialized
-            row.updated_at = utcnow()
-            row.save()
+        row.config = StationWidgets.to_json(merged)
+        row.save()
 
     return jsonify({"ok": True, "stationSlug": slug, "merged": True})
