@@ -64,8 +64,12 @@ def validate_grid(payload, resort_lookup=None):
     raw_passes = payload.get("passes")
     if not isinstance(raw_periods, list):
         errors.append({"path": "periods", "message": "tableau obligatoire"}); raw_periods = []
+    elif not raw_periods:
+        errors.append({"path": "periods", "message": "au moins une période est obligatoire"})
     if not isinstance(raw_passes, list):
         errors.append({"path": "passes", "message": "tableau obligatoire"}); raw_passes = []
+    elif not raw_passes:
+        errors.append({"path": "passes", "message": "au moins un forfait est obligatoire"})
     periods, period_ids = [], set()
     for i, raw in enumerate(raw_periods):
         path = f"periods[{i}]"; raw = raw if isinstance(raw, dict) else {}
@@ -115,6 +119,8 @@ def validate_grid(payload, resort_lookup=None):
             prices.append({"period_external_id": period_id, "category": category, "category_label": category_label, "price_type": kind, "price": price, "price_min": low, "price_max": high, "dynamic_label": value.get("dynamic_label"), "sort_order": j})
             price_count += 1
         products.append({"external_id": external_id, "name": name, "duration_days": duration, "duration_label": label, "sort_order": i, "prices": prices})
+    if isinstance(raw_passes, list) and price_count == 0:
+        errors.append({"path": "passes", "message": "au moins un tarif est obligatoire"})
     normalized = {"resort": resort, "station_slug": slug, "season": season_name, "currency": currency, "source_url": source_url, "periods": periods, "products": products, "prices_count": price_count}
     return normalized, errors
 
@@ -124,12 +130,15 @@ def preview(payload, resort_lookup=None):
     return {"valid": not errors, "station": grid["station_slug"] if grid else None, "season": grid["season"] if grid else None, "periods_count": len(grid["periods"]) if grid else 0, "passes_count": len(grid["products"]) if grid else 0, "prices_count": grid["prices_count"] if grid else 0, "errors": errors}
 
 
-def replace_grid(payload):
+def replace_grid(payload, target_season=None):
     grid, errors = validate_grid(payload)
     if errors: return None, errors
     with db.atomic():
-        season, _ = SkiPassSeason.get_or_create(resort=grid["resort"], season=grid["season"], defaults={"currency": grid["currency"], "source_url": grid["source_url"]})
-        season.currency, season.source_url, season.updated_at = grid["currency"], grid["source_url"], utcnow()
+        season = target_season
+        if season is None:
+            season, _ = SkiPassSeason.get_or_create(resort=grid["resort"], season=grid["season"], defaults={"currency": grid["currency"], "source_url": grid["source_url"]})
+        season.season, season.currency = grid["season"], grid["currency"]
+        season.source_url, season.updated_at = grid["source_url"], utcnow()
         season.save()
         # Children are intentionally deleted inside the same transaction: any
         # later insert failure restores the complete previous grid.
@@ -157,4 +166,19 @@ def serialize_season(season, today=None):
     periods = sorted(list(season.periods), key=lambda x: (x.sort_order, x.id))
     products = sorted(list(season.products), key=lambda x: (x.sort_order, x.id))
     current = next((p.external_id for p in periods if p.start_date <= today <= p.end_date), None)
-    return {"station_slug": season.resort.slug, "season": season.season, "currency": season.currency, "source_url": season.source_url, "current_period_id": current, "periods": [{"id": p.external_id, "name": p.name, "start_date": p.start_date.isoformat(), "end_date": p.end_date.isoformat(), "sort_order": p.sort_order} for p in periods], "passes": [{"id": product.external_id, "name": product.name, "duration_days": product.duration_days, "duration_label": product.duration_label, "sort_order": product.sort_order, "prices": [{"period_id": price.period.external_id, "category": price.category, "category_label": price.category_label, "price_type": price.price_type, "price": decimal_json(price.price), "price_min": decimal_json(price.price_min), "price_max": decimal_json(price.price_max), "dynamic_label": price.dynamic_label, "sort_order": price.sort_order} for price in sorted(list(product.prices), key=lambda x: (x.sort_order, x.id))]} for product in products]}
+    return {"id": season.id, "station_slug": season.resort.slug, "season": season.season, "currency": season.currency, "source_url": season.source_url, "current_period_id": current, "periods": [{"db_id": p.id, "id": p.external_id, "name": p.name, "start_date": p.start_date.isoformat(), "end_date": p.end_date.isoformat(), "sort_order": p.sort_order} for p in periods], "passes": [{"db_id": product.id, "id": product.external_id, "name": product.name, "duration_days": product.duration_days, "duration_label": product.duration_label, "sort_order": product.sort_order, "prices": [{"id": price.id, "period_id": price.period.external_id, "period_db_id": price.period.id, "category": price.category, "category_label": price.category_label, "price_type": price.price_type, "price": decimal_json(price.price), "price_min": decimal_json(price.price_min), "price_max": decimal_json(price.price_max), "dynamic_label": price.dynamic_label, "sort_order": price.sort_order} for price in sorted(list(product.prices), key=lambda x: (x.sort_order, x.id))]} for product in products]}
+
+
+def import_result(season):
+    """Build an explicit result from committed rows, not from preview input."""
+    grid = serialize_season(season)
+    return {
+        "success": True,
+        "station_slug": grid["station_slug"],
+        "season": grid["season"],
+        "season_id": grid["id"],
+        "periods_count": len(grid["periods"]),
+        "passes_count": len(grid["passes"]),
+        "prices_count": sum(len(product["prices"]) for product in grid["passes"]),
+        "grid": grid,
+    }

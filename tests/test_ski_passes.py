@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from flask import Flask
 
-from app.routes.ski_passes import bp_ski_passes
+from app.routes.ski_passes import bp_admin_station_ski_passes, bp_ski_passes
 from app.services.ski_passes import preview, replace_grid, serialize_season
 
 
@@ -60,6 +60,12 @@ class SkiPassValidationTests(unittest.TestCase):
         payload = grid(); del payload["passes"][0]["prices"][0]["price"]
         self.assertFalse(preview(payload, self.lookup)["valid"])
 
+    def test_empty_grid_cannot_report_a_successful_import(self):
+        payload = grid(); payload["periods"] = []; payload["passes"] = []
+        messages = [error["message"] for error in preview(payload, self.lookup)["errors"]]
+        self.assertIn("au moins une période est obligatoire", messages)
+        self.assertIn("au moins un forfait est obligatoire", messages)
+
 
 class SkiPassPersistenceTests(unittest.TestCase):
     @patch("app.services.ski_passes.SkiPassProduct.delete")
@@ -100,8 +106,11 @@ class PublicSerializationTests(unittest.TestCase):
         period = MagicMock(id=1, external_id="high", name="Haute", start_date=date(2026, 12, 1), end_date=date(2027, 3, 1), sort_order=0)
         fixed = MagicMock(id=1, period=period, category="teen", category_label="Jeune", price_type="fixed", price=42, price_min=None, price_max=None, dynamic_label=None, sort_order=0)
         product = MagicMock(id=1, external_id="day", name="Journée", duration_days=1, duration_label="1 jour", sort_order=0, prices=[fixed])
-        season = MagicMock(season="2026-2027", currency="EUR", source_url="https://example.test", resort=MagicMock(slug="chamonix"), periods=[period], products=[product])
+        season = MagicMock(id=9, season="2026-2027", currency="EUR", source_url="https://example.test", resort=MagicMock(slug="chamonix"), periods=[period], products=[product])
         body = serialize_season(season, date(2027, 1, 2))
+        self.assertEqual(body["id"], 9)
+        self.assertEqual(body["periods"][0]["db_id"], 1)
+        self.assertEqual(body["passes"][0]["prices"][0]["id"], 1)
         self.assertEqual(body["current_period_id"], "high")
         self.assertEqual(body["passes"][0]["prices"][0]["category"], "teen")
 

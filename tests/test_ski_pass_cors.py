@@ -118,7 +118,9 @@ class SkiPassCorsTests(unittest.TestCase):
         season = object()
         with (
             patch("app.routes.ski_passes.replace_grid", return_value=(season, [])) as replace,
-            patch("app.routes.ski_passes.serialize_season", return_value={"season": "2026-2027"}),
+            patch("app.routes.ski_passes.import_result", return_value={
+                "success": True, "periods_count": 2, "passes_count": 3, "prices_count": 4,
+            }),
         ):
             response = self.client.post(IMPORT_ROUTE, json={"season": "2026-2027"}, headers={
                 "Origin": ORIGIN,
@@ -126,6 +128,7 @@ class SkiPassCorsTests(unittest.TestCase):
             })
         self.assertEqual(response.status_code, 200)
         self.assertEqual(replace.call_args.args[0]["station_slug"], "chamonix")
+        self.assertIsNone(replace.call_args.kwargs["target_season"])
         self.assert_cors(response)
 
     def test_unhandled_preview_error_keeps_cors_headers(self):
