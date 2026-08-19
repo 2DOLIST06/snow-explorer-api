@@ -7,7 +7,6 @@ CREATE TABLE IF NOT EXISTS ski_pass_seasons (
   season VARCHAR(255) NOT NULL,
   currency VARCHAR(3) NOT NULL DEFAULT 'EUR',
   source_url TEXT,
-  is_active BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (resort_id, season)
@@ -54,7 +53,3 @@ CREATE TABLE IF NOT EXISTS ski_pass_prices (
       AND price_max IS NOT NULL AND price_max >= price_min)
   )
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS ski_pass_one_active_season_per_resort
-  ON ski_pass_seasons (resort_id)
-  WHERE is_active = TRUE;

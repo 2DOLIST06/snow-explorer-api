@@ -2,8 +2,6 @@ from flask import Blueprint, request, jsonify, abort
 from werkzeug.exceptions import NotFound
 from app.models.station_widgets import StationWidgets
 from app.models.resort import Resort
-from app.models.ski_pass import SkiPassSeason
-from app.services.ski_passes import serialize_season
 from app.services.resort_access import get_public_active_resort_or_404
 from app.services.public_cache import get_public_resorts_version
 
@@ -159,13 +157,6 @@ def _has_price(forfaits):
         for value in item["prices"].values()
     )
 
-
-def _active_normalized_grid(slug):
-    season = (SkiPassSeason.select(SkiPassSeason, Resort).join(Resort)
-              .where((Resort.slug == slug) & (SkiPassSeason.is_active == True))
-              .order_by(SkiPassSeason.updated_at.desc(), SkiPassSeason.id.desc()).first())
-    return serialize_season(season) if season is not None else None
-
 @bp_widgets.get("/<string:slug>/widgets")
 def get_widgets(slug: str):
     try:
@@ -174,31 +165,16 @@ def get_widgets(slug: str):
         return jsonify({"error": "station_not_found", "message": "Station not found"}), 404
     try:
         row = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
-        normalized = _active_normalized_grid(slug)
-        if not row and normalized is None:
+        if not row:
             cfg = {**DEFAULT_CFG, "forfaits": dict(DEFAULT_CFG["forfaits"])}
             cfg["stationSlug"] = slug
             response = jsonify(cfg)
             response.headers["Cache-Control"] = "no-store"
             response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
             return response
-        data = StationWidgets.from_json(row.config) if row else {}
+        data = StationWidgets.from_json(row.config)
         data = _normalize_widgets_config(data)
-        if normalized is not None:
-            # This is the endpoint consumed by historical station pages.  The
-            # flag replaces the legacy station_widgets switch only while a
-            # published normalized season exists; the complete grid is kept so
-            # the page never has to interpret station_widgets as normalized data.
-            data["forfaits"] = {
-                "enabled": True,
-                "tariff_mode": "normalized",
-                "normalized": normalized,
-                "columns": [],
-                "items": [],
-            }
-        else:
-            data["forfaits"] = _canonical_forfaits(data)
-            data["forfaits"]["tariff_mode"] = "legacy"
+        data["forfaits"] = _canonical_forfaits(data)
         # Only documented public widgets leave this endpoint. In particular,
         # arbitrary administration-only top-level values are never reflected.
         data = {key: data[key] for key in DEFAULT_CFG if key in data}
@@ -213,22 +189,20 @@ def get_widgets(slug: str):
 
 @bp_forfaits.get("/stations")
 def list_forfait_stations():
-    """Return stations with normalized publication first, then legacy fallback."""
+    """Return active stations with usable tariffs in one joined database query."""
     try:
-        query = (Resort.select().where(Resort.is_active == True)
-                 .order_by(Resort.name.asc(), Resort.id.asc()))
+        query = (
+            Resort.select(Resort, StationWidgets)
+            .join(StationWidgets, on=(Resort.slug == StationWidgets.station_slug))
+            .where(Resort.is_active == True)
+            .order_by(Resort.name.asc(), Resort.id.asc())
+        )
         stations = []
         for resort in query:
-            normalized = _active_normalized_grid(resort.slug)
-            if normalized is not None:
-                forfaits = {"enabled": True, "tariff_mode": "normalized", "normalized": normalized}
-            else:
-                row = StationWidgets.get_or_none(StationWidgets.station_slug == resort.slug)
-                widgets = StationWidgets.from_json(row.config) if row else {}
-                forfaits = _canonical_forfaits(widgets)
-                if not forfaits["enabled"] or not _has_price(forfaits):
-                    continue
-                forfaits["tariff_mode"] = "legacy"
+            widgets = StationWidgets.from_json(resort.stationwidgets.config)
+            forfaits = _canonical_forfaits(widgets)
+            if not forfaits["enabled"] or not _has_price(forfaits):
+                continue
             stations.append({
                 "id": resort.id,
                 "name": resort.name,

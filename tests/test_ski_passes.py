@@ -115,26 +115,14 @@ class PublicSerializationTests(unittest.TestCase):
         self.assertEqual(body["passes"][0]["prices"][0]["category"], "teen")
 
     @patch("app.routes.ski_passes.serialize_season", return_value={"station_slug": "chamonix", "season": "2026-2027"})
-    @patch("app.routes.ski_passes._active_season_for", return_value=object())
+    @patch("app.routes.ski_passes._season_for", return_value=object())
     @patch("app.routes.ski_passes.Resort.get_or_none", return_value=MagicMock(is_active=True))
-    def test_public_endpoint_returns_selected_active_season(self, resort_get, season_for, serializer):
+    def test_public_endpoint_returns_selected_season(self, resort_get, season_for, serializer):
         app = Flask(__name__); app.register_blueprint(bp_ski_passes)
         response = app.test_client().get("/api/forfaits/stations/chamonix?season=2026-2027")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["season"], "2026-2027")
         season_for.assert_called_once_with("chamonix", "2026-2027")
-
-    @patch("app.routes.ski_passes._legacy_for", return_value={
-        "enabled": True, "items": [{"title": "Journée", "price": "45,00"}],
-    })
-    @patch("app.routes.ski_passes._active_season_for", return_value=None)
-    @patch("app.routes.ski_passes.Resort.get_or_none", return_value=MagicMock(is_active=True))
-    def test_public_endpoint_falls_back_to_enabled_legacy(self, resort_get, season_for, legacy_for):
-        app = Flask(__name__); app.register_blueprint(bp_ski_passes)
-        response = app.test_client().get("/api/forfaits/stations/chamonix")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["tariff_mode"], "legacy")
-        self.assertEqual(response.get_json()["legacy"]["items"][0]["price"], "45,00")
 
 
 if __name__ == "__main__":

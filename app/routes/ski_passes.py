@@ -1,10 +1,6 @@
 from flask import Blueprint, jsonify, request
 from app.models.resort import Resort
 from app.models.ski_pass import SkiPassSeason
-from app.models.station_widgets import StationWidgets
-from app.models.base import db
-from app.datetime_utils import utcnow
-from app.routes.stations_widgets import _canonical_forfaits, _has_price
 from app.services.ski_passes import import_result, preview, replace_grid, serialize_season
 
 bp_ski_passes = Blueprint("ski_passes", __name__, url_prefix="/api/forfaits")
@@ -22,24 +18,6 @@ def _season_for(slug, season_name=None):
     else:
         query = query.order_by(SkiPassSeason.season.desc())
     return query.first()
-
-
-def _active_season_for(slug, season_name=None):
-    query = (SkiPassSeason.select(SkiPassSeason, Resort).join(Resort)
-             .where((Resort.slug == slug) & (SkiPassSeason.is_active == True)))
-    if season_name:
-        query = query.where(SkiPassSeason.season == season_name)
-    return query.order_by(SkiPassSeason.updated_at.desc(), SkiPassSeason.id.desc()).first()
-
-
-def _legacy_for(slug):
-    """Read the historical JSON verbatim; never infer normalized data from it."""
-    row = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
-    if row is None:
-        return None
-    config = StationWidgets.from_json(row.config)
-    value = config.get("forfaits") if isinstance(config, dict) else None
-    return value if isinstance(value, dict) else None
 
 
 def _station_payload(slug):
@@ -82,16 +60,10 @@ def public_grid(slug):
     resort = Resort.get_or_none(Resort.slug == slug)
     if resort is None or not resort.is_active:
         return jsonify({"error": "station_not_found"}), 404
-    season = _active_season_for(slug, request.args.get("season"))
-    if season is not None:
-        result = serialize_season(season)
-        result["tariff_mode"] = "normalized"
-        return jsonify(result)
-    legacy = _legacy_for(slug)
-    canonical = _canonical_forfaits({"forfaits": legacy}) if legacy is not None else None
-    if canonical and canonical["enabled"] and _has_price(canonical):
-        return jsonify({"tariff_mode": "legacy", "legacy": legacy, "forfaits": canonical})
-    return jsonify({"error": "ski_pass_tariffs_not_published"}), 404
+    season = _season_for(slug, request.args.get("season"))
+    if season is None:
+        return jsonify({"error": "ski_pass_season_not_found"}), 404
+    return jsonify(serialize_season(season))
 
 
 @bp_admin_ski_passes.get("/stations/<string:slug>")
@@ -112,17 +84,9 @@ def admin_station_grids(slug):
     """Station-editor read contract; always returns a stable seasons envelope."""
     if Resort.get_or_none(Resort.slug == slug) is None:
         return jsonify({"error": "station_not_found", "message": "Station inexistante"}), 404
-    seasons = list(SkiPassSeason.select(SkiPassSeason, Resort).join(Resort)
+    seasons = (SkiPassSeason.select(SkiPassSeason, Resort).join(Resort)
                .where(Resort.slug == slug).order_by(SkiPassSeason.season.desc()))
-    serialized = [serialize_season(season) for season in seasons]
-    legacy = _legacy_for(slug)
-    return jsonify({
-        "tariff_mode": "normalized" if serialized else "legacy",
-        "normalized": {"seasons": serialized} if serialized else None,
-        "legacy": None if serialized else legacy,
-        # Kept for clients deployed with the first normalized editor contract.
-        "seasons": serialized,
-    })
+    return jsonify({"seasons": [serialize_season(season) for season in seasons]})
 
 
 @bp_admin_ski_passes.post("/import/preview")
@@ -160,27 +124,6 @@ def update_station_grid(slug, season_id):
         return jsonify({"error": "ski_pass_season_not_found", "message": "Saison inexistante"}), 404
     payload = _station_payload(slug)
     return _persist(payload, target_season=existing)
-
-
-@bp_admin_station_ski_passes.patch("/<string:slug>/ski-passes/<int:season_id>/activation")
-def activate_station_grid(slug, season_id):
-    """Publish/unpublish a season, allowing at most one active grid per station."""
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict) or type(payload.get("is_active")) is not bool:
-        return jsonify({"error": "invalid_is_active", "message": "is_active doit être un booléen"}), 400
-    season = (SkiPassSeason.select(SkiPassSeason, Resort).join(Resort)
-              .where((SkiPassSeason.id == season_id) & (Resort.slug == slug)).first())
-    if season is None:
-        return jsonify({"error": "ski_pass_season_not_found", "message": "Saison inexistante"}), 404
-    with db.atomic():
-        if payload["is_active"]:
-            (SkiPassSeason.update(is_active=False)
-             .where((SkiPassSeason.resort == season.resort) & (SkiPassSeason.id != season.id))
-             .execute())
-        season.is_active = payload["is_active"]
-        season.updated_at = utcnow()
-        season.save(only=[SkiPassSeason.is_active, SkiPassSeason.updated_at])
-    return jsonify({"ok": True, "season": serialize_season(season)})
 
 
 @bp_admin_ski_passes.delete("/stations/<string:slug>/seasons/<string:season_name>")
