@@ -26,7 +26,9 @@ from app.routes.uploads import bp_uploads
 from app.routes.admin_resort_import import bp_resort_json
 from app.services.admin_auth import protect_admin_routes
 from app.routes.admin_auth import bp_admin_auth
-from app.routes.ski_passes import bp_ski_passes, bp_admin_ski_passes
+from app.routes.ski_passes import (
+    bp_admin_ski_passes, bp_admin_station_ski_passes, bp_ski_passes,
+)
 from app.cli import register_admin_commands
 
 
@@ -51,6 +53,10 @@ def _env_list(name, default=""):
 def create_app(config=None):
     load_dotenv()
     app = Flask(__name__)
+    # These are the two production origins already used by Snow Explorer.  In
+    # particular, keep a safe admin default: an empty origin list makes every
+    # browser preflight fail when ADMIN_ALLOWED_ORIGINS is not set on Render.
+    snow_explorer_origins = "https://www.snow-explorer.com,https://snow-explorer.com"
     app.config.update(
         RESORT_IMPORT_SECRET=os.getenv("RESORT_IMPORT_SECRET"),
         ADMIN_SESSION_SECRET=os.getenv("ADMIN_SESSION_SECRET"),
@@ -59,9 +65,9 @@ def create_app(config=None):
         ADMIN_SESSION_TOUCH_INTERVAL_SECONDS=int(os.getenv("ADMIN_SESSION_TOUCH_INTERVAL_SECONDS", "300")),
         ADMIN_COOKIE_SECURE=_env_bool("ADMIN_COOKIE_SECURE", True),
         ADMIN_COOKIE_SAMESITE=_env_cookie_samesite(),
-        ADMIN_ALLOWED_ORIGINS=_env_list("ADMIN_ALLOWED_ORIGINS"),
-        API_ALLOWED_ORIGINS=_env_list("API_ALLOWED_ORIGINS", "https://www.snow-explorer.com"),
-        S3_ALLOWED_ORIGINS=_env_list("S3_ALLOWED_ORIGINS", "https://www.snow-explorer.com"),
+        ADMIN_ALLOWED_ORIGINS=_env_list("ADMIN_ALLOWED_ORIGINS", snow_explorer_origins),
+        API_ALLOWED_ORIGINS=_env_list("API_ALLOWED_ORIGINS", snow_explorer_origins),
+        S3_ALLOWED_ORIGINS=_env_list("S3_ALLOWED_ORIGINS", snow_explorer_origins),
         ADMIN_LOGIN_RATE_LIMIT=int(os.getenv("ADMIN_LOGIN_RATE_LIMIT", "5")),
         ADMIN_LOGIN_RATE_WINDOW_SECONDS=int(os.getenv("ADMIN_LOGIN_RATE_WINDOW_SECONDS", "900")),
         TRUST_PROXY_HEADERS=_env_bool("TRUST_PROXY_HEADERS", False),
@@ -84,7 +90,8 @@ def create_app(config=None):
         r"/api/admin/*": {
             "origins": app.config["ADMIN_ALLOWED_ORIGINS"],
             "supports_credentials": True,
-            "allow_headers": ["Content-Type", "X-CSRF-Token"],
+            "allow_headers": ["Content-Type", "X-CSRF-Token", "Authorization"],
+            "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         },
         r"/api/*": {
             "origins": app.config["API_ALLOWED_ORIGINS"],
@@ -116,6 +123,7 @@ def create_app(config=None):
     app.register_blueprint(bp_admin_auth)
     app.register_blueprint(bp_ski_passes)
     app.register_blueprint(bp_admin_ski_passes)
+    app.register_blueprint(bp_admin_station_ski_passes)
     # Le front historique utilise ``/api/admin/stations`` tandis que les
     # routes d'import/export ont d'abord été publiées sous ``resorts``.
     # Enregistrer le même blueprint une seconde fois garde les deux contrats

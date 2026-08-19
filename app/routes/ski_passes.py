@@ -5,6 +5,9 @@ from app.services.ski_passes import preview, replace_grid, serialize_season
 
 bp_ski_passes = Blueprint("ski_passes", __name__, url_prefix="/api/forfaits")
 bp_admin_ski_passes = Blueprint("admin_ski_passes", __name__, url_prefix="/api/admin/ski-passes")
+bp_admin_station_ski_passes = Blueprint(
+    "admin_station_ski_passes", __name__, url_prefix="/api/admin/stations"
+)
 
 
 def _season_for(slug, season_name=None):
@@ -44,6 +47,19 @@ def admin_grid(slug):
 @bp_admin_ski_passes.post("/import/preview")
 def preview_import():
     payload = request.get_json(silent=True)
+    result = preview(payload)
+    return jsonify(result), 200 if result["valid"] else 422
+
+
+@bp_admin_station_ski_passes.post("/<string:slug>/forfaits/preview")
+def preview_station_import(slug):
+    """Preview URL used by the station editor in the Vercel frontend."""
+    payload = request.get_json(silent=True)
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        # The station-scoped URL is authoritative; the frontend does not need
+        # to duplicate the slug in the imported JSON document.
+        payload["station_slug"] = slug
     result = preview(payload)
     return jsonify(result), 200 if result["valid"] else 422
 
