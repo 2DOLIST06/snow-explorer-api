@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 
 from flask import Flask
 from peewee import SqliteDatabase
@@ -51,6 +52,9 @@ class RegionRoutesTests(unittest.TestCase):
         self.assertEqual(
             [region["id"] for region in response.get_json()],
             ["auvergne-rhone-alpes", "provence-alpes-cote-d-azur"],
+        )
+        self.assertTrue(
+            all(region["updated_at"] for region in response.get_json())
         )
 
     def test_paca_detail_uses_corrected_database_identifier(self):
@@ -117,6 +121,10 @@ class RegionRoutesTests(unittest.TestCase):
         )
 
     def test_editor_can_read_and_update_sanitized_content(self):
+        old = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        Region.update(updated_at=old).where(
+            Region.id == "auvergne-rhone-alpes"
+        ).execute()
         response = self.client.patch(
             "/api/admin/regions/auvergne-rhone-alpes",
             json={
@@ -127,6 +135,7 @@ class RegionRoutesTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         region = response.get_json()["region"]
         self.assertEqual(region["description_html"], "<p>Découvrez <strong>les Alpes</strong>.</p>")
+        self.assertGreater(datetime.fromisoformat(region["updated_at"]), old)
         self.assertEqual(
             self.client.get("/api/admin/regions/auvergne-rhone-alpes").get_json()["region"],
             region,

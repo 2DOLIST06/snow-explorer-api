@@ -5,7 +5,8 @@ create table if not exists regions (
   country_code text default 'FR',
   description_html text,
   meta_title text,
-  meta_description text
+  meta_description text,
+  updated_at timestamptz not null default now()
 );
 
 -- Departments
@@ -32,7 +33,8 @@ create table if not exists resorts (
   altitude_max_m integer,
   season_open_date date,
   season_close_date date,
-  is_active boolean not null default true
+  is_active boolean not null default true,
+  updated_at timestamptz not null default now()
 );
 
 -- Widgets par station (JSONB)
