@@ -69,11 +69,27 @@ class PublicForfaitsTests(unittest.TestCase):
             "forfaits": {"enabled": True, "items": [{"title": "Journée", "price": "42"}]},
         })})()
         with patch("app.routes.stations_widgets.get_public_active_resort_or_404"), patch(
+            "app.routes.stations_widgets._active_normalized_grid", return_value=None
+        ), patch(
             "app.routes.stations_widgets.StationWidgets.get_or_none", return_value=row
         ):
             response = self.client.get("/api/stations/auron/widgets")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["forfaits"]["items"][0]["prices"], {"price": "42"})
+
+    def test_published_normalized_grid_supersedes_legacy_switch(self):
+        row = type("Row", (), {"config": StationWidgets.to_json({
+            "forfaits": {"enabled": False, "items": [{"title": "Ancien", "price": "1"}]},
+        })})()
+        normalized = {"id": 7, "is_active": True, "periods": [], "passes": []}
+        with patch("app.routes.stations_widgets.get_public_active_resort_or_404"), patch(
+            "app.routes.stations_widgets._active_normalized_grid", return_value=normalized
+        ), patch("app.routes.stations_widgets.StationWidgets.get_or_none", return_value=row):
+            response = self.client.get("/api/stations/auron/widgets")
+        forfaits = response.get_json()["forfaits"]
+        self.assertTrue(forfaits["enabled"])
+        self.assertEqual(forfaits["tariff_mode"], "normalized")
+        self.assertEqual(forfaits["normalized"], normalized)
 
 
 if __name__ == "__main__":
