@@ -2,7 +2,7 @@ import sys
 import types
 import unittest
 from unittest.mock import patch
-from datetime import date
+from datetime import date, datetime, timezone
 
 from flask import Flask
 from peewee import SqliteDatabase
@@ -77,6 +77,21 @@ class PublicResortsTests(unittest.TestCase):
         self.assertEqual(resort["region"]["name"], "Provence-Alpes-Côte d’Azur")
         self.assertEqual(
             resort["cover_image_url"], "https://cdn.example.test/auron.jpg"
+        )
+        self.assertIsNotNone(datetime.fromisoformat(resort["updated_at"]).tzinfo)
+
+    def test_widget_change_updates_public_station_timestamp(self):
+        old = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        resort = self.create_resort("1", "Auron", "auron", updated_at=old)
+
+        StationWidgets.create(station_slug="auron", config="{}")
+        resort = Resort.get_by_id(resort.id)
+
+        self.assertGreater(resort.updated_at, old)
+        response = self.client.get("/api/resorts/auron")
+        self.assertEqual(
+            datetime.fromisoformat(response.get_json()["updated_at"]),
+            resort.updated_at,
         )
 
     def test_search_matches_name_case_insensitively_and_combines_with_active(self):

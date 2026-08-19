@@ -14,6 +14,7 @@ from app.models.lift import Lift
 from app.models.piste import Piste
 from app.models.resort import Resort
 from app.models.station_widgets import StationWidgets
+from app.datetime_utils import utcnow
 
 SCHEMA_VERSION = "1.0"
 MAX_FILE_SIZE = 1024 * 1024
@@ -278,7 +279,9 @@ def apply_record(resort, record):
         if field in DATE_FIELDS and value is not None: value = date.fromisoformat(value)
         if getattr(resort, field) != value:
             setattr(resort, field, value); updated.append("station." + field)
-    resort.save()
+    if updated:
+        resort.updated_at = utcnow()
+        resort.save()
     if resort.slug != old_slug:
         widget_row = StationWidgets.get_or_none(StationWidgets.station_slug == old_slug)
         if widget_row:
@@ -289,9 +292,9 @@ def apply_record(resort, record):
         data = record[block]; widget = dict(cfg.get(block, {})) if isinstance(cfg.get(block), dict) else {}
         for key, value in data.items():
             if block == "pistes" and key in {"small_map_url", "large_map_url", "caption"}:
-                attr = "pistes_" + key; setattr(resort, attr, value); resort.save(); relation_updates.append(f"pistes.{key}"); continue
+                attr = "pistes_" + key; setattr(resort, attr, value); resort.updated_at = utcnow(); resort.save(); relation_updates.append(f"pistes.{key}"); continue
             if block == "snowpark" and key in {"map_url", "caption"}:
-                attr = "snowpark_" + key; setattr(resort, attr, value); resort.save(); relation_updates.append(f"snowpark.{key}"); continue
+                attr = "snowpark_" + key; setattr(resort, attr, value); resort.updated_at = utcnow(); resort.save(); relation_updates.append(f"snowpark.{key}"); continue
             if block == "pistes" and key == "items": _replace_pistes(resort, value); relation_updates.append("pistes.items"); continue
             if block == "remontees" and key == "items": _replace_lifts(resort, value); relation_updates.append("remontees.items"); continue
             if block in {"pistes", "remontees"}: continue
@@ -300,6 +303,8 @@ def apply_record(resort, record):
     row = StationWidgets.get_or_none(StationWidgets.station_slug == resort.slug)
     if row: row.config = StationWidgets.to_json(cfg); row.save()
     elif cfg: StationWidgets.create(station_slug=resort.slug, config=StationWidgets.to_json(cfg))
+    elif relation_updates:
+        Resort.update(updated_at=utcnow()).where(Resort.id == resort.id).execute()
     return updated, relation_updates
 
 

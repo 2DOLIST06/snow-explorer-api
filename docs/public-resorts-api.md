@@ -41,6 +41,7 @@ Exemple de réponse (champs additionnels omis ici) :
     "name": "Auron",
     "slug": "auron",
     "is_active": true,
+    "updated_at": "2026-08-19T10:30:00+00:00",
     "region": {
       "id": "provence-alpes-cote-d-azur",
       "name": "Provence-Alpes-Côte d’Azur",
@@ -50,6 +51,10 @@ Exemple de réponse (champs additionnels omis ici) :
   }
 ]
 ```
+
+`updated_at` est un horodatage ISO 8601 en UTC. Il est actualisé lorsqu'une
+station ou sa configuration de widgets est modifiée et peut être utilisé comme
+valeur `lastmod` de la page correspondante dans le sitemap.
 
 Pour un fetch Next.js exécuté pendant le build ou côté serveur, définir
 `API_URL` avec l'origine joignable du backend (par exemple

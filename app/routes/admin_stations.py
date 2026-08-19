@@ -5,6 +5,7 @@ from app.models.base import db
 from app.models.resort import Resort
 from app.models.station_widgets import StationWidgets
 from app.services.public_cache import bump_public_resorts_version
+from app.datetime_utils import utcnow
 import json
 import re
 import uuid
@@ -321,7 +322,9 @@ def patch_resort_admin(slug):
                 else:
                     setattr(r, f, payload[f])
         # le slug n’est pas modifié ici (stabilité des URLs)
-        r.save()
+        if payload_for_validation:
+            r.updated_at = utcnow()
+            r.save()
 
     if is_active_changed:
         bump_public_resorts_version()
@@ -336,7 +339,7 @@ def bulk_activation():
     if not isinstance(is_active, bool):
         abort(400, "is_active doit être un booléen")
 
-    query = Resort.update({Resort.is_active: is_active})
+    query = Resort.update({Resort.is_active: is_active, Resort.updated_at: utcnow()})
     slug_prefix = payload.get("slug_prefix")
     if slug_prefix:
         query = query.where(Resort.slug.startswith(slug_prefix))

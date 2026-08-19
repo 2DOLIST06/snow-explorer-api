@@ -2,6 +2,7 @@ from peewee import (
     Model, CharField, TextField, IntegerField, FloatField, BooleanField, DateField
 )
 from app.models.base import db
+from app.datetime_utils import UTCDateTimeField, utcnow
 from datetime import date
 import unicodedata, re
 
@@ -87,6 +88,9 @@ class Resort(Model):
     season_open_date  = DateField(null=True)
     season_close_date = DateField(null=True)
 
+    # Horodatage éditorial utilisé notamment par le sitemap.
+    updated_at = UTCDateTimeField(default=utcnow)
+
     class Meta:
         database = db
         table_name = "resort"
@@ -143,10 +147,10 @@ class Resort(Model):
 
             "season_open_date": _fmt_date(self.season_open_date),
             "season_close_date": _fmt_date(self.season_close_date),
+            "updated_at": _fmt_date(self.updated_at),
 
             "is_active": bool(self.is_active) if self.is_active is not None else True,
         }
 
     def __str__(self) -> str:
         return f"<Resort {self.id} {self.name}>"
-

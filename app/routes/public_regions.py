@@ -23,6 +23,7 @@ def list_regions():
                 "id": public_id,
                 "name": region.name,
                 "country_code": region.country_code,
+                "updated_at": region.updated_at.isoformat() if region.updated_at else None,
             }
     return jsonify(sorted(payload.values(), key=lambda item: (item["name"], item["id"]))), 200
 

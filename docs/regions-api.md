@@ -15,9 +15,15 @@ les stations désactivées sont exclues.
   "description_html": "<p>Découvrez les stations de la région.</p>",
   "meta_title": "Stations de ski en Auvergne-Rhône-Alpes",
   "meta_description": "Toutes les stations de la région.",
+  "updated_at": "2026-08-19T10:30:00+00:00",
   "stations": []
 }
 ```
+
+`updated_at` est l'horodatage ISO 8601 UTC de la dernière modification du
+contenu éditorial de la région. Il est également présent dans `GET
+/api/regions` afin que le générateur de sitemap n'ait pas à charger chaque
+fiche séparément.
 
 Une région inconnue renvoie un statut `404` et l'erreur `region_not_found`.
 
