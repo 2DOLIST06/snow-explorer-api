@@ -14,6 +14,7 @@ from app.models.resort_import_history import ResortImportHistory
 from app.models.admin_user import AdminUser
 from app.models.admin_session import AdminSession
 from app.models.admin_login_attempt import AdminLoginAttempt
+from app.models.ski_pass import SkiPassSeason, SkiPassPeriod, SkiPassProduct, SkiPassPrice
 from app.routes.public_resorts import bp_public, bp_public_stations
 from app.routes.admin_resorts import bp_admin
 from app.routes.stations_widgets import bp_forfaits, bp_widgets
@@ -25,6 +26,7 @@ from app.routes.uploads import bp_uploads
 from app.routes.admin_resort_import import bp_resort_json
 from app.services.admin_auth import protect_admin_routes
 from app.routes.admin_auth import bp_admin_auth
+from app.routes.ski_passes import bp_ski_passes, bp_admin_ski_passes
 from app.cli import register_admin_commands
 
 
@@ -95,7 +97,8 @@ def create_app(config=None):
     if not app.config.get("SKIP_DATABASE_INIT"):
         db.connect(reuse_if_open=True)
         db.create_tables([Region, Resort, Piste, Lift, ResortMap, StationWidgets, ResortImportHistory,
-                          AdminUser, AdminSession, AdminLoginAttempt])
+                          AdminUser, AdminSession, AdminLoginAttempt, SkiPassSeason,
+                          SkiPassPeriod, SkiPassProduct, SkiPassPrice])
         db.close()
 
     # Enregistrement des blueprints
@@ -111,6 +114,8 @@ def create_app(config=None):
     app.register_blueprint(bp_uploads)
     app.register_blueprint(bp_resort_json)
     app.register_blueprint(bp_admin_auth)
+    app.register_blueprint(bp_ski_passes)
+    app.register_blueprint(bp_admin_ski_passes)
     # Le front historique utilise ``/api/admin/stations`` tandis que les
     # routes d'import/export ont d'abord été publiées sous ``resorts``.
     # Enregistrer le même blueprint une seconde fois garde les deux contrats
