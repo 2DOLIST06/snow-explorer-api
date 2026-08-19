@@ -20,6 +20,16 @@ def _season_for(slug, season_name=None):
     return query.first()
 
 
+def _station_payload(slug):
+    payload = request.get_json(silent=True)
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        # The station-scoped URL is authoritative; the frontend does not need
+        # to duplicate the slug in the imported JSON document.
+        payload["station_slug"] = slug
+    return payload
+
+
 @bp_ski_passes.get("/stations/<string:slug>")
 def public_grid(slug):
     resort = Resort.get_or_none(Resort.slug == slug)
@@ -54,14 +64,18 @@ def preview_import():
 @bp_admin_station_ski_passes.post("/<string:slug>/forfaits/preview")
 def preview_station_import(slug):
     """Preview URL used by the station editor in the Vercel frontend."""
-    payload = request.get_json(silent=True)
-    if isinstance(payload, dict):
-        payload = dict(payload)
-        # The station-scoped URL is authoritative; the frontend does not need
-        # to duplicate the slug in the imported JSON document.
-        payload["station_slug"] = slug
-    result = preview(payload)
+    result = preview(_station_payload(slug))
     return jsonify(result), 200 if result["valid"] else 422
+
+
+@bp_admin_station_ski_passes.post("/<string:slug>/forfaits/import")
+def confirm_station_import(slug):
+    """Import URL used by the station editor in the Vercel frontend."""
+    payload = _station_payload(slug)
+    season, errors = replace_grid(payload)
+    if errors:
+        return jsonify(preview(payload)), 422
+    return jsonify({"ok": True, "grid": serialize_season(season)}), 200
 
 
 @bp_admin_ski_passes.post("/import")

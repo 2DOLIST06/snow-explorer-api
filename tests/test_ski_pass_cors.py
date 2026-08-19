@@ -13,6 +13,7 @@ from app.services.admin_auth import hash_password
 
 ORIGIN = "https://www.snow-explorer.com"
 PREVIEW_ROUTE = "/api/admin/stations/chamonix/forfaits/preview"
+IMPORT_ROUTE = "/api/admin/stations/chamonix/forfaits/import"
 MODELS = [AdminUser, AdminSession, AdminLoginAttempt]
 
 
@@ -101,6 +102,30 @@ class SkiPassCorsTests(unittest.TestCase):
             })
         self.assertEqual(response.status_code, 200)
         self.assertEqual(validate.call_args.args[0]["station_slug"], "chamonix")
+        self.assert_cors(response)
+
+    def test_import_preflight_and_post_use_exact_frontend_url(self):
+        preflight = self.client.options(IMPORT_ROUTE, headers={
+            "Origin": ORIGIN,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,x-csrf-token",
+        })
+        self.assertEqual(preflight.status_code, 200)
+        self.assert_cors(preflight)
+        self.assertIn("POST", preflight.headers["Access-Control-Allow-Methods"])
+
+        csrf = self.login()
+        season = object()
+        with (
+            patch("app.routes.ski_passes.replace_grid", return_value=(season, [])) as replace,
+            patch("app.routes.ski_passes.serialize_season", return_value={"season": "2026-2027"}),
+        ):
+            response = self.client.post(IMPORT_ROUTE, json={"season": "2026-2027"}, headers={
+                "Origin": ORIGIN,
+                "X-CSRF-Token": csrf,
+            })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(replace.call_args.args[0]["station_slug"], "chamonix")
         self.assert_cors(response)
 
     def test_unhandled_preview_error_keeps_cors_headers(self):
