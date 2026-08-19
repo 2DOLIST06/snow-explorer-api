@@ -1,6 +1,6 @@
 from peewee import (
     AutoField, CharField, Check, DateField, DecimalField, ForeignKeyField,
-    IntegerField, TextField,
+    BooleanField, IntegerField, TextField,
 )
 
 from app.datetime_utils import UTCDateTimeField, utcnow
@@ -14,6 +14,7 @@ class SkiPassSeason(BaseModel):
     season = CharField()
     currency = CharField(max_length=3, default="EUR")
     source_url = TextField(null=True)
+    is_active = BooleanField(default=False)
     created_at = UTCDateTimeField(default=utcnow)
     updated_at = UTCDateTimeField(default=utcnow)
 
