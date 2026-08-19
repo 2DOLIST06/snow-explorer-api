@@ -12,7 +12,7 @@ Appliquer d'abord `migrations/20260802_add_admin_authentication.sql`, puis défi
 | `ADMIN_SESSION_TOUCH_INTERVAL_SECONDS` | `300` (limite les écritures `last_seen_at`) |
 | `ADMIN_COOKIE_SECURE` | `true` en production; `false` explicitement en HTTP local uniquement |
 | `ADMIN_COOKIE_SAMESITE` | `None` pour le front de production cross-site (la chaîne littérale, avec `ADMIN_COOKIE_SECURE=true`) |
-| `ADMIN_ALLOWED_ORIGINS` | origines exactes séparées par des virgules, p. ex. `https://<front-production>` |
+| `ADMIN_ALLOWED_ORIGINS` | origines exactes séparées par des virgules; par défaut `https://www.snow-explorer.com,https://snow-explorer.com` |
 | `ADMIN_LOGIN_RATE_LIMIT` | `5` |
 | `ADMIN_LOGIN_RATE_WINDOW_SECONDS` | `900` |
 | `TRUST_PROXY_HEADERS` | `true` uniquement derrière un proxy de confiance qui remplace `X-Forwarded-For` |
