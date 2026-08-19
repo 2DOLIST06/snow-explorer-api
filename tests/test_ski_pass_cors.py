@@ -12,7 +12,7 @@ from app.services.admin_auth import hash_password
 
 
 ORIGIN = "https://www.snow-explorer.com"
-PREVIEW_ROUTE = "/api/admin/ski-passes/import/preview"
+PREVIEW_ROUTE = "/api/admin/stations/chamonix/forfaits/preview"
 MODELS = [AdminUser, AdminSession, AdminLoginAttempt]
 
 
@@ -82,14 +82,26 @@ class SkiPassCorsTests(unittest.TestCase):
         forbidden = self.client.post(
             PREVIEW_ROUTE, json={}, headers={"Origin": ORIGIN}
         )
-        invalid = self.client.post(PREVIEW_ROUTE, json={}, headers={
-            "Origin": ORIGIN,
-            "X-CSRF-Token": csrf,
-        })
+        with patch("app.routes.ski_passes.preview", return_value={"valid": False}):
+            invalid = self.client.post(PREVIEW_ROUTE, json={}, headers={
+                "Origin": ORIGIN,
+                "X-CSRF-Token": csrf,
+            })
         self.assertEqual(forbidden.status_code, 403)
         self.assertEqual(invalid.status_code, 422)
         self.assert_cors(forbidden)
         self.assert_cors(invalid)
+
+    def test_station_preview_injects_slug_from_frontend_url(self):
+        csrf = self.login()
+        with patch("app.routes.ski_passes.preview", return_value={"valid": True}) as validate:
+            response = self.client.post(PREVIEW_ROUTE, json={"season": "2026-2027"}, headers={
+                "Origin": ORIGIN,
+                "X-CSRF-Token": csrf,
+            })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(validate.call_args.args[0]["station_slug"], "chamonix")
+        self.assert_cors(response)
 
     def test_unhandled_preview_error_keeps_cors_headers(self):
         csrf = self.login()
