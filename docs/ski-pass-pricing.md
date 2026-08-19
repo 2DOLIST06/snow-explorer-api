@@ -24,6 +24,8 @@ comme `sort_order` par l'API publique.
   paramètre, la saison au libellé le plus récent est renvoyée.
 * `GET /api/admin/ski-passes/stations/{slug}?season=...` : une grille ou toutes
   les saisons de la station.
+* `GET /api/admin/stations/{slug}/ski-passes` : toutes les saisons dans une
+  enveloppe `seasons`, avec les identifiants de base nécessaires à l'éditeur.
 * `POST /api/admin/ski-passes/import/preview` : validation sans écriture.
 * `POST /api/admin/stations/{slug}/forfaits/preview` : même validation via
   l'URL utilisée par l'éditeur de station; le slug de l'URL est injecté dans le
@@ -31,6 +33,8 @@ comme `sort_order` par l'API publique.
 * `POST /api/admin/ski-passes/import` : remplacement transactionnel.
 * `POST /api/admin/stations/{slug}/forfaits/import` : même remplacement via
   l'URL utilisée par l'éditeur de station.
+* `PUT /api/admin/stations/{slug}/ski-passes/{season_id}` : sauvegarde
+  transactionnelle de toute la grille éditée. L'admin recharge ensuite le GET.
 * `DELETE /api/admin/ski-passes/stations/{slug}/seasons/{season}` : suppression.
 
 Toutes les routes `/api/admin/*` utilisent la protection centralisée de session
