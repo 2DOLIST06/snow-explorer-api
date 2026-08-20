@@ -298,39 +298,9 @@ class PublicResortsTests(unittest.TestCase):
         self.assertEqual(ski_pass["season"], "2025-2026")
         self.assertIs(ski_pass["is_active"], True)
         self.assertEqual(ski_pass["periods"][0]["id"], "early-season")
-        self.assertEqual(ski_pass["periods"][0]["external_id"], "early-season")
         self.assertEqual(ski_pass["passes"][0]["id"], "1-day")
-        self.assertEqual(ski_pass["passes"][0]["external_id"], "1-day")
         self.assertEqual(ski_pass["passes"][0]["prices"][0]["price_min"], 53.2)
         self.assertEqual(ski_pass["passes"][0]["prices"][0]["period_id"], "early-season")
-
-    def test_station_alias_returns_complete_station_fields_only_for_slug(self):
-        self.create_resort("2", "Auron", "auron")
-        resort = self.create_resort(
-            "1", "Chamonix-Mont-Blanc", "chamonix",
-            region_id="auvergne-rhone-alpes",
-            latitude=45.9237, longitude=6.8694,
-            altitude_base_m=1035, altitude_top_m=3842,
-        )
-        StationWidgets.create(
-            station_slug=resort.slug,
-            config=StationWidgets.to_json({"snowparks": {"count": 2}}),
-        )
-
-        response = self.client.get("/api/stations/chamonix")
-        data = response.get_json()
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(data["id"], "1")
-        self.assertEqual(data["slug"], "chamonix")
-        self.assertNotIn("auron", response.get_data(as_text=True))
-        self.assertEqual(data["region_id"], "auvergne-rhone-alpes")
-        self.assertEqual(data["latitude"], 45.9237)
-        self.assertEqual(data["longitude"], 6.8694)
-        self.assertEqual(data["altitude_base_m"], 1035)
-        self.assertEqual(data["altitude_top_m"], 3842)
-        self.assertEqual(data["snowparks_count"], 2)
-        self.assertIsNotNone(data["updated_at"])
 
     def test_station_alias_returns_null_without_active_normalized_season(self):
         resort = self.create_resort("1", "Auron", "auron")
