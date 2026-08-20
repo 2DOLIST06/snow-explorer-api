@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from flask import Flask
 
+from app.models.ski_pass import SkiPassSeason
 from app.routes.ski_passes import bp_admin_station_ski_passes, bp_ski_passes
 from app.services.ski_passes import preview, replace_grid, serialize_season
 
@@ -106,9 +107,10 @@ class PublicSerializationTests(unittest.TestCase):
         period = MagicMock(id=1, external_id="high", name="Haute", start_date=date(2026, 12, 1), end_date=date(2027, 3, 1), sort_order=0)
         fixed = MagicMock(id=1, period=period, category="teen", category_label="Jeune", price_type="fixed", price=42, price_min=None, price_max=None, dynamic_label=None, sort_order=0)
         product = MagicMock(id=1, external_id="day", name="Journée", duration_days=1, duration_label="1 jour", sort_order=0, prices=[fixed])
-        season = MagicMock(id=9, season="2026-2027", currency="EUR", source_url="https://example.test", resort=MagicMock(slug="chamonix"), periods=[period], products=[product])
+        season = MagicMock(id=9, season="2026-2027", is_active=True, currency="EUR", source_url="https://example.test", resort=MagicMock(slug="chamonix"), periods=[period], products=[product])
         body = serialize_season(season, date(2027, 1, 2))
         self.assertEqual(body["id"], 9)
+        self.assertTrue(body["is_active"])
         self.assertEqual(body["periods"][0]["db_id"], 1)
         self.assertEqual(body["passes"][0]["prices"][0]["id"], 1)
         self.assertEqual(body["current_period_id"], "high")
@@ -122,7 +124,46 @@ class PublicSerializationTests(unittest.TestCase):
         response = app.test_client().get("/api/forfaits/stations/chamonix?season=2026-2027")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["season"], "2026-2027")
-        season_for.assert_called_once_with("chamonix", "2026-2027")
+        season_for.assert_called_once_with("chamonix", "2026-2027", active_only=True)
+
+    @patch("app.routes.ski_passes._season_for", return_value=None)
+    @patch("app.routes.ski_passes.Resort.get_or_none", return_value=MagicMock(is_active=True))
+    def test_public_endpoint_never_returns_an_inactive_season(self, resort_get, season_for):
+        app = Flask(__name__); app.register_blueprint(bp_ski_passes)
+        response = app.test_client().get("/api/forfaits/stations/chamonix?season=2025-2026")
+        self.assertEqual(response.status_code, 404)
+        season_for.assert_called_once_with("chamonix", "2025-2026", active_only=True)
+
+
+class SkiPassActivationTests(unittest.TestCase):
+    @patch("app.routes.ski_passes.bump_public_resorts_version")
+    @patch("app.routes.ski_passes.serialize_season", return_value={"id": 9, "is_active": True})
+    @patch("app.routes.ski_passes.db.atomic", return_value=nullcontext())
+    @patch("app.routes.ski_passes.SkiPassSeason.update")
+    @patch("app.routes.ski_passes.SkiPassSeason.select")
+    def test_activation_is_exclusive_and_does_not_delete_data(self, select, update, atomic, serialize, bump):
+        season = MagicMock(id=9, is_active=False, resort=MagicMock())
+        select.return_value.join.return_value.where.return_value.first.return_value = season
+        update.return_value.where.return_value.execute.return_value = 1
+        app = Flask(__name__); app.register_blueprint(bp_admin_station_ski_passes)
+
+        response = app.test_client().patch(
+            "/api/admin/stations/chamonix/ski-passes/9", json={"is_active": True}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(season.is_active)
+        season.save.assert_called_once_with(only=[SkiPassSeason.is_active])
+        update.assert_called_once_with(is_active=False)
+        bump.assert_called_once_with()
+
+    def test_activation_rejects_price_or_unknown_fields(self):
+        app = Flask(__name__); app.register_blueprint(bp_admin_station_ski_passes)
+        response = app.test_client().patch(
+            "/api/admin/stations/chamonix/ski-passes/9",
+            json={"is_active": True, "price": 1},
+        )
+        self.assertEqual(response.status_code, 400)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS ski_pass_seasons (
   season VARCHAR(255) NOT NULL,
   currency VARCHAR(3) NOT NULL DEFAULT 'EUR',
   source_url TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (resort_id, season)

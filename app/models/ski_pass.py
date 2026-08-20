@@ -1,5 +1,5 @@
 from peewee import (
-    AutoField, CharField, Check, DateField, DecimalField, ForeignKeyField,
+    AutoField, BooleanField, CharField, Check, DateField, DecimalField, ForeignKeyField,
     IntegerField, TextField,
 )
 
@@ -14,6 +14,8 @@ class SkiPassSeason(BaseModel):
     season = CharField()
     currency = CharField(max_length=3, default="EUR")
     source_url = TextField(null=True)
+    # Visibility is deliberately independent from the existence of the grid.
+    is_active = BooleanField(default=False)
     created_at = UTCDateTimeField(default=utcnow)
     updated_at = UTCDateTimeField(default=utcnow)
 

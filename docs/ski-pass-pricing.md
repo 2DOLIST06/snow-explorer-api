@@ -20,8 +20,11 @@ comme `sort_order` par l'API publique.
 
 ## Endpoints
 
-* `GET /api/forfaits/stations/{slug}?season=2026-2027` : grille publique ; sans
-  paramètre, la saison au libellé le plus récent est renvoyée.
+* `GET /api/forfaits/stations/{slug}?season=2026-2027` : grille publique active ;
+  une saison inactive n'est jamais sélectionnée, même si ses données existent.
+* `GET /api/forfaits/stations/{slug}/systems` : états indépendants
+  `legacy_enabled`/`normalized_enabled`, données legacy et saisons normalisées
+  actives destinées à la fiche publique.
 * `GET /api/admin/ski-passes/stations/{slug}?season=...` : une grille ou toutes
   les saisons de la station.
 * `GET /api/admin/stations/{slug}/ski-passes` : toutes les saisons dans une
@@ -35,6 +38,9 @@ comme `sort_order` par l'API publique.
   l'URL utilisée par l'éditeur de station.
 * `PUT /api/admin/stations/{slug}/ski-passes/{season_id}` : sauvegarde
   transactionnelle de toute la grille éditée. L'admin recharge ensuite le GET.
+* `PATCH /api/admin/stations/{slug}/ski-passes/{season_id}` avec
+  `{ "is_active": true|false }` : activation publique uniquement. L'activation
+  d'une saison désactive les autres saisons de la station dans la transaction.
 * `DELETE /api/admin/ski-passes/stations/{slug}/seasons/{season}` : suppression.
 
 Toutes les routes `/api/admin/*` utilisent la protection centralisée de session
