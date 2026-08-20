@@ -85,7 +85,29 @@ def _active_ski_pass(resort):
         SkiPassProduct.select(),
         SkiPassPrice.select(),
     )
-    return serialize_season(rows[0]) if rows else None
+    if not rows:
+        return None
+
+    # Keep the established public ``id`` values while also exposing the
+    # explicit external identifiers expected by station pages.  The shared
+    # serializer remains untouched because it is also used by admin/import
+    # endpoints.
+    data = serialize_season(rows[0])
+    for period in data["periods"]:
+        period["external_id"] = period["id"]
+    for product in data["passes"]:
+        product["external_id"] = product["id"]
+    return data
+
+
+def _snowparks_count(raw_cfg):
+    snowparks = raw_cfg.get("snowparks") if isinstance(raw_cfg, dict) else None
+    count = snowparks.get("count") if isinstance(snowparks, dict) else None
+    return (
+        count
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 0
+        else None
+    )
 
 
 def get_public_resort(slug):
@@ -117,17 +139,24 @@ def get_public_resort(slug):
             "id": _non_empty(resort.region_id),
             "name": _non_empty(region_name),
         },
+        "region_id": _non_empty(resort.region_id),
+        "latitude": resort.latitude,
+        "longitude": resort.longitude,
+        "altitude_base_m": resort.altitude_base_m,
+        "altitude_top_m": resort.altitude_top_m,
         "altitude_min_m": resort.altitude_min_m if resort.altitude_min_m is not None else resort.altitude_base_m,
         "altitude_max_m": resort.altitude_max_m if resort.altitude_max_m is not None else resort.altitude_top_m,
         "ski_area_km": resort.ski_area_km,
         "pistes_count": _valid_count(resort.pistes_count, Piste, resort.id),
         "lifts_count": _valid_count(resort.lifts_count, Lift, resort.id),
+        "snowparks_count": _snowparks_count(raw_cfg),
         "season_open_date": _date(resort.season_open_date),
         "season_close_date": _date(resort.season_close_date),
         "website_url": _non_empty(resort.website_url),
         "pistes_small_map_url": _non_empty(resort.pistes_small_map_url),
         "pistes_large_map_url": _non_empty(resort.pistes_large_map_url),
         "snowpark_map_url": _non_empty(resort.snowpark_map_url),
+        "updated_at": _date(resort.updated_at),
         "cfg": public_cfg(raw_cfg),
         "ski_pass": _active_ski_pass(resort),
     }
