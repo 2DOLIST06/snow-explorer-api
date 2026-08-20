@@ -1,10 +1,19 @@
 """Construction du DTO public d'une station (sans données d'administration)."""
 
+from peewee import prefetch
+
 from app.models.lift import Lift
 from app.models.piste import Piste
 from app.models.region import Region
 from app.models.resort import Resort
+from app.models.ski_pass import (
+    SkiPassPeriod,
+    SkiPassPrice,
+    SkiPassProduct,
+    SkiPassSeason,
+)
 from app.models.station_widgets import StationWidgets
+from app.services.ski_passes import serialize_season
 
 
 PUBLIC_CFG_KEYS = (
@@ -58,6 +67,27 @@ def public_cfg(raw):
             for key in PUBLIC_CFG_KEYS}
 
 
+def _active_ski_pass(resort):
+    """Load the latest active normalized season and all its rows in bulk."""
+    seasons = (
+        SkiPassSeason.select(SkiPassSeason, Resort)
+        .join(Resort)
+        .where(
+            (SkiPassSeason.resort == resort.id)
+            & (SkiPassSeason.is_active == True)
+        )
+        .order_by(SkiPassSeason.season.desc(), SkiPassSeason.id.desc())
+        .limit(1)
+    )
+    rows = prefetch(
+        seasons,
+        SkiPassPeriod.select(),
+        SkiPassProduct.select(),
+        SkiPassPrice.select(),
+    )
+    return serialize_season(rows[0]) if rows else None
+
+
 def get_public_resort(slug):
     resort = Resort.get_or_none((Resort.slug == slug) & (Resort.is_active == True))
     if resort is None:
@@ -99,4 +129,5 @@ def get_public_resort(slug):
         "pistes_large_map_url": _non_empty(resort.pistes_large_map_url),
         "snowpark_map_url": _non_empty(resort.snowpark_map_url),
         "cfg": public_cfg(raw_cfg),
+        "ski_pass": _active_ski_pass(resort),
     }
