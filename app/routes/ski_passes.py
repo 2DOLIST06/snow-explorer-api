@@ -157,27 +157,46 @@ def update_station_grid(slug, season_id):
 @bp_admin_station_ski_passes.patch("/<string:slug>/ski-passes/<int:season_id>")
 def set_station_season_activation(slug, season_id):
     """Change public visibility without modifying or deleting tariff data."""
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict) or set(payload) != {"is_active"} or not isinstance(payload["is_active"], bool):
-        return jsonify({"error": "invalid_payload", "message": "is_active doit être un booléen"}), 400
-    season = (SkiPassSeason.select(SkiPassSeason, Resort).join(Resort)
-              .where((SkiPassSeason.id == season_id) & (Resort.slug == slug)).first())
-    if season is None:
+    resort = Resort.get_or_none(Resort.slug == slug)
+    if resort is None:
+        return jsonify({"error": "station_not_found", "message": "Station inexistante"}), 404
+
+    season = SkiPassSeason.get_or_none(SkiPassSeason.id == season_id)
+    if season is None or season.resort_id != resort.id:
         return jsonify({"error": "ski_pass_season_not_found", "message": "Saison inexistante"}), 404
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or "is_active" not in payload:
+        return jsonify({
+            "success": False,
+            "errors": [{"path": "is_active", "message": "champ booléen obligatoire"}],
+        }), 422
+    unknown_fields = set(payload) - {"is_active"}
+    if unknown_fields:
+        return jsonify({
+            "success": False,
+            "errors": [
+                {"path": field, "message": "champ non autorisé"}
+                for field in sorted(unknown_fields)
+            ],
+        }), 422
+    if not isinstance(payload["is_active"], bool):
+        return jsonify({
+            "success": False,
+            "errors": [{"path": "is_active", "message": "booléen obligatoire"}],
+        }), 422
 
     changed = bool(season.is_active) != payload["is_active"]
     with db.atomic():
-        if payload["is_active"]:
-            # The public normalized endpoint serves one grid, so activation is
-            # exclusive per resort and is committed atomically.
-            (SkiPassSeason.update(is_active=False)
-             .where((SkiPassSeason.resort == season.resort) & (SkiPassSeason.id != season.id))
-             .execute())
         season.is_active = payload["is_active"]
         season.save(only=[SkiPassSeason.is_active])
     if changed:
         bump_public_resorts_version()
-    return jsonify({"ok": True, "season": serialize_season(season)})
+    return jsonify({
+        "success": True,
+        "season_id": season.id,
+        "is_active": bool(season.is_active),
+    })
 
 
 @bp_admin_ski_passes.delete("/stations/<string:slug>/seasons/<string:season_name>")

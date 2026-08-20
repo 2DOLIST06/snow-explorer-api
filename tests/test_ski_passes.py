@@ -137,14 +137,14 @@ class PublicSerializationTests(unittest.TestCase):
 
 class SkiPassActivationTests(unittest.TestCase):
     @patch("app.routes.ski_passes.bump_public_resorts_version")
-    @patch("app.routes.ski_passes.serialize_season", return_value={"id": 9, "is_active": True})
     @patch("app.routes.ski_passes.db.atomic", return_value=nullcontext())
-    @patch("app.routes.ski_passes.SkiPassSeason.update")
-    @patch("app.routes.ski_passes.SkiPassSeason.select")
-    def test_activation_is_exclusive_and_does_not_delete_data(self, select, update, atomic, serialize, bump):
-        season = MagicMock(id=9, is_active=False, resort=MagicMock())
-        select.return_value.join.return_value.where.return_value.first.return_value = season
-        update.return_value.where.return_value.execute.return_value = 1
+    @patch("app.routes.ski_passes.SkiPassSeason.get_or_none")
+    @patch("app.routes.ski_passes.Resort.get_or_none")
+    def test_activation_updates_only_target_season(self, resort_get, season_get, atomic, bump):
+        resort = MagicMock(id=4)
+        season = MagicMock(id=9, resort_id=4, is_active=False)
+        resort_get.return_value = resort
+        season_get.return_value = season
         app = Flask(__name__); app.register_blueprint(bp_admin_station_ski_passes)
 
         response = app.test_client().patch(
@@ -152,18 +152,47 @@ class SkiPassActivationTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"success": True, "season_id": 9, "is_active": True})
         self.assertTrue(season.is_active)
         season.save.assert_called_once_with(only=[SkiPassSeason.is_active])
-        update.assert_called_once_with(is_active=False)
         bump.assert_called_once_with()
 
-    def test_activation_rejects_price_or_unknown_fields(self):
+    @patch("app.routes.ski_passes.SkiPassSeason.get_or_none")
+    @patch("app.routes.ski_passes.Resort.get_or_none")
+    def test_activation_rejects_missing_non_boolean_and_unknown_fields(self, resort_get, season_get):
+        resort_get.return_value = MagicMock(id=4)
+        season_get.return_value = MagicMock(id=9, resort_id=4)
         app = Flask(__name__); app.register_blueprint(bp_admin_station_ski_passes)
-        response = app.test_client().patch(
+        client = app.test_client()
+
+        missing = client.patch("/api/admin/stations/chamonix/ski-passes/9", json={})
+        non_boolean = client.patch(
+            "/api/admin/stations/chamonix/ski-passes/9", json={"is_active": 1}
+        )
+        unknown = client.patch(
             "/api/admin/stations/chamonix/ski-passes/9",
             json={"is_active": True, "price": 1},
         )
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(missing.status_code, 422)
+        self.assertEqual(missing.get_json()["errors"][0]["path"], "is_active")
+        self.assertEqual(non_boolean.status_code, 422)
+        self.assertEqual(non_boolean.get_json()["errors"][0]["path"], "is_active")
+        self.assertEqual(unknown.status_code, 422)
+        self.assertEqual(unknown.get_json()["errors"][0]["path"], "price")
+
+    @patch("app.routes.ski_passes.SkiPassSeason.get_or_none")
+    @patch("app.routes.ski_passes.Resort.get_or_none")
+    def test_activation_rejects_season_from_another_station(self, resort_get, season_get):
+        resort_get.return_value = MagicMock(id=4)
+        season_get.return_value = MagicMock(id=9, resort_id=5)
+        app = Flask(__name__); app.register_blueprint(bp_admin_station_ski_passes)
+
+        response = app.test_client().patch(
+            "/api/admin/stations/chamonix/ski-passes/9", json={"is_active": True}
+        )
+
+        self.assertEqual(response.status_code, 404)
+        season_get.return_value.save.assert_not_called()
 
 
 if __name__ == "__main__":
