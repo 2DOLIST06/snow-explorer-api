@@ -264,7 +264,10 @@ class PublicResortsTests(unittest.TestCase):
                 )
 
     def test_station_alias_exposes_active_normalized_ski_pass(self):
-        resort = self.create_resort("1", "Chamonix", "chamonix")
+        resort = self.create_resort(
+            "1", "Chamonix", "chamonix", latitude=45.9237,
+            longitude=6.8694, altitude_base_m=1035, altitude_top_m=3842,
+        )
         inactive = SkiPassSeason.create(
             resort=resort, season="2024-2025", currency="EUR", is_active=False,
         )
@@ -295,23 +298,57 @@ class PublicResortsTests(unittest.TestCase):
         ski_pass = response.get_json()["ski_pass"]
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["slug"], "chamonix")
+        self.assertEqual(response.get_json()["latitude"], 45.9237)
+        self.assertEqual(response.get_json()["altitude_base_m"], 1035)
         self.assertEqual(ski_pass["season"], "2025-2026")
         self.assertIs(ski_pass["is_active"], True)
-        self.assertEqual(ski_pass["periods"][0]["id"], "early-season")
-        self.assertEqual(ski_pass["passes"][0]["id"], "1-day")
+        self.assertEqual(ski_pass["periods"][0]["id"], period.id)
+        self.assertEqual(ski_pass["periods"][0]["external_id"], "early-season")
+        self.assertEqual(ski_pass["passes"][0]["id"], product.id)
+        self.assertEqual(ski_pass["passes"][0]["external_id"], "1-day")
         self.assertEqual(ski_pass["passes"][0]["prices"][0]["price_min"], 53.2)
-        self.assertEqual(ski_pass["passes"][0]["prices"][0]["period_id"], "early-season")
+        self.assertEqual(ski_pass["passes"][0]["prices"][0]["period_id"], period.id)
 
     def test_station_alias_returns_null_without_active_normalized_season(self):
-        resort = self.create_resort("1", "Auron", "auron")
+        resort = self.create_resort("1", "Alpe d'Huez", "alpe-d-huez")
         SkiPassSeason.create(
             resort=resort, season="2025-2026", currency="EUR", is_active=False,
         )
 
-        response = self.client.get("/api/stations/auron")
+        response = self.client.get("/api/stations/alpe-d-huez")
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["name"], "Alpe d'Huez")
         self.assertIsNone(response.get_json()["ski_pass"])
+
+    def test_station_alias_returns_complete_legacy_station_without_json_grid(self):
+        self.create_resort(
+            "1", "Legacy", "legacy", description_md="Description historique",
+            website_url="https://legacy.example.test", pistes_count=12,
+        )
+
+        response = self.client.get("/api/stations/legacy")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["description_md"], "Description historique")
+        self.assertEqual(response.get_json()["pistes_count"], 12)
+        self.assertIsNone(response.get_json()["ski_pass"])
+
+    def test_missing_station_alias_is_json_404(self):
+        response = self.client.get("/api/stations/does-not-exist")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.content_type, "application/json")
+        self.assertEqual(response.get_json()["error"], "station_not_found")
+
+    def test_station_database_failure_is_not_transformed_into_404(self):
+        with patch.object(Resort, "get_or_none", side_effect=RuntimeError("database unavailable")):
+            response = self.client.get("/api/stations/chamonix")
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.content_type, "application/json")
+        self.assertEqual(response.get_json()["error"], "Unable to retrieve station")
 
     def test_missing_and_inactive_detail_are_clean_json_404(self):
         self.create_resort("1", "Inactive", "inactive", is_active=False)

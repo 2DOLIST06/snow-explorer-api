@@ -6,12 +6,15 @@ from app.services.public_cache import get_public_resorts_version
 from functools import reduce
 import operator
 
-try:
-    # Peewee >=3
-    from peewee import Field, fn
-except Exception:  # garde-fou si import différent
-    Field = object
-    fn = None  # type: ignore
+from peewee import Field, fn, prefetch
+
+from app.models.ski_pass import (
+    SkiPassPeriod,
+    SkiPassPrice,
+    SkiPassProduct,
+    SkiPassSeason,
+)
+from app.services.ski_passes import decimal_json
 
 bp_public = Blueprint("public_resorts", __name__, url_prefix="/api/resorts")
 bp_public_stations = Blueprint(
@@ -181,6 +184,114 @@ def _get_resort_response(slug: str):
     return response, 200
 
 
+def _station_snowparks_count(slug):
+    widget_row = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
+    if widget_row is None:
+        return None
+    config = StationWidgets.from_json(widget_row.config)
+    snowparks = config.get("snowparks")
+    count = snowparks.get("count") if isinstance(snowparks, dict) else None
+    return (
+        count
+        if isinstance(count, int)
+        and not isinstance(count, bool)
+        and count >= 0
+        else None
+    )
+
+
+def _station_active_ski_pass(resort_id):
+    """Return one active normalized grid, fetched in four bounded queries."""
+    seasons = (
+        SkiPassSeason.select()
+        .where(
+            (SkiPassSeason.resort == resort_id)
+            & (SkiPassSeason.is_active == True)
+        )
+        .order_by(SkiPassSeason.season.desc(), SkiPassSeason.id.desc())
+        .limit(1)
+    )
+    rows = prefetch(
+        seasons,
+        SkiPassPeriod.select(),
+        SkiPassProduct.select(),
+        SkiPassPrice.select(),
+    )
+    if not rows:
+        return None
+
+    season = rows[0]
+    periods = sorted(season.periods, key=lambda row: (row.sort_order, row.id))
+    products = sorted(season.products, key=lambda row: (row.sort_order, row.id))
+    return {
+        "id": season.id,
+        "season": season.season,
+        "currency": season.currency,
+        "source_url": season.source_url,
+        "is_active": bool(season.is_active),
+        "periods": [
+            {
+                "id": period.id,
+                "external_id": period.external_id,
+                "name": period.name,
+                "start_date": period.start_date.isoformat(),
+                "end_date": period.end_date.isoformat(),
+                "sort_order": period.sort_order,
+            }
+            for period in periods
+        ],
+        "passes": [
+            {
+                "id": product.id,
+                "external_id": product.external_id,
+                "name": product.name,
+                "duration_days": product.duration_days,
+                "duration_label": product.duration_label,
+                "sort_order": product.sort_order,
+                "prices": [
+                    {
+                        "id": price.id,
+                        "period_id": price.period_id,
+                        "category": price.category,
+                        "category_label": price.category_label,
+                        "price_type": price.price_type,
+                        "price": decimal_json(price.price),
+                        "price_min": decimal_json(price.price_min),
+                        "price_max": decimal_json(price.price_max),
+                        "dynamic_label": price.dynamic_label,
+                        "sort_order": price.sort_order,
+                    }
+                    for price in sorted(
+                        product.prices, key=lambda row: (row.sort_order, row.id)
+                    )
+                ],
+            }
+            for product in products
+        ],
+    }
+
+
+def _get_station_response(slug: str):
+    try:
+        # Deliberately query by slug: this endpoint never loads the station list.
+        resort = Resort.get_or_none(
+            (Resort.slug == slug) & (Resort.is_active == True)
+        )
+        if resort is None:
+            return jsonify({"error": "station_not_found", "message": "Station not found"}), 404
+
+        data = _resort_public_dict(resort, _station_snowparks_count(slug))
+        data["ski_pass"] = _station_active_ski_pass(resort.id)
+    except Exception:
+        current_app.logger.exception("Unable to retrieve public station %s", slug)
+        return jsonify({"error": "Unable to retrieve station"}), 500
+
+    response = jsonify(data)
+    response.headers["Cache-Control"] = "public, max-age=300, s-maxage=3600"
+    response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
+    return response, 200
+
+
 @bp_public.get("/<slug>")
 def get_resort(slug: str):
     return _get_resort_response(slug)
@@ -188,5 +299,5 @@ def get_resort(slug: str):
 
 @bp_public_stations.get("/<slug>")
 def get_station(slug: str):
-    """Expose the station-oriented alias used by public station pages."""
-    return _get_resort_response(slug)
+    """Return one station and its optional active normalized ski-pass grid."""
+    return _get_station_response(slug)
