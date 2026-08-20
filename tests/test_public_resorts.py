@@ -14,13 +14,22 @@ from app.models.region import Region  # noqa: E402
 from app.models.piste import Piste  # noqa: E402
 from app.models.lift import Lift  # noqa: E402
 from app.models.station_widgets import StationWidgets  # noqa: E402
+from app.models.ski_pass import (  # noqa: E402
+    SkiPassPeriod,
+    SkiPassPrice,
+    SkiPassProduct,
+    SkiPassSeason,
+)
 from app.routes.public_resorts import bp_public, bp_public_stations  # noqa: E402
 
 
 class PublicResortsTests(unittest.TestCase):
     def setUp(self):
         self.database = SqliteDatabase(":memory:")
-        self.models = [Region, Resort, Piste, Lift, StationWidgets]
+        self.models = [
+            Region, Resort, Piste, Lift, StationWidgets, SkiPassSeason,
+            SkiPassPeriod, SkiPassProduct, SkiPassPrice,
+        ]
         self.database.bind(self.models)
         self.database.connect()
         self.database.create_tables(self.models)
@@ -253,6 +262,56 @@ class PublicResortsTests(unittest.TestCase):
                     response.get_json()["region"]["id"],
                     "provence-alpes-cote-d-azur",
                 )
+
+    def test_station_alias_exposes_active_normalized_ski_pass(self):
+        resort = self.create_resort("1", "Chamonix", "chamonix")
+        inactive = SkiPassSeason.create(
+            resort=resort, season="2024-2025", currency="EUR", is_active=False,
+        )
+        SkiPassPeriod.create(
+            season=inactive, external_id="old", name="Ancienne saison",
+            start_date=date(2024, 12, 1), end_date=date(2025, 4, 1),
+        )
+        season = SkiPassSeason.create(
+            resort=resort, season="2025-2026", currency="EUR", is_active=True,
+        )
+        period = SkiPassPeriod.create(
+            season=season, external_id="early-season",
+            name="Du 29/11/2025 au 19/12/2025",
+            start_date=date(2025, 11, 29), end_date=date(2025, 12, 19),
+        )
+        product = SkiPassProduct.create(
+            season=season, external_id="1-day", name="1 jour",
+            duration_days=1, duration_label="1 jour",
+        )
+        SkiPassPrice.create(
+            product=product, period=period, category="adult",
+            category_label="Adultes (15 à 64 ans)", price_type="dynamic",
+            price_min="53.20", price_max="74.00",
+            dynamic_label="Tarif dynamique",
+        )
+
+        response = self.client.get("/api/stations/chamonix")
+        ski_pass = response.get_json()["ski_pass"]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ski_pass["season"], "2025-2026")
+        self.assertIs(ski_pass["is_active"], True)
+        self.assertEqual(ski_pass["periods"][0]["id"], "early-season")
+        self.assertEqual(ski_pass["passes"][0]["id"], "1-day")
+        self.assertEqual(ski_pass["passes"][0]["prices"][0]["price_min"], 53.2)
+        self.assertEqual(ski_pass["passes"][0]["prices"][0]["period_id"], "early-season")
+
+    def test_station_alias_returns_null_without_active_normalized_season(self):
+        resort = self.create_resort("1", "Auron", "auron")
+        SkiPassSeason.create(
+            resort=resort, season="2025-2026", currency="EUR", is_active=False,
+        )
+
+        response = self.client.get("/api/stations/auron")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.get_json()["ski_pass"])
 
     def test_missing_and_inactive_detail_are_clean_json_404(self):
         self.create_resort("1", "Inactive", "inactive", is_active=False)
