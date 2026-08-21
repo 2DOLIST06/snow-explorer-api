@@ -27,7 +27,8 @@ from app.routes.admin_resort_import import bp_resort_json
 from app.services.admin_auth import protect_admin_routes
 from app.routes.admin_auth import bp_admin_auth
 from app.routes.ski_passes import (
-    bp_admin_ski_passes, bp_admin_station_ski_passes, bp_ski_passes,
+    bp_admin_ski_passes, bp_admin_station_ski_passes, bp_public_station_ski_passes,
+    bp_ski_passes,
 )
 from app.cli import register_admin_commands
 
@@ -122,6 +123,7 @@ def create_app(config=None):
     app.register_blueprint(bp_resort_json)
     app.register_blueprint(bp_admin_auth)
     app.register_blueprint(bp_ski_passes)
+    app.register_blueprint(bp_public_station_ski_passes)
     app.register_blueprint(bp_admin_ski_passes)
     app.register_blueprint(bp_admin_station_ski_passes)
     # Le front historique utilise ``/api/admin/stations`` tandis que les

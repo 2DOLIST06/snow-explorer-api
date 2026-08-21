@@ -8,7 +8,7 @@ from flask import Flask
 
 from app.models.ski_pass import SkiPassSeason
 from app.routes.ski_passes import bp_admin_station_ski_passes, bp_ski_passes
-from app.services.ski_passes import preview, replace_grid, serialize_season
+from app.services.ski_passes import preview, replace_grid, serialize_season, validate_grid
 
 
 def grid():
@@ -21,8 +21,8 @@ def grid():
         ],
         "passes": [
             {"id": "1-day", "name": "1 jour", "duration_days": 1, "duration_label": "1 jour", "prices": [
-                {"period_id": "high", "category": "adult", "category_label": "Adulte", "price_type": "fixed", "price": 74},
-                {"period_id": "high", "category": "child", "category_label": "Enfant", "price_type": "dynamic", "price_min": 55, "price_max": 65, "dynamic_label": "Selon réservation"},
+                {"period_id": "high", "category": "adult", "category_label": "Adulte", "price_type": "fixed", "price": 74, "note": "  Des tarifs réduits sont proposés…  "},
+                {"period_id": "high", "category": "child", "category_label": "Enfant", "price_type": "dynamic", "price_min": 55, "price_max": 65, "dynamic_label": "Selon réservation", "note": "Offre web"},
                 {"period_id": "low", "category": "student", "category_label": "Étudiant", "price_type": "fixed", "price": 49},
             ]},
             {"id": "3-days", "name": "3 jours", "duration_days": 3, "duration_label": "3 jours", "prices": []},
@@ -67,6 +67,21 @@ class SkiPassValidationTests(unittest.TestCase):
         self.assertIn("au moins une période est obligatoire", messages)
         self.assertIn("au moins un forfait est obligatoire", messages)
 
+    def test_note_is_optional_normalized_and_validated(self):
+        payload = grid()
+        payload["passes"][0]["prices"][2]["note"] = "   "
+        normalized, errors = validate_grid(payload, self.lookup)
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            normalized["products"][0]["prices"][0]["note"],
+            "Des tarifs réduits sont proposés…",
+        )
+        self.assertIsNone(normalized["products"][0]["prices"][2]["note"])
+
+        payload = grid(); payload["passes"][0]["prices"][0]["note"] = 42
+        result = preview(payload, self.lookup)
+        self.assertIn("passes[0].prices[0].note", [e["path"] for e in result["errors"]])
+
 
 class SkiPassPersistenceTests(unittest.TestCase):
     @patch("app.services.ski_passes.SkiPassProduct.delete")
@@ -100,12 +115,16 @@ class SkiPassPersistenceTests(unittest.TestCase):
         replace_grid(grid())
         season_get.assert_called_once(); self.assertEqual(period_create.call_count, 2)
         self.assertEqual(product_create.call_count, 2); self.assertEqual(price_create.call_count, 3)
+        self.assertEqual(
+            price_create.call_args_list[0].kwargs["note"],
+            "Des tarifs réduits sont proposés…",
+        )
 
 
 class PublicSerializationTests(unittest.TestCase):
     def test_public_shape_preserves_order_and_current_period(self):
         period = MagicMock(id=1, external_id="high", name="Haute", start_date=date(2026, 12, 1), end_date=date(2027, 3, 1), sort_order=0)
-        fixed = MagicMock(id=1, period=period, category="teen", category_label="Jeune", price_type="fixed", price=42, price_min=None, price_max=None, dynamic_label=None, sort_order=0)
+        fixed = MagicMock(id=1, period=period, category="teen", category_label="Jeune", price_type="fixed", price=42, price_min=None, price_max=None, dynamic_label=None, note="Des tarifs réduits sont proposés…", sort_order=0)
         product = MagicMock(id=1, external_id="day", name="Journée", duration_days=1, duration_label="1 jour", sort_order=0, prices=[fixed])
         season = MagicMock(id=9, season="2026-2027", is_active=True, currency="EUR", source_url="https://example.test", resort=MagicMock(slug="chamonix"), periods=[period], products=[product])
         body = serialize_season(season, date(2027, 1, 2))
@@ -115,6 +134,7 @@ class PublicSerializationTests(unittest.TestCase):
         self.assertEqual(body["passes"][0]["prices"][0]["id"], 1)
         self.assertEqual(body["current_period_id"], "high")
         self.assertEqual(body["passes"][0]["prices"][0]["category"], "teen")
+        self.assertEqual(body["passes"][0]["prices"][0]["note"], "Des tarifs réduits sont proposés…")
 
     @patch("app.routes.ski_passes.serialize_season", return_value={"station_slug": "chamonix", "season": "2026-2027"})
     @patch("app.routes.ski_passes._season_for", return_value=object())
@@ -133,6 +153,16 @@ class PublicSerializationTests(unittest.TestCase):
         response = app.test_client().get("/api/forfaits/stations/chamonix?season=2025-2026")
         self.assertEqual(response.status_code, 404)
         season_for.assert_called_once_with("chamonix", "2025-2026", active_only=True)
+
+    @patch("app.routes.ski_passes.serialize_season", return_value={"passes": [{"prices": [{"note": "Des tarifs réduits sont proposés…"}]}]})
+    @patch("app.routes.ski_passes._season_for", return_value=object())
+    @patch("app.routes.ski_passes.Resort.get_or_none", return_value=MagicMock(is_active=True))
+    def test_canonical_public_station_endpoint_exposes_note(self, resort_get, season_for, serializer):
+        from app.routes.ski_passes import bp_public_station_ski_passes
+        app = Flask(__name__); app.register_blueprint(bp_public_station_ski_passes)
+        response = app.test_client().get("/api/stations/chamonix/ski-passes")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["passes"][0]["prices"][0]["note"], "Des tarifs réduits sont proposés…")
 
 
 class SkiPassActivationTests(unittest.TestCase):
