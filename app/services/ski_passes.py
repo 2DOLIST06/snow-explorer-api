@@ -40,6 +40,16 @@ def _money(value, path, errors, required=True):
         return None
 
 
+def _optional_text(value, path, errors):
+    """Normalize an optional text value without changing other display fields."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        errors.append({"path": path, "message": "champ texte ou null attendu"})
+        return None
+    return value.strip() or None
+
+
 def validate_grid(payload, resort_lookup=None):
     errors = []
     if not isinstance(payload, dict):
@@ -101,6 +111,7 @@ def validate_grid(payload, resort_lookup=None):
             period_id = _required_text(value.get("period_id"), f"{ppath}.period_id", errors)
             category = _required_text(value.get("category"), f"{ppath}.category", errors)
             category_label = _required_text(value.get("category_label"), f"{ppath}.category_label", errors)
+            note = _optional_text(value.get("note"), f"{ppath}.note", errors)
             kind = value.get("price_type")
             if period_id and period_id not in period_ids: errors.append({"path": f"{ppath}.period_id", "message": "period_id inexistant"})
             key = (external_id, period_id, category)
@@ -116,7 +127,7 @@ def validate_grid(payload, resort_lookup=None):
                 if value.get("price") is not None: errors.append({"path": ppath, "message": "un tarif dynamique ne contient pas price"})
                 if low is not None and high is not None and low > high: errors.append({"path": ppath, "message": "price_min doit être inférieur ou égal à price_max"})
             else: errors.append({"path": f"{ppath}.price_type", "message": "fixed ou dynamic attendu"})
-            prices.append({"period_external_id": period_id, "category": category, "category_label": category_label, "price_type": kind, "price": price, "price_min": low, "price_max": high, "dynamic_label": value.get("dynamic_label"), "sort_order": j})
+            prices.append({"period_external_id": period_id, "category": category, "category_label": category_label, "price_type": kind, "price": price, "price_min": low, "price_max": high, "dynamic_label": value.get("dynamic_label"), "note": note, "sort_order": j})
             price_count += 1
         products.append({"external_id": external_id, "name": name, "duration_days": duration, "duration_label": label, "sort_order": i, "prices": prices})
     if isinstance(raw_passes, list) and price_count == 0:
@@ -166,7 +177,7 @@ def serialize_season(season, today=None):
     periods = sorted(list(season.periods), key=lambda x: (x.sort_order, x.id))
     products = sorted(list(season.products), key=lambda x: (x.sort_order, x.id))
     current = next((p.external_id for p in periods if p.start_date <= today <= p.end_date), None)
-    return {"id": season.id, "station_slug": season.resort.slug, "season": season.season, "is_active": bool(season.is_active), "currency": season.currency, "source_url": season.source_url, "current_period_id": current, "periods": [{"db_id": p.id, "id": p.external_id, "name": p.name, "start_date": p.start_date.isoformat(), "end_date": p.end_date.isoformat(), "sort_order": p.sort_order} for p in periods], "passes": [{"db_id": product.id, "id": product.external_id, "name": product.name, "duration_days": product.duration_days, "duration_label": product.duration_label, "sort_order": product.sort_order, "prices": [{"id": price.id, "period_id": price.period.external_id, "period_db_id": price.period.id, "category": price.category, "category_label": price.category_label, "price_type": price.price_type, "price": decimal_json(price.price), "price_min": decimal_json(price.price_min), "price_max": decimal_json(price.price_max), "dynamic_label": price.dynamic_label, "sort_order": price.sort_order} for price in sorted(list(product.prices), key=lambda x: (x.sort_order, x.id))]} for product in products]}
+    return {"id": season.id, "station_slug": season.resort.slug, "season": season.season, "is_active": bool(season.is_active), "currency": season.currency, "source_url": season.source_url, "current_period_id": current, "periods": [{"db_id": p.id, "id": p.external_id, "name": p.name, "start_date": p.start_date.isoformat(), "end_date": p.end_date.isoformat(), "sort_order": p.sort_order} for p in periods], "passes": [{"db_id": product.id, "id": product.external_id, "name": product.name, "duration_days": product.duration_days, "duration_label": product.duration_label, "sort_order": product.sort_order, "prices": [{"id": price.id, "period_id": price.period.external_id, "period_db_id": price.period.id, "category": price.category, "category_label": price.category_label, "price_type": price.price_type, "price": decimal_json(price.price), "price_min": decimal_json(price.price_min), "price_max": decimal_json(price.price_max), "dynamic_label": price.dynamic_label, "note": price.note, "sort_order": price.sort_order} for price in sorted(list(product.prices), key=lambda x: (x.sort_order, x.id))]} for product in products]}
 
 
 def import_result(season):

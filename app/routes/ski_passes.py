@@ -8,6 +8,9 @@ from app.services.public_cache import bump_public_resorts_version
 from app.services.ski_passes import import_result, preview, replace_grid, serialize_season
 
 bp_ski_passes = Blueprint("ski_passes", __name__, url_prefix="/api/forfaits")
+bp_public_station_ski_passes = Blueprint(
+    "public_station_ski_passes", __name__, url_prefix="/api/stations"
+)
 bp_admin_ski_passes = Blueprint("admin_ski_passes", __name__, url_prefix="/api/admin/ski-passes")
 bp_admin_station_ski_passes = Blueprint(
     "admin_station_ski_passes", __name__, url_prefix="/api/admin/stations"
@@ -70,6 +73,12 @@ def public_grid(slug):
     if season is None:
         return jsonify({"error": "ski_pass_season_not_found"}), 404
     return jsonify(serialize_season(season))
+
+
+@bp_public_station_ski_passes.get("/<string:slug>/ski-passes")
+def public_station_grid(slug):
+    """Canonical frontend URL for the active normalized ski-pass season."""
+    return public_grid(slug)
 
 
 @bp_ski_passes.get("/stations/<string:slug>/systems")

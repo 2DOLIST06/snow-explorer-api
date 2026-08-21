@@ -259,6 +259,7 @@ def _station_active_ski_pass(resort_id):
                         "price_min": decimal_json(price.price_min),
                         "price_max": decimal_json(price.price_max),
                         "dynamic_label": price.dynamic_label,
+                        "note": price.note,
                         "sort_order": price.sort_order,
                     }
                     for price in sorted(

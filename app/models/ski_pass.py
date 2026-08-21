@@ -65,6 +65,7 @@ class SkiPassPrice(BaseModel):
     price_min = DecimalField(max_digits=12, decimal_places=2, null=True, auto_round=True)
     price_max = DecimalField(max_digits=12, decimal_places=2, null=True, auto_round=True)
     dynamic_label = TextField(null=True)
+    note = TextField(null=True)
     sort_order = IntegerField(default=0)
 
     class Meta:

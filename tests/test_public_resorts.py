@@ -292,6 +292,7 @@ class PublicResortsTests(unittest.TestCase):
             category_label="Adultes (15 à 64 ans)", price_type="dynamic",
             price_min="53.20", price_max="74.00",
             dynamic_label="Tarif dynamique",
+            note="Des tarifs réduits sont proposés…",
         )
 
         response = self.client.get("/api/stations/chamonix")
@@ -307,6 +308,10 @@ class PublicResortsTests(unittest.TestCase):
         self.assertEqual(ski_pass["periods"][0]["external_id"], "early-season")
         self.assertEqual(ski_pass["passes"][0]["id"], product.id)
         self.assertEqual(ski_pass["passes"][0]["external_id"], "1-day")
+        self.assertEqual(
+            ski_pass["passes"][0]["prices"][0]["note"],
+            "Des tarifs réduits sont proposés…",
+        )
         self.assertEqual(ski_pass["passes"][0]["prices"][0]["price_min"], 53.2)
         self.assertEqual(ski_pass["passes"][0]["prices"][0]["period_id"], period.id)
 
