@@ -26,6 +26,7 @@ from app.routes.uploads import bp_uploads
 from app.routes.admin_resort_import import bp_resort_json
 from app.services.admin_auth import protect_admin_routes
 from app.routes.admin_auth import bp_admin_auth
+from app.routes.admin_indexnow import bp_admin_indexnow
 from app.routes.ski_passes import (
     bp_admin_ski_passes, bp_admin_station_ski_passes, bp_public_station_ski_passes,
     bp_ski_passes,
@@ -72,6 +73,7 @@ def create_app(config=None):
         ADMIN_LOGIN_RATE_LIMIT=int(os.getenv("ADMIN_LOGIN_RATE_LIMIT", "5")),
         ADMIN_LOGIN_RATE_WINDOW_SECONDS=int(os.getenv("ADMIN_LOGIN_RATE_WINDOW_SECONDS", "900")),
         TRUST_PROXY_HEADERS=_env_bool("TRUST_PROXY_HEADERS", False),
+        INDEXNOW_KEY=os.getenv("INDEXNOW_KEY"),
     )
     if config:
         app.config.update(config)
@@ -122,6 +124,7 @@ def create_app(config=None):
     app.register_blueprint(bp_uploads)
     app.register_blueprint(bp_resort_json)
     app.register_blueprint(bp_admin_auth)
+    app.register_blueprint(bp_admin_indexnow)
     app.register_blueprint(bp_ski_passes)
     app.register_blueprint(bp_public_station_ski_passes)
     app.register_blueprint(bp_admin_ski_passes)
