@@ -29,18 +29,21 @@ def register_admin_commands(app):
     def create_admin(email):
         """Create an administrator; the password is never echoed or accepted as an argument."""
         password = click.prompt("Mot de passe", hide_input=True, confirmation_prompt=True)
-        user = _create_admin(email, password)
+        # CLI invocations do not run Flask request hooks.
+        with db.connection_context():
+            user = _create_admin(email, password)
         click.echo(f"Administrateur créé: {user.email}")
 
     @app.cli.command("bootstrap-admin")
     @with_appcontext
     def bootstrap_admin():
         """One-time non-interactive bootstrap for constrained hosting consoles."""
-        if AdminUser.select().exists():
-            raise click.ClickException("Bootstrap refusé: un administrateur existe déjà.")
-        email = os.environ.get("ADMIN_BOOTSTRAP_EMAIL", "")
-        password = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD", "")
-        if not email or not password:
-            raise click.ClickException("ADMIN_BOOTSTRAP_EMAIL et ADMIN_BOOTSTRAP_PASSWORD sont requis.")
-        user = _create_admin(email, password)
+        with db.connection_context():
+            if AdminUser.select().exists():
+                raise click.ClickException("Bootstrap refusé: un administrateur existe déjà.")
+            email = os.environ.get("ADMIN_BOOTSTRAP_EMAIL", "")
+            password = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD", "")
+            if not email or not password:
+                raise click.ClickException("ADMIN_BOOTSTRAP_EMAIL et ADMIN_BOOTSTRAP_PASSWORD sont requis.")
+            user = _create_admin(email, password)
         click.echo(f"Administrateur initial créé: {user.email}. Supprimez immédiatement les variables bootstrap.")

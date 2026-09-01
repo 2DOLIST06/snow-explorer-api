@@ -86,7 +86,7 @@ def create_app(config=None):
 
     @app.teardown_request
     def close_database_connection(_exception):
-        """Always discard the request connection, including after failures."""
+        """Always return the request connection to the pool, even on failure."""
         if not db.is_closed():
             db.close()
 
@@ -122,6 +122,10 @@ def create_app(config=None):
                           AdminUser, AdminSession, AdminLoginAttempt, SkiPassSeason,
                           SkiPassPeriod, SkiPassProduct, SkiPassPrice])
         db.close()
+        # ``close()`` normally returns the connection to the pool.  Startup may
+        # happen in a Gunicorn master with --preload, so do not leave a socket
+        # around that could subsequently be inherited by forked workers.
+        db.close_idle()
 
     # Enregistrement des blueprints
     app.register_blueprint(bp_public)

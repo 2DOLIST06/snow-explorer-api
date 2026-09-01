@@ -1,5 +1,7 @@
-from peewee import PostgresqlDatabase, Model
 import os
+
+from peewee import Model
+from playhouse.pool import PooledPostgresqlDatabase
 from dotenv import load_dotenv
 
 load_dotenv()  # charge .env
@@ -20,17 +22,26 @@ def _parse_pg_url(pg_url: str):
 
 cfg = _parse_pg_url(DATABASE_URL)
 
-db = PostgresqlDatabase(
+# Gunicorn currently runs two synchronous workers.  Three connections per
+# process leave one connection of headroom for a future thread/background task
+# while keeping the production ceiling deliberately small (2 * 3 = 6).
+POOL_MAX_CONNECTIONS = int(os.getenv("DB_POOL_MAX_CONNECTIONS", "3"))
+POOL_STALE_TIMEOUT = int(os.getenv("DB_POOL_STALE_TIMEOUT", "300"))
+POOL_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", "5"))
+
+db = PooledPostgresqlDatabase(
     cfg["database"],
     user=cfg["user"],
     password=cfg["password"],
     host=cfg["host"],
     port=cfg["port"],
+    max_connections=POOL_MAX_CONNECTIONS,
+    stale_timeout=POOL_STALE_TIMEOUT,
+    timeout=POOL_TIMEOUT,
 )
 
 class BaseModel(Model):
     class Meta:
         database = db
-
 
 
