@@ -78,6 +78,18 @@ def create_app(config=None):
     if config:
         app.config.update(config)
 
+    @app.before_request
+    def open_database_connection():
+        """Give every request its own Peewee connection lifecycle."""
+        if db.is_closed():
+            db.connect()
+
+    @app.teardown_request
+    def close_database_connection(_exception):
+        """Always discard the request connection, including after failures."""
+        if not db.is_closed():
+            db.close()
+
     # La protection est centralisée afin qu'aucune route d'administration,
     # présente ou ajoutée plus tard, ne puisse être oubliée.
     protect_admin_routes(app)
