@@ -1,9 +1,11 @@
 import fnmatch
 import json
+import logging
 
 from flask import Flask, jsonify
 
-from app.services.public_cache import cached_json, invalidate_station, resorts_list_key
+from app.services.public_cache import (cached_json, invalidate_station,
+                                       log_cache_startup, resorts_list_key)
 
 
 class FakeRedis:
@@ -59,6 +61,43 @@ def test_miss_fill_ttl_then_hit_and_query_isolation():
     assert other.headers["X-Cache"] == "MISS"
     assert len(calls) == 2
     assert set(redis.ttls.values()) == {123}
+
+
+def test_hit_does_not_execute_business_sql():
+    redis = FakeRedis()
+    app = Flask(__name__)
+    app.config.update(
+        TESTING=True,
+        PUBLIC_CACHE_DEBUG_HEADERS=True,
+        PUBLIC_CACHE_DIRECTORY_TTL_SECONDS=123,
+        PUBLIC_CACHE_LOCK_TTL_SECONDS=10,
+        PUBLIC_CACHE_LOCK_WAIT_SECONDS=0,
+    )
+    app.extensions["public_cache_redis"] = redis
+    sql_calls = []
+
+    @app.get("/api/resorts/")
+    @cached_json(lambda: resorts_list_key(), "PUBLIC_CACHE_DIRECTORY_TTL_SECONDS")
+    def view():
+        # This callable stands in for the route's business query.  A cache hit
+        # must return before Flask invokes the view at all.
+        sql_calls.append("SELECT public resorts")
+        return jsonify({"rows": []})
+
+    client = app.test_client()
+    first = client.get("/api/resorts/?active=true")
+    second = client.get("/api/resorts/?active=true")
+
+    assert first.headers["X-Cache"] == "MISS"
+    assert second.headers["X-Cache"] == "HIT"
+    assert sql_calls == ["SELECT public resorts"]
+
+
+def test_cache_info_logs_are_observable(caplog):
+    with caplog.at_level(logging.INFO, logger="snow.public_cache"):
+        log_cache_startup(True, True, True)
+
+    assert "PUBLIC CACHE enabled=true redis_configured=true client_initialized=true" in caplog.text
 
 
 def test_corrupt_value_falls_back_and_repairs_cache():

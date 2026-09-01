@@ -9,7 +9,29 @@ from functools import wraps
 from flask import current_app, make_response, request
 
 logger = logging.getLogger("snow.public_cache")
+# Gunicorn configures its own loggers, while the application root logger keeps
+# the default WARNING threshold.  Give cache lifecycle records an explicit
+# level so INFO events propagate to Render's process log instead of being
+# discarded before they reach a handler.
+logger.setLevel(logging.INFO)
 _SAFE_COMPONENT = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
+
+
+def log_cache_startup(enabled, redis_configured, client_initialized):
+    """Report cache wiring without exposing the Redis URL or credentials."""
+    logger.info(
+        "PUBLIC CACHE enabled=%s redis_configured=%s client_initialized=%s",
+        str(bool(enabled)).lower(),
+        str(bool(redis_configured)).lower(),
+        str(bool(client_initialized)).lower(),
+    )
+
+
+def configure_cache_logging(application_logger):
+    """Use Flask's stderr handler, which Gunicorn/Render actually captures."""
+    if not logger.handlers:
+        for handler in application_logger.handlers:
+            logger.addHandler(handler)
 
 
 def normalize_component(value):
