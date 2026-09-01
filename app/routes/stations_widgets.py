@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, abort
-from werkzeug.exceptions import NotFound
+from peewee import JOIN
 from app.models.station_widgets import StationWidgets
 from app.models.resort import Resort
 from app.services.resort_access import get_public_active_resort_or_404
@@ -157,22 +157,42 @@ def _has_price(forfaits):
         for value in item["prices"].values()
     )
 
+
+def _get_active_widgets_row(slug):
+    """Return the two-column joined projection for one active station."""
+    return (
+        Resort.select(
+            Resort.slug.alias("station_slug"),
+            StationWidgets.config.alias("widgets_config"),
+        )
+        .join(
+            StationWidgets,
+            JOIN.LEFT_OUTER,
+            on=(Resort.slug == StationWidgets.station_slug),
+        )
+        .where((Resort.slug == slug) & (Resort.is_active == True))
+        .dicts()
+        .first()
+    )
+
+
 @bp_widgets.get("/<string:slug>/widgets")
 def get_widgets(slug: str):
     try:
-        get_public_active_resort_or_404(slug)
-    except NotFound:
-        return jsonify({"error": "station_not_found", "message": "Station not found"}), 404
-    try:
-        row = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
-        if not row:
+        # The LEFT JOIN distinguishes an absent/inactive resort (no result) from
+        # an active resort without widgets (a result whose config is NULL).
+        # Only the existence marker and the JSON payload needed below are read.
+        row = _get_active_widgets_row(slug)
+        if row is None:
+            return jsonify({"error": "station_not_found", "message": "Station not found"}), 404
+        if row["widgets_config"] is None:
             cfg = {**DEFAULT_CFG, "forfaits": dict(DEFAULT_CFG["forfaits"])}
             cfg["stationSlug"] = slug
             response = jsonify(cfg)
             response.headers["Cache-Control"] = "no-store"
             response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
             return response
-        data = StationWidgets.from_json(row.config)
+        data = StationWidgets.from_json(row["widgets_config"])
         data = _normalize_widgets_config(data)
         data["forfaits"] = _canonical_forfaits(data)
         # Only documented public widgets leave this endpoint. In particular,

@@ -54,7 +54,7 @@ class StationActivationTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
 
     def test_widgets_inactive_is_404(self):
-        with patch('app.routes.stations_widgets.get_public_active_resort_or_404', side_effect=lambda slug: (_ for _ in ()).throw(__import__('werkzeug.exceptions').exceptions.NotFound())):
+        with patch('app.routes.stations_widgets._get_active_widgets_row', return_value=None):
             resp = self.client.get('/api/stations/inactive/widgets')
         self.assertEqual(resp.status_code, 404)
 

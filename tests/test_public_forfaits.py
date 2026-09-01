@@ -54,10 +54,7 @@ class PublicForfaitsTests(unittest.TestCase):
         self.assertFalse(_has_price({"items": [{"prices": {}}]}))
 
     def test_unknown_or_inactive_station_returns_json_404(self):
-        with patch(
-            "app.routes.stations_widgets.get_public_active_resort_or_404",
-            side_effect=__import__("werkzeug.exceptions", fromlist=["NotFound"]).NotFound(),
-        ):
+        with patch("app.routes.stations_widgets._get_active_widgets_row", return_value=None):
             response = self.client.get("/api/stations/unknown/widgets")
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.content_type, "application/json")
@@ -68,12 +65,16 @@ class PublicForfaitsTests(unittest.TestCase):
             "internal": "preserved existing widget contract",
             "forfaits": {"enabled": True, "items": [{"title": "Journée", "price": "42"}]},
         })})()
-        with patch("app.routes.stations_widgets.get_public_active_resort_or_404"), patch(
-            "app.routes.stations_widgets.StationWidgets.get_or_none", return_value=row
+        with patch(
+            "app.routes.stations_widgets._get_active_widgets_row",
+            return_value={"station_slug": "auron", "widgets_config": row.config},
         ):
             response = self.client.get("/api/stations/auron/widgets")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["forfaits"]["items"][0]["prices"], {"price": "42"})
+        self.assertEqual(
+            response.get_json()["forfaits"]["items"][0]["prices"],
+            {"c-1-1": "Journée", "c-1-2": "42"},
+        )
 
 
 if __name__ == "__main__":
