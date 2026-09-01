@@ -4,7 +4,8 @@ from peewee import fn
 from app.models.base import db
 from app.models.resort import Resort
 from app.models.station_widgets import StationWidgets
-from app.services.public_cache import bump_public_resorts_version
+from app.services.public_cache import (bump_public_resorts_version,
+                                       invalidate_station, invalidate_widgets)
 from app.datetime_utils import utcnow
 import json
 import re
@@ -237,6 +238,7 @@ def create_resort():
         )
 
     bump_public_resorts_version()
+    invalidate_station(slug)
     return jsonify({"ok": True, "resort": r.to_dict()}), 201
 
 
@@ -326,6 +328,8 @@ def patch_resort_admin(slug):
             r.updated_at = utcnow()
             r.save()
 
+    if payload_for_validation:
+        invalidate_station(slug)
     if is_active_changed:
         bump_public_resorts_version()
 
@@ -350,6 +354,9 @@ def bulk_activation():
     updated = query.execute()
     if updated > 0:
         bump_public_resorts_version()
+        # The affected slug set may be large; expire all station-derived keys safely.
+        from app.services.public_cache import invalidate_patterns
+        invalidate_patterns("snow:public:station:*", "snow:public:widgets:*", "snow:public:skipasses:*", "snow:public:resorts:list:*")
     return jsonify({"ok": True, "updated": updated, "is_active": is_active})
 
 
@@ -364,10 +371,12 @@ def patch_widgets_admin(slug):
     w = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
     if not w:
         StationWidgets.create(station_slug=slug, config=json.dumps(payload))
+        invalidate_widgets(slug)
         return jsonify({"ok": True, "created": True})
     current = StationWidgets.from_json(w.config)
     merged = deep_merge(current if isinstance(current, dict) else {}, payload)
     merged = _normalize_widgets_config(merged)
     w.config = StationWidgets.to_json(merged)
     w.save()
+    invalidate_widgets(slug)
     return jsonify({"ok": True, "merged": True})

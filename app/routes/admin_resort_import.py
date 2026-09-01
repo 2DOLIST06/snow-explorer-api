@@ -12,6 +12,7 @@ from app.models.resort import Resort
 from app.models.resort_import_history import ResortImportHistory
 from app.models.station_widgets import StationWidgets
 from app.services.admin_auth import admin_required
+from app.services.public_cache import invalidate_station, purge_all
 from app.services.resort_json import (SCHEMA_VERSION, ValidationProblem, apply_record,
     checksum, differences, export_document, parse_upload, preview_token,
     serialize_station, STATION_CREATE_FIELDS, validate_document, verify_token)
@@ -111,6 +112,7 @@ def confirm_one(identifier):
             hist = _history(filename, document, "single", "success", resort.id, 1, bool(changes), 0, not bool(changes), 0, changes, [])
     except Exception as exc:
         return jsonify({"error": "import_failed", "details": str(exc)}), 422
+    invalidate_station(resort.slug)
     return jsonify({"success": True, "station": {"id": str(resort.id), "slug": resort.slug, "name": resort.name}, "updated_fields": updated, "created_relations": [], "updated_relations": relations, "deleted_relations": [], "warnings": [], "history_id": hist.id})
 
 
@@ -170,6 +172,7 @@ def confirm_bulk():
             status = "partial" if errors else "success"
             hist = _history(filename, document, "bulk", status, None, len(records), updated, created, ignored, failed, all_changes, errors)
     except Exception as exc: return jsonify({"error": "import_failed", "details": str(exc)}), 422
+    purge_all()
     return jsonify({"success": True, "stations_updated": updated, "stations_created": created, "stations_ignored": ignored, "stations_failed": failed, "history_id": hist.id})
 
 

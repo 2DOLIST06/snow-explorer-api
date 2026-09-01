@@ -4,7 +4,8 @@ from app.models.base import db
 from app.models.ski_pass import SkiPassSeason
 from app.models.station_widgets import StationWidgets
 from app.routes.stations_widgets import _canonical_forfaits
-from app.services.public_cache import bump_public_resorts_version
+from app.services.public_cache import (bump_public_resorts_version, cached_json,
+                                       invalidate_ski_passes, ski_passes_key)
 from app.services.ski_passes import (
     import_result,
     prefetch_seasons,
@@ -59,6 +60,7 @@ def _persist(payload, target_season=None):
                 "error": "empty_ski_pass_grid",
                 "message": "Aucune grille tarifaire n'a été enregistrée",
             }), 422
+        invalidate_ski_passes(season.resort.slug)
         return jsonify(result), 200
     except Exception:
         # db.atomic() has already rolled the transaction back at this point.
@@ -83,6 +85,7 @@ def public_grid(slug):
 
 
 @bp_public_station_ski_passes.get("/<string:slug>/ski-passes")
+@cached_json(lambda slug: ski_passes_key(slug), "PUBLIC_CACHE_SKI_PASSES_TTL_SECONDS")
 def public_station_grid(slug):
     """Canonical frontend URL for the active normalized ski-pass season."""
     return public_grid(slug)
@@ -210,6 +213,7 @@ def set_station_season_activation(slug, season_id):
         season.save(only=[SkiPassSeason.is_active])
     if changed:
         bump_public_resorts_version()
+        invalidate_ski_passes(slug)
     return jsonify({
         "success": True,
         "season_id": season.id,
@@ -223,4 +227,5 @@ def delete_season(slug, season_name):
     if season is None:
         return jsonify({"error": "ski_pass_season_not_found"}), 404
     season.delete_instance(recursive=True)
+    invalidate_ski_passes(slug)
     return "", 204

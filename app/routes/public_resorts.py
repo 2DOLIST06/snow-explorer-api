@@ -2,7 +2,8 @@ from flask import Blueprint, current_app, jsonify, request
 from app.models.resort import Resort
 from app.models.station_widgets import StationWidgets
 from app.services.public_resort import get_public_resort
-from app.services.public_cache import get_public_resorts_version
+from app.services.public_cache import (cached_json, get_public_resorts_version,
+                                       resorts_list_key, station_key)
 from functools import reduce
 import operator
 
@@ -112,6 +113,7 @@ def _resort_public_dict(r: Resort, snowparks_count=None) -> dict:
 
 
 @bp_public.get("/")
+@cached_json(lambda: resorts_list_key(), "PUBLIC_CACHE_DIRECTORY_TTL_SECONDS")
 def list_resorts():
     active = request.args.get("active")
     if active is not None and active.strip().lower() != "true":
@@ -299,6 +301,7 @@ def get_resort(slug: str):
 
 
 @bp_public_stations.get("/<slug>")
+@cached_json(lambda slug: station_key(slug), "PUBLIC_CACHE_STATION_TTL_SECONDS")
 def get_station(slug: str):
     """Return one station and its optional active normalized ski-pass grid."""
     return _get_station_response(slug)

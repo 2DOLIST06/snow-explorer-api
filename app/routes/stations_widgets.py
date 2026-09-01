@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, abort
 from peewee import JOIN
 from app.models.station_widgets import StationWidgets
+from app.services.public_cache import cached_json, widgets_key, invalidate_widgets
 from app.models.resort import Resort
 from app.services.resort_access import get_public_active_resort_or_404
 from app.services.public_cache import get_public_resorts_version
@@ -177,6 +178,7 @@ def _get_active_widgets_row(slug):
 
 
 @bp_widgets.get("/<string:slug>/widgets")
+@cached_json(lambda slug: widgets_key(slug), "PUBLIC_CACHE_WIDGETS_TTL_SECONDS")
 def get_widgets(slug: str):
     try:
         # The LEFT JOIN distinguishes an absent/inactive resort (no result) from
@@ -270,4 +272,5 @@ def upsert_widgets(slug: str):
         row.config = StationWidgets.to_json(merged)
         row.save()
 
+    invalidate_widgets(slug)
     return jsonify({"ok": True, "stationSlug": slug, "merged": True})
