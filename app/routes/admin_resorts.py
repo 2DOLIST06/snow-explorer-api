@@ -3,6 +3,7 @@ from flask import Blueprint, jsonify, request
 from datetime import date
 from app.models.resort import Resort
 from app.datetime_utils import utcnow
+from app.services.public_cache import invalidate_station
 
 bp_admin = Blueprint("admin_resorts", __name__, url_prefix="/api/admin/resorts")
 
@@ -96,4 +97,5 @@ def patch_admin_resort(slug: str):
     if any(k in ALLOWED and k in Resort._meta.fields for k in payload):
         r.updated_at = utcnow()
         r.save()
+        invalidate_station(r.slug)
     return jsonify(r.to_dict()), 200

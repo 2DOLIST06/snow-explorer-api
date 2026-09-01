@@ -5,10 +5,12 @@ from app.models.region import Region
 from app.models.resort import Resort
 from app.routes.public_resorts import _resort_public_dict
 from app.services.region_ids import canonical_region_id, region_id_variants
+from app.services.public_cache import cached_json, region_key
 
 bp_regions = Blueprint("regions_public", __name__)
 
 @bp_regions.get("/api/regions")
+@cached_json(lambda: "snow:public:regions:list", "PUBLIC_CACHE_REGIONS_TTL_SECONDS")
 def list_regions():
     """Retourne la liste complète des régions françaises"""
     regions = (Region.select()
@@ -29,6 +31,7 @@ def list_regions():
 
 
 @bp_regions.get("/api/regions/<slug>")
+@cached_json(lambda slug: region_key(slug), "PUBLIC_CACHE_REGIONS_TTL_SECONDS")
 def get_region(slug):
     """Return the content and every public station for a region landing page."""
     requested_id = canonical_region_id(slug)

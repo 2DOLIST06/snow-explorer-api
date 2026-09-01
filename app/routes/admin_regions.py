@@ -4,6 +4,7 @@ from peewee import fn
 from app.models.region import Region
 from app.services.resort_json import sanitize_html
 from app.datetime_utils import utcnow
+from app.services.public_cache import invalidate_region
 
 
 bp_admin_regions = Blueprint(
@@ -46,4 +47,5 @@ def patch_region_admin(slug):
     if payload:
         region.updated_at = utcnow()
         region.save()
+        invalidate_region(region.id)
     return jsonify({"ok": True, "region": region.to_dict()}), 200

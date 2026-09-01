@@ -27,6 +27,7 @@ from app.routes.admin_resort_import import bp_resort_json
 from app.services.admin_auth import protect_admin_routes
 from app.routes.admin_auth import bp_admin_auth
 from app.routes.admin_indexnow import bp_admin_indexnow
+from app.routes.admin_cache import bp_admin_cache
 from app.routes.ski_passes import (
     bp_admin_ski_passes, bp_admin_station_ski_passes, bp_public_station_ski_passes,
     bp_ski_passes,
@@ -74,9 +75,29 @@ def create_app(config=None):
         ADMIN_LOGIN_RATE_WINDOW_SECONDS=int(os.getenv("ADMIN_LOGIN_RATE_WINDOW_SECONDS", "900")),
         TRUST_PROXY_HEADERS=_env_bool("TRUST_PROXY_HEADERS", False),
         INDEXNOW_KEY=os.getenv("INDEXNOW_KEY"),
+        REDIS_URL=os.getenv("REDIS_URL"),
+        PUBLIC_CACHE_ENABLED=_env_bool("PUBLIC_CACHE_ENABLED", True),
+        PUBLIC_CACHE_DIRECTORY_TTL_SECONDS=int(os.getenv("PUBLIC_CACHE_DIRECTORY_TTL_SECONDS", "86400")),
+        PUBLIC_CACHE_STATION_TTL_SECONDS=int(os.getenv("PUBLIC_CACHE_STATION_TTL_SECONDS", "86400")),
+        PUBLIC_CACHE_WIDGETS_TTL_SECONDS=int(os.getenv("PUBLIC_CACHE_WIDGETS_TTL_SECONDS", "86400")),
+        PUBLIC_CACHE_SKI_PASSES_TTL_SECONDS=int(os.getenv("PUBLIC_CACHE_SKI_PASSES_TTL_SECONDS", "21600")),
+        PUBLIC_CACHE_REGIONS_TTL_SECONDS=int(os.getenv("PUBLIC_CACHE_REGIONS_TTL_SECONDS", "86400")),
+        PUBLIC_CACHE_LOCK_TTL_SECONDS=int(os.getenv("PUBLIC_CACHE_LOCK_TTL_SECONDS", "10")),
+        PUBLIC_CACHE_LOCK_WAIT_SECONDS=float(os.getenv("PUBLIC_CACHE_LOCK_WAIT_SECONDS", "0.2")),
+        PUBLIC_CACHE_DEBUG_HEADERS=_env_bool("PUBLIC_CACHE_DEBUG_HEADERS", False),
     )
     if config:
         app.config.update(config)
+
+    app.extensions["public_cache_redis"] = app.config.get("PUBLIC_CACHE_REDIS")
+    if (app.extensions["public_cache_redis"] is None and app.config["PUBLIC_CACHE_ENABLED"]
+            and app.config.get("REDIS_URL")):
+        import redis
+        # Connections remain lazy: startup and Redis outages never block the API.
+        app.extensions["public_cache_redis"] = redis.Redis.from_url(
+            app.config["REDIS_URL"], socket_connect_timeout=0.15,
+            socket_timeout=0.2, retry_on_timeout=False,
+        )
 
     @app.before_request
     def open_database_connection():
@@ -141,6 +162,7 @@ def create_app(config=None):
     app.register_blueprint(bp_resort_json)
     app.register_blueprint(bp_admin_auth)
     app.register_blueprint(bp_admin_indexnow)
+    app.register_blueprint(bp_admin_cache)
     app.register_blueprint(bp_ski_passes)
     app.register_blueprint(bp_public_station_ski_passes)
     app.register_blueprint(bp_admin_ski_passes)
