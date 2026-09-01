@@ -32,6 +32,7 @@ from app.routes.ski_passes import (
     bp_admin_ski_passes, bp_admin_station_ski_passes, bp_public_station_ski_passes,
     bp_ski_passes,
 )
+from app.services.public_cache import configure_cache_logging, log_cache_startup
 from app.cli import register_admin_commands
 
 
@@ -98,6 +99,12 @@ def create_app(config=None):
             app.config["REDIS_URL"], socket_connect_timeout=0.15,
             socket_timeout=0.2, retry_on_timeout=False,
         )
+    configure_cache_logging(app.logger)
+    log_cache_startup(
+        app.config["PUBLIC_CACHE_ENABLED"],
+        bool(app.config.get("REDIS_URL")),
+        app.extensions["public_cache_redis"] is not None,
+    )
 
     @app.before_request
     def open_database_connection():
