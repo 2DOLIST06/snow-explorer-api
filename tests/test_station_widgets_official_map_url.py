@@ -81,8 +81,9 @@ class OfficialMapUrlTests(unittest.TestCase):
             "app.routes.admin_stations.StationWidgets.get_or_none", return_value=row
         ):
             admin_response = self.client.get("/api/admin/stations/station-test")
-        with patch("app.routes.stations_widgets.get_public_active_resort_or_404"), patch(
-            "app.routes.stations_widgets.StationWidgets.get_or_none", return_value=row
+        with patch(
+            "app.routes.stations_widgets._get_active_widgets_row",
+            return_value={"station_slug": "station-test", "widgets_config": row.config},
         ):
             public_response = self.client.get("/api/stations/station-test/widgets")
 
