@@ -329,7 +329,14 @@ def patch_resort_admin(slug):
             r.save()
 
     if payload_for_validation:
-        invalidate_station(slug)
+        # Ordinary station fields are projected by the station resource and
+        # directory only. Activation additionally controls whether the public
+        # widgets and ski-pass resources are reachable.
+        invalidate_station(
+            slug,
+            include_widgets=is_active_changed,
+            include_ski_passes=is_active_changed,
+        )
     if is_active_changed:
         bump_public_resorts_version()
 

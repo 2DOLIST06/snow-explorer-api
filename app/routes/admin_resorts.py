@@ -76,6 +76,10 @@ def patch_admin_resort(slug: str):
     payload = request.get_json(silent=True) or {}
     if "is_active" in payload and not isinstance(payload.get("is_active"), bool):
         return jsonify({"error": "is_active_must_be_boolean"}), 400
+    activation_changed = (
+        "is_active" in payload
+        and bool(payload["is_active"]) != bool(r.is_active)
+    )
     for k, v in payload.items():
         if k not in ALLOWED:
             continue
@@ -94,8 +98,15 @@ def patch_admin_resort(slug: str):
         else:
             setattr(r, k, (v if v != "" else None))
 
-    if any(k in ALLOWED and k in Resort._meta.fields for k in payload):
+    changed_fields = {
+        k for k in payload if k in ALLOWED and k in Resort._meta.fields
+    }
+    if changed_fields:
         r.updated_at = utcnow()
         r.save()
-        invalidate_station(r.slug)
+        invalidate_station(
+            r.slug,
+            include_widgets=activation_changed,
+            include_ski_passes=activation_changed,
+        )
     return jsonify(r.to_dict()), 200

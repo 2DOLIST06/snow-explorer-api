@@ -178,19 +178,28 @@ def invalidate_patterns(*patterns):
             keys = list(client.scan_iter(match=pattern, count=100))
             if keys:
                 deleted += client.delete(*keys)
-        logger.info("CACHE INVALIDATE patterns=%s deleted=%d", len(patterns), deleted)
+        logger.info(
+            "CACHE INVALIDATE patterns=%s deleted=%d",
+            ",".join(patterns),
+            deleted,
+        )
     except Exception:
         logger.exception("CACHE ERROR operation=invalidate")
     return deleted
 
 
-def invalidate_station(slug, include_directory=True):
+def invalidate_station(slug, include_directory=True, include_widgets=True,
+                       include_ski_passes=True):
     try:
         safe = normalize_component(slug)
     except ValueError:
         logger.warning("CACHE ERROR operation=invalidate reason=invalid-slug")
         return 0
-    patterns = [f"snow:public:station:{safe}", f"snow:public:widgets:{safe}", f"snow:public:skipasses:{safe}*"]
+    patterns = [f"snow:public:station:{safe}"]
+    if include_widgets:
+        patterns.append(f"snow:public:widgets:{safe}")
+    if include_ski_passes:
+        patterns.append(f"snow:public:skipasses:{safe}*")
     if include_directory:
         patterns.append("snow:public:resorts:list:*")
     return invalidate_patterns(*patterns)
