@@ -5,7 +5,13 @@ from app.models.ski_pass import SkiPassSeason
 from app.models.station_widgets import StationWidgets
 from app.routes.stations_widgets import _canonical_forfaits
 from app.services.public_cache import bump_public_resorts_version
-from app.services.ski_passes import import_result, preview, replace_grid, serialize_season
+from app.services.ski_passes import (
+    import_result,
+    prefetch_seasons,
+    preview,
+    replace_grid,
+    serialize_season,
+)
 
 bp_ski_passes = Blueprint("ski_passes", __name__, url_prefix="/api/forfaits")
 bp_public_station_ski_passes = Blueprint(
@@ -26,7 +32,8 @@ def _season_for(slug, season_name=None, active_only=False):
         query = query.order_by(SkiPassSeason.season.desc())
     if active_only:
         query = query.where(SkiPassSeason.is_active == True)
-    return query.first()
+    rows = prefetch_seasons(query.limit(1))
+    return rows[0] if rows else None
 
 
 def _station_payload(slug):
@@ -91,9 +98,11 @@ def public_systems(slug):
     widgets_row = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
     widgets = StationWidgets.from_json(widgets_row.config) if widgets_row else {}
     legacy = _canonical_forfaits(widgets)
-    active_seasons = (SkiPassSeason.select(SkiPassSeason, Resort).join(Resort)
-                      .where((Resort.slug == slug) & (SkiPassSeason.is_active == True))
-                      .order_by(SkiPassSeason.season.desc()))
+    active_seasons = prefetch_seasons(
+        SkiPassSeason.select(SkiPassSeason, Resort).join(Resort)
+        .where((Resort.slug == slug) & (SkiPassSeason.is_active == True))
+        .order_by(SkiPassSeason.season.desc())
+    )
     normalized = [serialize_season(season) for season in active_seasons]
     return jsonify({
         "legacy_enabled": legacy["enabled"],
