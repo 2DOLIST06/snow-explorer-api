@@ -5,9 +5,21 @@ from datetime import date
 from unittest.mock import MagicMock, patch
 
 from flask import Flask
+from peewee import SqliteDatabase
 
-from app.models.ski_pass import SkiPassSeason
-from app.routes.ski_passes import bp_admin_station_ski_passes, bp_ski_passes
+from app.models.resort import Resort
+from app.models.ski_pass import (
+    SkiPassPeriod,
+    SkiPassPrice,
+    SkiPassProduct,
+    SkiPassSeason,
+)
+from app.models.station_widgets import StationWidgets
+from app.routes.ski_passes import (
+    bp_admin_station_ski_passes,
+    bp_public_station_ski_passes,
+    bp_ski_passes,
+)
 from app.services.ski_passes import preview, replace_grid, serialize_season, validate_grid
 
 
@@ -124,7 +136,7 @@ class SkiPassPersistenceTests(unittest.TestCase):
 class PublicSerializationTests(unittest.TestCase):
     def test_public_shape_preserves_order_and_current_period(self):
         period = MagicMock(id=1, external_id="high", name="Haute", start_date=date(2026, 12, 1), end_date=date(2027, 3, 1), sort_order=0)
-        fixed = MagicMock(id=1, period=period, category="teen", category_label="Jeune", price_type="fixed", price=42, price_min=None, price_max=None, dynamic_label=None, note="Des tarifs réduits sont proposés…", sort_order=0)
+        fixed = MagicMock(id=1, period_id=1, category="teen", category_label="Jeune", price_type="fixed", price=42, price_min=None, price_max=None, dynamic_label=None, note="Des tarifs réduits sont proposés…", sort_order=0)
         product = MagicMock(id=1, external_id="day", name="Journée", duration_days=1, duration_label="1 jour", sort_order=0, prices=[fixed])
         season = MagicMock(id=9, season="2026-2027", is_active=True, currency="EUR", source_url="https://example.test", resort=MagicMock(slug="chamonix"), periods=[period], products=[product])
         body = serialize_season(season, date(2027, 1, 2))
@@ -163,6 +175,142 @@ class PublicSerializationTests(unittest.TestCase):
         response = app.test_client().get("/api/stations/chamonix/ski-passes")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["passes"][0]["prices"][0]["note"], "Des tarifs réduits sont proposés…")
+
+
+class PublicQueryCountTests(unittest.TestCase):
+    models = [
+        Resort,
+        StationWidgets,
+        SkiPassSeason,
+        SkiPassPeriod,
+        SkiPassProduct,
+        SkiPassPrice,
+    ]
+
+    def setUp(self):
+        self.database = SqliteDatabase(":memory:")
+        self.database.bind(self.models)
+        self.database.connect()
+        self.database.create_tables(self.models)
+        app = Flask(__name__)
+        app.register_blueprint(bp_ski_passes)
+        app.register_blueprint(bp_public_station_ski_passes)
+        self.client = app.test_client()
+
+    def tearDown(self):
+        self.database.drop_tables(self.models)
+        self.database.close()
+
+    def create_grid(self, product_count, price_count):
+        resort = Resort.create(
+            id="resort-1", name="Chamonix", slug="chamonix", is_active=True
+        )
+        StationWidgets.create(station_slug=resort.slug, config="{}")
+        season = SkiPassSeason.create(
+            resort=resort, season="2026-2027", currency="EUR", is_active=True
+        )
+        periods = [
+            SkiPassPeriod.create(
+                season=season,
+                external_id=f"period-{index}",
+                name=f"Period {index}",
+                start_date=date(2026, 11, 1),
+                end_date=date(2027, 4, 30),
+                sort_order=index,
+            )
+            for index in range(2)
+        ]
+        products = [
+            SkiPassProduct.create(
+                season=season,
+                external_id=f"product-{index}",
+                name=f"Product {index}",
+                duration_days=index + 1,
+                duration_label=f"{index + 1} days",
+                sort_order=index,
+            )
+            for index in range(product_count)
+        ]
+        for index in range(price_count):
+            SkiPassPrice.create(
+                product=products[index % product_count],
+                period=periods[index % len(periods)],
+                category=f"category-{index}",
+                category_label=f"Category {index}",
+                price_type="fixed",
+                price=index + 1,
+                sort_order=index,
+            )
+
+    def request_with_query_count(self, path):
+        statements = []
+        original = self.database.execute_sql
+
+        def execute_sql(sql, params=None, commit=None):
+            if sql.lstrip().upper().startswith("SELECT"):
+                statements.append(sql)
+            return original(sql, params, commit)
+
+        with patch.object(self.database, "execute_sql", side_effect=execute_sql):
+            response = self.client.get(path)
+        self.assertEqual(response.status_code, 200)
+        return response.get_json(), len(statements)
+
+    def assert_constant_query_count(self, path, expected_count):
+        observed = []
+        for product_count, price_count in ((1, 2), (10, 40)):
+            with self.subTest(
+                path=path, products=product_count, prices=price_count
+            ):
+                self.database.drop_tables(self.models)
+                self.database.create_tables(self.models)
+                self.create_grid(product_count, price_count)
+                body, query_count = self.request_with_query_count(path)
+                observed.append(query_count)
+                self.assertEqual(query_count, expected_count)
+                self.assertEqual(len(body["passes"]), product_count)
+                self.assertEqual(
+                    sum(len(product["prices"]) for product in body["passes"]),
+                    price_count,
+                )
+                self.assertEqual(
+                    body["passes"][0]["prices"][0]["period_id"], "period-0"
+                )
+                self.assertEqual(
+                    body["passes"][0]["prices"][0]["period_db_id"],
+                    body["periods"][0]["db_id"],
+                )
+        self.assertEqual(observed, [expected_count, expected_count])
+
+    def test_public_grid_query_count_is_constant(self):
+        self.assert_constant_query_count(
+            "/api/forfaits/stations/chamonix", expected_count=5
+        )
+
+    def test_canonical_public_grid_query_count_is_constant(self):
+        self.assert_constant_query_count(
+            "/api/stations/chamonix/ski-passes", expected_count=5
+        )
+
+    def test_systems_query_count_is_constant(self):
+        observed = []
+        for product_count, price_count in ((1, 2), (10, 40)):
+            with self.subTest(products=product_count, prices=price_count):
+                self.database.drop_tables(self.models)
+                self.database.create_tables(self.models)
+                self.create_grid(product_count, price_count)
+                body, query_count = self.request_with_query_count(
+                    "/api/forfaits/stations/chamonix/systems"
+                )
+                observed.append(query_count)
+                self.assertEqual(query_count, 6)
+                grid = body["normalized_seasons"][0]
+                self.assertEqual(len(grid["passes"]), product_count)
+                self.assertEqual(
+                    sum(len(product["prices"]) for product in grid["passes"]),
+                    price_count,
+                )
+        self.assertEqual(observed, [6, 6])
 
 
 class SkiPassActivationTests(unittest.TestCase):
