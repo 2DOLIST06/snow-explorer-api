@@ -113,6 +113,13 @@ def confirm():
     stations, error = _feed_or_error()
     if error: return error
     results = confirm_mappings(mappings, {s["external_station_id"] for s in stations})
+    # Return the same complete rows consumed by the frontend so it never has
+    # to reconstruct a station identifier from a display label.
+    from app.routes.admin_station_logos import _workspace_data
+    rows = {row["external_station_id"]: row for row in _workspace_data(stations)["rows"]}
+    for result in results:
+        if result["ok"]:
+            result["row"] = rows.get(result["external_station_id"])
     return jsonify({"ok": all(result["ok"] for result in results), "results": results}), 200
 
 

@@ -213,7 +213,7 @@ def fetch_stations(session=requests):
 def _error_candidate(mapping, station, checksum, raw, code, message):
     """Persist one failure without changing an already usable candidate."""
     logo = station["logo"]
-    with db.atomic():
+    with StationLogoCandidate._meta.database.atomic():
         candidate = StationLogoCandidate.get_or_none(
             (StationLogoCandidate.station == mapping.station_id) &
             (StationLogoCandidate.source_checksum == checksum))
@@ -282,7 +282,7 @@ def _process_one(mapping, station, stats, session, fetch_feed_ms=0):
         url = s3.put_webp(key, encoded)
         timings["s3_ms"] = _milliseconds(stage_started)
         stage = "database"
-        with db.atomic():
+        with StationLogoCandidate._meta.database.atomic():
             prior = (StationLogoCandidate.select()
                      .where((StationLogoCandidate.station == mapping.station_id) &
                             (StationLogoCandidate.source_checksum != checksum))
@@ -377,3 +377,45 @@ def sync(cursor=None, batch_size=DEFAULT_BATCH_SIZE, session=requests):
                        "has_more": has_more,
                        "processed_external_station_ids": processed_ids},
             "stats": stats, "results": results}
+
+
+def prepare(external_station_id, session=requests):
+    """Prepare exactly one feed station and return its persisted candidate."""
+    station = next((item for item in fetch_stations(session)
+                    if item["external_station_id"] == external_station_id), None)
+    if station is None:
+        raise LogoImportError("unknown_external_station", "Station ANMSM introuvable.")
+    mapping = AnmsmStationMapping.get_or_none(
+        (AnmsmStationMapping.source == "anmsm") &
+        (AnmsmStationMapping.external_station_id == external_station_id) &
+        AnmsmStationMapping.verified & AnmsmStationMapping.station.is_null(False))
+    if mapping is None:
+        raise LogoImportError("station_not_mapped", "La station ANMSM doit être associée.")
+    logo = station["logo"]
+    if not logo.get("url"):
+        raise LogoImportError("source_logo_missing", "Aucun logo source n'est disponible.")
+
+    # Tourinsoft media identity and URL are stable. This fast path is what lets
+    # an interrupted browser job resume without downloading an existing logo.
+    existing_query = StationLogoCandidate.select().where(
+        (StationLogoCandidate.station == mapping.station_id) &
+        (StationLogoCandidate.external_station_id == external_station_id) &
+        (StationLogoCandidate.source_url == logo["url"]) &
+        (StationLogoCandidate.status != "error"))
+    if logo.get("media_id"):
+        existing_query = existing_query.where(
+            StationLogoCandidate.anmsm_media_id == logo["media_id"])
+    existing = existing_query.order_by(StationLogoCandidate.updated_at.desc()).first()
+    if existing and existing.optimized_s3_key:
+        return existing, True
+
+    stats = {key: 0 for key in ("logos_created", "logos_updated", "logos_unchanged",
+        "stations_without_logo", "conversions_succeeded", "errors")}
+    outcome = _process_one(mapping, station, stats, session)
+    candidate = (StationLogoCandidate.select().where(
+        (StationLogoCandidate.station == mapping.station_id) &
+        (StationLogoCandidate.external_station_id == external_station_id))
+        .order_by(StationLogoCandidate.updated_at.desc()).first())
+    if not outcome["ok"]:
+        raise LogoImportError(outcome["error_code"], outcome["error_message"])
+    return candidate, outcome["status"] == "unchanged"
