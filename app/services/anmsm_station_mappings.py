@@ -54,8 +54,8 @@ def _confirm_mappings(rows, valid_external_ids):
     results, prepared = [], []
     seen_external, seen_stations = set(), set()
     for index, row in enumerate(rows):
-        external_id = str(row.get("external_station_id") or "").strip() if isinstance(row, dict) else ""
-        station_id = str(row.get("station_id") or "").strip() if isinstance(row, dict) else ""
+        external_id = row["external_station_id"].strip()
+        station_id = row["station_id"].strip()
         error = None
         station = Resort.get_or_none(Resort.id == station_id) if station_id else None
         if external_id not in valid_external_ids:

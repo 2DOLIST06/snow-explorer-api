@@ -81,6 +81,36 @@ class AnmsmStationMappingTests(unittest.TestCase):
         self.assertEqual(deleted.status_code, 200)
         self.assertIsNotNone(Resort.get_or_none(Resort.id == "alpha"))
 
+    def test_confirm_route_rejects_invalid_mapping_payloads_before_fetching_feed(self):
+        invalid_payloads = [
+            ({"mappings": [{}]}, [0]),
+            ({"mappings": [{"station_id": "alpha"}]}, [0]),
+            ({"mappings": [{"external_station_id": "A1"}]}, [0]),
+            ({"mappings": [{"anmsm_station_id": "A1", "station_id": "alpha"}]}, [0]),
+            ({"mappings": [{"external_station_id": "A1", "resort_id": "alpha"}]}, [0]),
+            ({"mappings": []}, []),
+            ({"mappings": ["A1"]}, [0]),
+        ]
+        expected_base = {
+            "ok": False,
+            "error": "invalid_mapping_payload",
+            "message": "Chaque correspondance doit contenir external_station_id et station_id.",
+        }
+
+        for payload, invalid_indexes in invalid_payloads:
+            with self.subTest(payload=payload), \
+                 patch("app.routes.admin_anmsm_mappings.fetch_stations") as fetch_stations:
+                response = self.client.post(
+                    "/api/admin/anmsm/station-mappings/confirm", json=payload)
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.get_json(), {
+                **expected_base,
+                "invalid_indexes": invalid_indexes,
+            })
+            fetch_stations.assert_not_called()
+            self.assertEqual(AnmsmStationMapping.select().count(), 0)
+
     def test_sync_after_confirmation_has_stable_numeric_stats_and_pending_candidate(self):
         confirm_mappings([{"external_station_id": "A1", "station_id": "alpha"}], {"A1"})
         with self.app.app_context(), \

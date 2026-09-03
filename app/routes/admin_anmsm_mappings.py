@@ -92,11 +92,27 @@ def search_resorts():
 @bp_admin_anmsm_mappings.post("/station-mappings/confirm")
 def confirm():
     payload = request.get_json(silent=True)
-    if not isinstance(payload, dict) or not isinstance(payload.get("mappings"), list) or not payload["mappings"]:
-        return jsonify({"ok": False, "error": "invalid_payload"}), 400
+    mappings = payload.get("mappings") if isinstance(payload, dict) else None
+    invalid_indexes = []
+    if isinstance(mappings, list):
+        invalid_indexes = [
+            index for index, mapping in enumerate(mappings)
+            if not isinstance(mapping, dict)
+            or not isinstance(mapping.get("external_station_id"), str)
+            or not mapping["external_station_id"].strip()
+            or not isinstance(mapping.get("station_id"), str)
+            or not mapping["station_id"].strip()
+        ]
+    if not isinstance(mappings, list) or not mappings or invalid_indexes:
+        return jsonify({
+            "ok": False,
+            "error": "invalid_mapping_payload",
+            "message": "Chaque correspondance doit contenir external_station_id et station_id.",
+            "invalid_indexes": invalid_indexes,
+        }), 400
     stations, error = _feed_or_error()
     if error: return error
-    results = confirm_mappings(payload["mappings"], {s["external_station_id"] for s in stations})
+    results = confirm_mappings(mappings, {s["external_station_id"] for s in stations})
     return jsonify({"ok": all(result["ok"] for result in results), "results": results}), 200
 
 
