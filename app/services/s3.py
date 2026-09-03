@@ -41,6 +41,20 @@ def put_webp(key, content):
     return public_url(key)
 
 
+def put_file(key, path, content_type):
+    """Upload a prepared immutable object without reading it into application RAM."""
+    with open(path, "rb") as body:
+        client().upload_fileobj(body, bucket(), key, ExtraArgs={
+            "ContentType": content_type, "CacheControl": "public,max-age=31536000,immutable",
+        })
+    return public_url(key)
+
+
+def validate_object(key):
+    metadata = client().head_object(Bucket=bucket(), Key=key)
+    return int(metadata.get("ContentLength") or 0) > 0
+
+
 def preview_url(key, expires_in=900):
     """Return a browser-readable URL without ever persisting a signature."""
     if setting("AWS_S3_PRIVATE").lower() in {"1", "true", "yes", "on"}:
