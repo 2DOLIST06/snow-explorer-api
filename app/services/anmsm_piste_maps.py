@@ -10,25 +10,32 @@ from app.models.anmsm_station_mapping import AnmsmStationMapping
 from app.models.station_piste_map_candidate import StationPisteMapCandidate
 from app.services import s3
 from app.services.anmsm_logos import (_assert_public_https, _records, _timeout,
-                                      FEED_URL, LogoImportError)
+                                      LogoImportError)
 
 MIME_FORMATS={"image/jpeg":"jpeg","image/png":"png","image/webp":"webp","application/pdf":"pdf"}
 EXTENSIONS={"jpeg":"jpg","png":"png","webp":"webp","pdf":"pdf"}
+PISTE_MAPS_FEED_URL = ("https://api-v3.tourinsoft.com/api/syndications/"
+                       "anmsm.tourinsoft.com/5F758A63-EEBC-47B4-A995-5F33532012F4"
+                       "?refreshCache=0&format=json")
+PISTE_MAP_FIELDS = ("PLANPISTES", "PLAN_DES_PISTES")
 
 def _media_list(value):
     if isinstance(value, dict): return [value]
     return value if isinstance(value, list) else []
 
 def parse_record(record):
+    if not isinstance(record, dict):
+        raise LogoImportError("invalid_feed", "ANMSM feed records must be JSON objects")
     fields=record.get("Object") if isinstance(record.get("Object"),dict) else record
     external_id=str(record.get("SyndicObjectID") or "").strip()
     name=str(fields.get("NOM") or record.get("SyndicObjectName") or "").strip()
-    # These are explicit Tourinsoft export columns, configurable for another
-    # syndication. We deliberately never classify a map from its title.
-    configured=(os.getenv("ANMSM_PISTE_MAP_FIELDS") or "PLANPISTES,PLAN_DES_PISTES").split(",")
+    # These are explicit Tourinsoft export columns. We deliberately never
+    # classify a generic media-feed image from its title.
     maps=[]
-    for field in configured:
-        for media in _media_list(fields.get(field.strip())):
+    for field in PISTE_MAP_FIELDS:
+        for media in _media_list(fields.get(field)):
+            if not isinstance(media, dict):
+                continue
             url=media.get("Url")
             if not url: continue
             media_id=str(media.get("MediaID") or media.get("ID") or url)
@@ -41,14 +48,40 @@ def parse_record(record):
     return {"external_station_id":external_id,"external_name":name,"piste_maps":maps}
 
 def fetch_maps(session=requests):
-    url=(current_app.config.get("ANMSM_PISTE_MAPS_FEED_URL") if has_app_context() else None) or os.getenv("ANMSM_PISTE_MAPS_FEED_URL") or os.getenv("ANMSM_STATIONS_FEED_URL") or FEED_URL
+    configured=current_app.config.get("ANMSM_PISTE_MAPS_FEED_URL") if has_app_context() else os.getenv("ANMSM_PISTE_MAPS_FEED_URL")
+    url=PISTE_MAPS_FEED_URL if configured is None else str(configured).strip()
+    if not url:
+        raise LogoImportError("missing_feed_url", "ANMSM piste-map feed URL is not configured")
     if "refreshCache=1" in url or "refreshCache=2" in url: raise LogoImportError("unsafe_feed_configuration","Only refreshCache=0 is permitted")
     response=None
     try:
+        if has_app_context(): current_app.logger.info("ANMSM piste-map feed request feed=espace_neige url=%s",url)
         response=session.get(url,timeout=(_timeout("ANMSM_CONNECT_TIMEOUT",3.05),_timeout("ANMSM_FEED_READ_TIMEOUT",10)))
-        response.raise_for_status()
-        return [x for x in map(parse_record,_records(response.json())) if x["external_station_id"]]
+        if has_app_context(): current_app.logger.info("ANMSM piste-map feed response feed=espace_neige status=%s",response.status_code)
+        if not 200 <= response.status_code < 300:
+            raise LogoImportError("source_feed_http_error",f"ANMSM piste-map feed returned HTTP {response.status_code}")
+        try: payload=response.json()
+        except (ValueError, requests.exceptions.JSONDecodeError) as exc:
+            raise LogoImportError("invalid_feed_json","ANMSM piste-map feed returned invalid JSON") from exc
+        records=_records(payload)
+        if any(not isinstance(record,dict) for record in records):
+            raise LogoImportError("invalid_feed","ANMSM feed records must be JSON objects")
+        objects=[record.get("Object",record) for record in records]
+        if not records or not any(isinstance(obj,dict) and any(field in obj for field in PISTE_MAP_FIELDS) for obj in objects):
+            raise LogoImportError("invalid_feed_structure","ANMSM Espace neige feed does not contain PLANPISTES")
+        stations=[]; rejected={"missing_station_id":0,"missing_url":0}; detected=0
+        for record in records:
+            station=parse_record(record)
+            fields=record.get("Object",record)
+            raw=sum(len(_media_list(fields.get(field))) for field in PISTE_MAP_FIELDS)
+            rejected["missing_url"] += raw-len(station["piste_maps"])
+            if not station["external_station_id"]: rejected["missing_station_id"] += len(station["piste_maps"]); continue
+            detected += len(station["piste_maps"]); stations.append(station)
+        if has_app_context():
+            current_app.logger.info("ANMSM piste-map feed parsed feed=espace_neige objects=%s stations=%s plans=%s rejected=%s reasons=%s",len(records),len(stations),detected,sum(rejected.values()),rejected)
+        return stations
     except requests.Timeout as exc: raise LogoImportError("source_feed_timeout","ANMSM feed request timed out") from exc
+    except requests.RequestException as exc: raise LogoImportError("source_feed_request_error","ANMSM piste-map feed request failed") from exc
     finally:
         if response is not None: response.close()
 

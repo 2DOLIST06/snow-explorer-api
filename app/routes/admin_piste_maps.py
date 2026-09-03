@@ -39,7 +39,7 @@ def workspace_data(stations):
                  "station_id":resort.id if resort else None,"station_name":resort.name if resort else None,
                  "mapping_status":"matched" if resort else "unmatched","current_plan_url":resort.pistes_large_map_url if resort else None,
                  "candidate_id":None,"candidate_status":None,"candidate_preview_url":None,"candidate_original_url":None,
-                 "warnings":[],"preparation_required":bool(resort),"error":None}
+                 "warnings":[],"preparation_required":True,"error":None}
             if candidate: row.update(_candidate_row(candidate)); row["preparation_required"]=False
             rows.append(row)
     statuses=Counter(r["candidate_status"] for r in rows)
