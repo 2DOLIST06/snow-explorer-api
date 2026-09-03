@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from app.services.anmsm_logos import LogoImportError, _assert_public_https, optimize
+from app.services.anmsm_logos import LogoImportError, _assert_public_https, optimize, parse_station
 
 
 class AnmsmLogoProcessingTests(unittest.TestCase):
@@ -37,6 +37,13 @@ class AnmsmLogoProcessingTests(unittest.TestCase):
     def test_non_allowlisted_host_is_rejected_before_dns(self):
         with self.assertRaises(LogoImportError):
             _assert_public_https("https://example.org/logo.png")
+
+    def test_shared_parser_uses_real_tourinsoft_fields(self):
+        station = parse_station({"SyndicObjectID": " 123 ", "SyndicObjectName": "Station réelle",
+            "LOGO": [{"Url": "https://logo", "Titre": "Titre", "Credit": "Crédit"}]})
+        self.assertEqual(station["external_station_id"], "123")
+        self.assertEqual(station["external_name"], "Station réelle")
+        self.assertEqual(station["logo"]["title"], "Titre")
 
 
 if __name__ == "__main__":
