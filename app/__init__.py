@@ -92,6 +92,9 @@ def create_app(config=None):
         PUBLIC_CACHE_DEBUG_HEADERS=_env_bool("PUBLIC_CACHE_DEBUG_HEADERS", False),
         ANMSM_STATIONS_FEED_URL=os.getenv("ANMSM_STATIONS_FEED_URL"),
         ANMSM_LOGO_MAX_DOWNLOAD_BYTES=int(os.getenv("ANMSM_LOGO_MAX_DOWNLOAD_BYTES", str(10 * 1024 * 1024))),
+        ANMSM_CONNECT_TIMEOUT=float(os.getenv("ANMSM_CONNECT_TIMEOUT", "3.05")),
+        ANMSM_FEED_READ_TIMEOUT=float(os.getenv("ANMSM_FEED_READ_TIMEOUT", "10")),
+        ANMSM_MEDIA_READ_TIMEOUT=float(os.getenv("ANMSM_MEDIA_READ_TIMEOUT", "5")),
     )
     if config:
         app.config.update(config)

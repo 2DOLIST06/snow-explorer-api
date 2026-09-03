@@ -99,15 +99,25 @@ class AdminAnmsmRouteTests(unittest.TestCase):
         )
 
         csrf_token = self._login()
-        with patch("app.services.anmsm_logos.sync", return_value={"created": 2}) as sync:
+        outcome = {"batch": {"processed": 2}, "stats": {"created": 2}, "results": []}
+        with patch("app.services.anmsm_logos.sync", return_value=outcome) as sync:
             authenticated = self.client.post(
                 SYNC_ROUTE, headers={"X-CSRF-Token": csrf_token}
             )
         self.assertEqual(authenticated.status_code, 200)
         self.assertEqual(
-            authenticated.get_json(), {"ok": True, "stats": {"created": 2}}
+            authenticated.get_json(), {"ok": True, **outcome}
         )
-        sync.assert_called_once_with()
+        sync.assert_called_once_with(cursor=None, batch_size=2)
+
+    def test_sync_rejects_batches_above_the_hard_limit(self):
+        csrf_token = self._login()
+        with patch("app.services.anmsm_logos.sync") as sync:
+            response = self.client.post(SYNC_ROUTE, json={"batch_size": 4},
+                                        headers={"X-CSRF-Token": csrf_token})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "invalid_batch_size")
+        sync.assert_not_called()
 
     def test_sync_controller_errors_are_json(self):
         csrf_token = self._login()

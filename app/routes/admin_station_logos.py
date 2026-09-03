@@ -44,12 +44,21 @@ def candidates():
 @bp_admin_station_logos.post("/sync")
 def sync_anmsm_logos():
     """Fetch ANMSM logos and create candidates for administrator review."""
+    payload = request.get_json(silent=True) or {}
+    cursor = payload.get("cursor")
+    batch_size = payload.get("batch_size", 2)
+    if cursor is not None and (not isinstance(cursor, str) or not cursor.strip()):
+        return jsonify({"ok": False, "error": "invalid_cursor",
+                        "message": "cursor doit être null ou une chaîne non vide."}), 400
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or not 1 <= batch_size <= 3:
+        return jsonify({"ok": False, "error": "invalid_batch_size",
+                        "message": "batch_size doit être un entier compris entre 1 et 3."}), 400
     try:
         # Keep the import local so importing the routes never starts or
         # configures the external integration.
         from app.services.anmsm_logos import sync
 
-        return jsonify({"ok": True, "stats": sync()})
+        return jsonify({"ok": True, **sync(cursor=cursor, batch_size=batch_size)})
     except Exception:
         # Upstream, image-processing and object-storage failures must retain
         # the API's JSON contract instead of returning Flask's HTML 500 page.
