@@ -1,6 +1,6 @@
 from urllib.parse import unquote, urlparse
 
-from flask import Blueprint, abort, g, jsonify, request
+from flask import Blueprint, abort, current_app, g, jsonify, request
 
 from app.datetime_utils import utcnow
 from app.models.anmsm_station_mapping import AnmsmStationMapping
@@ -10,7 +10,9 @@ from app.models.station_logo_candidate import StationLogoCandidate
 from app.services import s3
 from app.services.public_cache import invalidate_station
 
-bp_admin_station_logos = Blueprint("admin_station_logos", __name__, url_prefix="/api/admin/station-logos")
+bp_admin_station_logos = Blueprint(
+    "admin_station_logos", __name__, url_prefix="/api/admin/anmsm/logos"
+)
 
 def _candidate_json(candidate):
     return {"id": candidate.id, "station_id": candidate.station_id,
@@ -37,6 +39,22 @@ def candidates():
         if status not in {"pending", "approved", "ignored", "updated", "error"}: abort(400, "statut invalide")
         query = query.where(StationLogoCandidate.status == status)
     return jsonify({"items": [_candidate_json(item) for item in query.order_by(StationLogoCandidate.detected_at.desc())]})
+
+
+@bp_admin_station_logos.post("/sync")
+def sync_anmsm_logos():
+    """Fetch ANMSM logos and create candidates for administrator review."""
+    try:
+        # Keep the import local so importing the routes never starts or
+        # configures the external integration.
+        from app.services.anmsm_logos import sync
+
+        return jsonify({"ok": True, "stats": sync()})
+    except Exception:
+        # Upstream, image-processing and object-storage failures must retain
+        # the API's JSON contract instead of returning Flask's HTML 500 page.
+        current_app.logger.exception("ANMSM logo synchronization failed")
+        return jsonify({"error": "anmsm_logo_sync_failed"}), 502
 
 @bp_admin_station_logos.get("/mappings")
 def mappings():
