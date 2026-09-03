@@ -2,32 +2,22 @@ import logging
 import mimetypes
 import os
 import uuid
-from urllib.parse import quote
-
-import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from flask import Blueprint, jsonify, request
 
 from app.services.admin_auth import admin_required
+from app.services import s3
 
 bp_uploads = Blueprint("uploads", __name__)
 logger = logging.getLogger("uploads.s3")
 
 
 def _setting(name, legacy_name=None):
-    value = os.getenv(name)
-    if value is None and legacy_name:
-        value = os.getenv(legacy_name)
-    return (value or "").strip()
+    return s3.setting(name, legacy_name)
 
 
 def _s3():
-    return boto3.client(
-        "s3",
-        aws_access_key_id=_setting("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=_setting("AWS_SECRET_ACCESS_KEY"),
-        region_name=_setting("AWS_REGION"),
-    )
+    return s3.client()
 
 
 def _error(message, status):
@@ -91,10 +81,7 @@ def presign():
         logger.exception("S3 presign boto3 failure exception_type=%s", type(exc).__name__)
         return _error("Unable to create the S3 upload URL", 500)
 
-    public_base_url = _setting("AWS_S3_PUBLIC_URL").rstrip("/")
-    if not public_base_url:
-        public_base_url = f"https://{bucket}.s3.{region}.amazonaws.com"
-    public_url = f"{public_base_url}/{quote(key)}"
+    public_url = s3.public_url(key)
     logger.info("S3 presign response generated key_prefix=uploads/ content_type=%s", content_type)
     return jsonify({
         "uploadUrl": url,
