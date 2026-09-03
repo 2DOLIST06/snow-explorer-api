@@ -17,6 +17,7 @@ from app.models.admin_login_attempt import AdminLoginAttempt
 from app.models.ski_pass import SkiPassSeason, SkiPassPeriod, SkiPassProduct, SkiPassPrice
 from app.models.anmsm_station_mapping import AnmsmStationMapping
 from app.models.station_logo_candidate import StationLogoCandidate
+from app.models.station_piste_map_candidate import StationPisteMapCandidate
 from app.routes.public_resorts import bp_public, bp_public_stations
 from app.routes.admin_resorts import bp_admin
 from app.routes.stations_widgets import bp_forfaits, bp_widgets
@@ -32,6 +33,7 @@ from app.routes.admin_indexnow import bp_admin_indexnow
 from app.routes.admin_cache import bp_admin_cache
 from app.routes.admin_station_logos import bp_admin_station_logos
 from app.routes.admin_anmsm_mappings import bp_admin_anmsm_mappings
+from app.routes.admin_piste_maps import bp_admin_piste_maps
 from app.routes.ski_passes import (
     bp_admin_ski_passes, bp_admin_station_ski_passes, bp_public_station_ski_passes,
     bp_ski_passes,
@@ -95,6 +97,11 @@ def create_app(config=None):
         ANMSM_CONNECT_TIMEOUT=float(os.getenv("ANMSM_CONNECT_TIMEOUT", "3.05")),
         ANMSM_FEED_READ_TIMEOUT=float(os.getenv("ANMSM_FEED_READ_TIMEOUT", "10")),
         ANMSM_MEDIA_READ_TIMEOUT=float(os.getenv("ANMSM_MEDIA_READ_TIMEOUT", "5")),
+        ANMSM_PISTE_MAPS_FEED_URL=os.getenv("ANMSM_PISTE_MAPS_FEED_URL"),
+        ANMSM_PISTE_MAP_MAX_DOWNLOAD_BYTES=int(os.getenv("ANMSM_PISTE_MAP_MAX_DOWNLOAD_BYTES", str(40 * 1024 * 1024))),
+        ANMSM_PISTE_MAP_MAX_PIXELS=int(os.getenv("ANMSM_PISTE_MAP_MAX_PIXELS", "120000000")),
+        ANMSM_PISTE_MAP_DISPLAY_MAX_DIMENSION=int(os.getenv("ANMSM_PISTE_MAP_DISPLAY_MAX_DIMENSION", "6000")),
+        ANMSM_PISTE_MAP_DISPLAY_MAX_BYTES=int(os.getenv("ANMSM_PISTE_MAP_DISPLAY_MAX_BYTES", str(12 * 1024 * 1024))),
     )
     if config:
         app.config.update(config)
@@ -182,6 +189,7 @@ def create_app(config=None):
     app.register_blueprint(bp_admin_cache)
     app.register_blueprint(bp_admin_station_logos)
     app.register_blueprint(bp_admin_anmsm_mappings)
+    app.register_blueprint(bp_admin_piste_maps)
     app.register_blueprint(bp_ski_passes)
     app.register_blueprint(bp_public_station_ski_passes)
     app.register_blueprint(bp_admin_ski_passes)
