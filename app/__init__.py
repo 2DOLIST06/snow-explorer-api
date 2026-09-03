@@ -31,6 +31,7 @@ from app.routes.admin_auth import bp_admin_auth
 from app.routes.admin_indexnow import bp_admin_indexnow
 from app.routes.admin_cache import bp_admin_cache
 from app.routes.admin_station_logos import bp_admin_station_logos
+from app.routes.admin_anmsm_mappings import bp_admin_anmsm_mappings
 from app.routes.ski_passes import (
     bp_admin_ski_passes, bp_admin_station_ski_passes, bp_public_station_ski_passes,
     bp_ski_passes,
@@ -177,6 +178,7 @@ def create_app(config=None):
     app.register_blueprint(bp_admin_indexnow)
     app.register_blueprint(bp_admin_cache)
     app.register_blueprint(bp_admin_station_logos)
+    app.register_blueprint(bp_admin_anmsm_mappings)
     app.register_blueprint(bp_ski_passes)
     app.register_blueprint(bp_public_station_ski_passes)
     app.register_blueprint(bp_admin_ski_passes)

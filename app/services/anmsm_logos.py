@@ -7,6 +7,7 @@ import os
 import re
 import socket
 import tempfile
+import time
 import warnings
 from urllib.parse import urljoin, urlparse
 
@@ -133,48 +134,82 @@ def _records(payload):
             if isinstance(payload.get(key), list): return payload[key]
     raise LogoImportError("invalid_feed", "ANMSM feed does not contain a record list")
 
-def sync(session=requests):
+def parse_station(record):
+    """Parse the Tourinsoft station fields used by every ANMSM workflow."""
+    external_id = str(record.get("SyndicObjectID") or "").strip()
+    external_name = str(record.get("SyndicObjectName") or "").strip()
+    logo = record.get("LOGO")
+    if isinstance(logo, list):
+        logo = logo[0] if logo else None
+    if not isinstance(logo, dict):
+        logo = None
+    return {
+        "external_station_id": external_id,
+        "external_name": external_name,
+        "logo": {
+            "url": logo.get("Url") if logo else None,
+            "title": logo.get("Titre") if logo else None,
+            "credit": logo.get("Credit") if logo else None,
+            "media_id": logo.get("MediaID") if logo else None,
+        },
+    }
+
+def fetch_stations(session=requests):
     configured = current_app.config.get("ANMSM_STATIONS_FEED_URL") if has_app_context() else None
     feed_url = configured or os.getenv("ANMSM_STATIONS_FEED_URL", FEED_URL)
     if "refreshCache=1" in feed_url or "refreshCache=2" in feed_url:
         raise LogoImportError("unsafe_feed_configuration", "Only refreshCache=0 is permitted")
     response = session.get(feed_url, timeout=(5, 30)); response.raise_for_status()
-    stats = {"created": 0, "unchanged": 0, "unmatched": 0, "errors": 0}
-    for record in _records(response.json()):
-        external_id = str(record.get("SyndicObjectID") or "").strip(); logo = record.get("LOGO")
-        if isinstance(logo, list): logo = logo[0] if logo else None
-        if not external_id or not isinstance(logo, dict) or not isinstance(logo.get("Url"), str): continue
-        mapping, _ = AnmsmStationMapping.get_or_create(source="anmsm", external_station_id=external_id)
-        if not mapping.station_id or not mapping.verified:
-            stats["unmatched"] += 1; continue
+    return [station for station in map(parse_station, _records(response.json()))
+            if station["external_station_id"]]
+
+def sync(session=requests):
+    started = time.monotonic()
+    stats = {key: 0 for key in ("stations_received", "stations_matched", "stations_unmatched",
+        "logos_created", "logos_updated", "logos_unchanged", "stations_without_logo",
+        "conversions_succeeded", "errors")}
+    stations = fetch_stations(session)
+    stats["stations_received"] = len(stations)
+    for station in stations:
+        external_id = station["external_station_id"]; logo = station["logo"]
+        mapping = AnmsmStationMapping.get_or_none(
+            (AnmsmStationMapping.source == "anmsm") &
+            (AnmsmStationMapping.external_station_id == external_id))
+        if not mapping or not mapping.station_id or not mapping.verified:
+            stats["stations_unmatched"] += 1; continue
+        stats["stations_matched"] += 1
+        if not isinstance(logo.get("url"), str) or not logo["url"].strip():
+            stats["stations_without_logo"] += 1; continue
         raw = None
         try:
-            raw = download(logo["Url"], session); checksum = hashlib.sha256(raw).hexdigest()
+            raw = download(logo["url"], session); checksum = hashlib.sha256(raw).hexdigest()
             if StationLogoCandidate.get_or_none((StationLogoCandidate.station == mapping.station_id) & (StationLogoCandidate.source_checksum == checksum)):
-                stats["unchanged"] += 1; continue
+                stats["logos_unchanged"] += 1; continue
             encoded, metadata = optimize(raw)
+            stats["conversions_succeeded"] += 1
             prior = (StationLogoCandidate.select().where(StationLogoCandidate.station == mapping.station_id)
                      .order_by(StationLogoCandidate.detected_at.desc()).first())
             safe_station_id = secure_filename(str(mapping.station_id)) or hashlib.sha256(str(mapping.station_id).encode()).hexdigest()[:24]
             key = f"station-logos/candidates/{safe_station_id}/{checksum}.webp"
             url = s3.put_webp(key, encoded)
             StationLogoCandidate.create(station=mapping.station_id, external_station_id=external_id,
-                anmsm_media_id=logo.get("MediaID"), anmsm_title=logo.get("Titre"), anmsm_credit=logo.get("Credit"),
-                source_url=logo["Url"], source_checksum=checksum, source_size_bytes=len(raw), optimized_s3_key=key,
-                optimized_url=url, optimized_size_bytes=len(encoded), status="updated" if prior else "pending",
+                anmsm_media_id=logo.get("media_id"), anmsm_title=logo.get("title"), anmsm_credit=logo.get("credit"),
+                source_url=logo["url"], source_checksum=checksum, source_size_bytes=len(raw), optimized_s3_key=key,
+                optimized_url=url, optimized_size_bytes=len(encoded), status="pending",
                 warnings=json.dumps(metadata.pop("warnings")), **metadata)
-            stats["created"] += 1
+            stats["logos_updated" if prior else "logos_created"] += 1
         except Exception as exc:
             stats["errors"] += 1
             code = exc.code if isinstance(exc, LogoImportError) else "processing_error"
-            error_checksum = hashlib.sha256(raw or logo["Url"].encode()).hexdigest()
+            error_checksum = hashlib.sha256(raw or logo["url"].encode()).hexdigest()
             candidate, _ = StationLogoCandidate.get_or_create(
                 station=mapping.station_id, source_checksum=error_checksum,
-                defaults={"external_station_id": external_id, "anmsm_media_id": logo.get("MediaID"),
-                    "anmsm_title": logo.get("Titre"), "anmsm_credit": logo.get("Credit"),
-                    "source_url": logo["Url"], "source_format": "unknown", "source_width": 0,
+                defaults={"external_station_id": external_id, "anmsm_media_id": logo.get("media_id"),
+                    "anmsm_title": logo.get("title"), "anmsm_credit": logo.get("credit"),
+                    "source_url": logo["url"], "source_format": "unknown", "source_width": 0,
                     "source_height": 0, "source_size_bytes": len(raw or b""), "status": "error"})
             candidate.status = "error"; candidate.error_code = code
             candidate.error_message = str(exc)[:1000]; candidate.checked_at = utcnow(); candidate.updated_at = utcnow()
             candidate.save()
+    stats["duration_seconds"] = round(time.monotonic() - started, 3)
     return stats
