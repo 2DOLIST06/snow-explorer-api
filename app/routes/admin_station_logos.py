@@ -48,13 +48,13 @@ def sync_anmsm_logos():
     """Fetch ANMSM logos and create candidates for administrator review."""
     payload = request.get_json(silent=True) or {}
     cursor = payload.get("cursor")
-    batch_size = payload.get("batch_size", 2)
+    batch_size = payload.get("batch_size", 1)
     if cursor is not None and (not isinstance(cursor, str) or not cursor.strip()):
         return jsonify({"ok": False, "error": "invalid_cursor",
                         "message": "cursor doit être null ou une chaîne non vide."}), 400
-    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or not 1 <= batch_size <= 3:
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size != 1:
         return jsonify({"ok": False, "error": "invalid_batch_size",
-                        "message": "batch_size doit être un entier compris entre 1 et 3."}), 400
+                        "message": "batch_size doit être égal à 1."}), 400
     try:
         # Keep the import local so importing the routes never starts or
         # configures the external integration.

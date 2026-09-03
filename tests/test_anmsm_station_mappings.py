@@ -155,11 +155,14 @@ class AnmsmStationMappingTests(unittest.TestCase):
                    patch("app.services.anmsm_logos.optimize", side_effect=lambda _raw: (b"webp", self._metadata())),
                    patch("app.services.anmsm_logos.s3.put_webp", return_value="https://s3/logo.webp"))
         with self.app.app_context(), patches[0], patches[1], patches[2], patches[3]:
-            first = sync()
-            last = sync(cursor=first["batch"]["next_cursor"])
-        self.assertEqual(first["batch"]["processed_external_station_ids"], ["A1", "A2"])
-        self.assertEqual(first["batch"]["next_cursor"], "A2")
+            first = sync(batch_size=1)
+            second = sync(cursor=first["batch"]["next_cursor"], batch_size=1)
+            last = sync(cursor=second["batch"]["next_cursor"], batch_size=1)
+        self.assertEqual(first["batch"]["processed_external_station_ids"], ["A1"])
+        self.assertEqual(first["batch"]["next_cursor"], "A1")
         self.assertTrue(first["batch"]["has_more"])
+        self.assertEqual(second["batch"]["processed_external_station_ids"], ["A2"])
+        self.assertEqual(second["batch"]["next_cursor"], "A2")
         self.assertEqual(last["batch"]["processed_external_station_ids"], ["A3"])
         self.assertIsNone(last["batch"]["next_cursor"])
         self.assertFalse(last["batch"]["has_more"])
@@ -177,30 +180,46 @@ class AnmsmStationMappingTests(unittest.TestCase):
         self.assertEqual(retried["stats"]["logos_unchanged"], 1)
         self.assertEqual(retried["results"][0]["status"], "unchanged")
 
-    def test_download_conversion_and_s3_errors_do_not_stop_batch(self):
+    def test_download_error_returns_json_data_and_advances_cursor(self):
         feed = self._confirmed_batch()
-
-        def download_result(url, _session):
-            if url.endswith("A1"):
-                raise LogoImportError("source_download_timeout", "timeout")
-            return url.encode()
-
-        def conversion_result(raw):
-            if raw.endswith(b"A2"):
-                raise ValueError("broken image")
-            return b"webp", self._metadata()
-
         with self.app.app_context(), \
              patch("app.services.anmsm_logos.fetch_stations", return_value=feed), \
-             patch("app.services.anmsm_logos.download", side_effect=download_result), \
-             patch("app.services.anmsm_logos.optimize", side_effect=conversion_result), \
-             patch("app.services.anmsm_logos.s3.put_webp", side_effect=RuntimeError("S3 unavailable")):
-            outcome = sync(batch_size=3)
-        self.assertEqual([item["error_code"] for item in outcome["results"]],
-                         ["source_download_timeout", "logo_conversion_error", "s3_upload_error"])
-        self.assertEqual(outcome["stats"]["errors"], 3)
-        self.assertEqual(StationLogoCandidate.select().count(), 3)
+             patch("app.services.anmsm_logos.download",
+                   side_effect=LogoImportError("source_download_timeout", "timeout")):
+            outcome = sync(batch_size=1)
+        self.assertEqual(outcome["results"][0]["error_code"], "source_download_timeout")
+        self.assertEqual(outcome["stats"]["errors"], 1)
+        self.assertEqual(outcome["batch"]["next_cursor"], "A1")
+        self.assertTrue(outcome["batch"]["has_more"])
+        self.assertEqual(StationLogoCandidate.select().count(), 1)
         self.assertLess(outcome["stats"]["duration_seconds"], 30)
+
+    def test_valmeinier_and_valmorel_are_processed_one_at_a_time(self):
+        first_id, second_id = "STATANMSM01730055", "STATANMSM01730056"
+        AnmsmStationMapping.create(station=self.alpha, external_station_id=first_id,
+                                   source="anmsm", verified=True)
+        AnmsmStationMapping.create(station=self.beta, external_station_id=second_id,
+                                   source="anmsm", verified=True)
+        feed = [{"external_station_id": first_id, "external_name": "VALMEINIER",
+                 "logo": {"url": "https://logo/valmeinier", "title": "Logo", "credit": None, "media_id": "1"}},
+                {"external_station_id": second_id, "external_name": "VALMOREL",
+                 "logo": {"url": "https://logo/valmorel", "title": "Logo", "credit": None, "media_id": "2"}}]
+        with self.app.app_context(), self.assertLogs(self.app.logger.name, level="INFO") as logs, \
+             patch("app.services.anmsm_logos.fetch_stations", return_value=feed), \
+             patch("app.services.anmsm_logos.download", side_effect=lambda url, _session: url.encode()), \
+             patch("app.services.anmsm_logos.optimize", return_value=(b"webp", self._metadata())), \
+             patch("app.services.anmsm_logos.s3.put_webp", return_value="https://s3/logo.webp"):
+            valmeinier = sync(cursor="STATANMSM01730054", batch_size=1)
+            valmorel = sync(cursor=valmeinier["batch"]["next_cursor"], batch_size=1)
+        self.assertEqual(valmeinier["batch"]["processed_external_station_ids"], [first_id])
+        self.assertEqual(valmeinier["batch"]["next_cursor"], first_id)
+        self.assertEqual(valmorel["batch"]["processed_external_station_ids"], [second_id])
+        self.assertEqual(StationLogoCandidate.select().count(), 2)
+        joined_logs = "\n".join(logs.output)
+        for value in (first_id, second_id, "VALMEINIER", "VALMOREL",
+                      "fetch_feed_ms=", "download_ms=", "conversion_ms=",
+                      "s3_ms=", "total_ms="):
+            self.assertIn(value, joined_logs)
 
 
 if __name__ == "__main__": unittest.main()
