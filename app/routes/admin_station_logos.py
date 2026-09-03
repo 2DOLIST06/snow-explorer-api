@@ -8,7 +8,7 @@ from app.models.anmsm_station_mapping import AnmsmStationMapping
 from app.models.resort import Resort
 from app.models.station_logo_candidate import StationLogoCandidate
 from app.services import s3
-from app.services.anmsm_station_mappings import auto_match_exact, suggestions
+from app.services.anmsm_station_mappings import suggestions
 from app.services.public_cache import invalidate_station
 
 bp_admin_station_logos = Blueprint(
@@ -52,53 +52,92 @@ def _candidate_json(candidate):
 
 
 def _workspace_data(stations):
+    """Assemble the workspace from the feed and all three persisted datasets.
+
+    The feed is deliberately not the left-hand side of a database join: a
+    temporarily missing ANMSM record must not hide a mapping or candidate.
+    """
+    def join_id(value):
+        return str(value or "").strip().casefold()
+
     resorts = list(Resort.select().order_by(Resort.name))
-    mappings = {row.external_station_id: row for row in AnmsmStationMapping.select().where(
-        AnmsmStationMapping.source == "anmsm")}
-    latest = {}
+    resorts_by_id = {join_id(row.id): row for row in resorts}
+    mappings = {}
+    for mapping in AnmsmStationMapping.select().where(AnmsmStationMapping.source == "anmsm"):
+        mappings[join_id(mapping.external_station_id)] = mapping
+    candidates = {}
     for candidate in StationLogoCandidate.select().order_by(StationLogoCandidate.updated_at.desc()):
-        latest.setdefault(candidate.external_station_id, candidate)
-    rows = []
+        candidates.setdefault(join_id(candidate.external_station_id), []).append(candidate)
+
+    sources = {}
     for source in stations:
-        external_id = source["external_station_id"]
-        mapping, method = auto_match_exact(source, resorts, mappings)
-        matched = bool(mapping and mapping.verified and mapping.station_id)
-        candidate = latest.get(external_id) if matched else None
-        candidate_data = _candidate_json(candidate) if candidate else None
-        logo = source["logo"]
-        row = {
-            "external_station_id": external_id,
-            "anmsm_station_name": source["external_name"],
-            "anmsm_media_id": logo.get("media_id"), "anmsm_title": logo.get("title"),
-            "anmsm_credit": logo.get("credit"), "source_url": logo.get("url"),
-            "source_has_logo": bool(logo.get("url")),
-            "mapping_status": "matched" if matched else "unmatched",
-            "mapping_method": method,
-            "station_id": mapping.station_id if matched else None,
-            "station_name": mapping.station.name if matched else None,
-            "current_logo_url": mapping.station.logo_url if matched else None,
-            "suggestion": None if matched else next(iter(suggestions(source["external_name"], resorts)), None),
-            "candidate_id": candidate.id if candidate else None,
-            "candidate_status": candidate.status if candidate else None,
-            "candidate_preview_url": candidate_data["candidate_preview_url"] if candidate else None,
-            "candidate_size_bytes": candidate.optimized_size_bytes if candidate else None,
-            "candidate_width": candidate.optimized_width if candidate else None,
-            "candidate_height": candidate.optimized_height if candidate else None,
-            "warnings": candidate.warning_codes() if candidate else [],
-            "preparation_required": bool(matched and logo.get("url") and not candidate),
-            "preparation_error": candidate.error_message if candidate and candidate.status == "error" else None,
-        }
-        rows.append(row)
+        sources[join_id(source["external_station_id"])] = source
+
+    # Preserve feed order, then append persisted records absent from the feed.
+    keys = list(sources)
+    keys.extend(key for key in mappings if key not in sources)
+    keys.extend(key for key in candidates if key not in sources and key not in mappings)
+    rows = []
+    for key in keys:
+        source = sources.get(key)
+        mapping = mappings.get(key)
+        station = resorts_by_id.get(join_id(mapping.station_id)) if mapping and mapping.station_id else None
+        matched = bool(mapping and mapping.verified and station)
+        external_id = (source["external_station_id"] if source else
+                       mapping.external_station_id if mapping else
+                       candidates[key][0].external_station_id)
+        logo = source["logo"] if source else {}
+        name = source["external_name"] if source else ""
+        matched_candidates = candidates.get(key) or [None]
+        for candidate in matched_candidates:
+            candidate_data = _candidate_json(candidate) if candidate else None
+            row = {
+                "external_station_id": external_id,
+                "anmsm_station_name": name,
+                "anmsm_media_id": logo.get("media_id"), "anmsm_title": logo.get("title"),
+                "anmsm_credit": logo.get("credit"), "source_url": logo.get("url"),
+                "source_has_logo": bool(logo.get("url")),
+                "mapping_status": "matched" if matched else "unmatched",
+                "mapping_method": "existing" if matched else None,
+                "station_id": station.id if matched else None,
+                "station_name": station.name if matched else None,
+                "current_logo_url": station.logo_url if matched else None,
+                "suggestion": (None if matched or not source else
+                               next(iter(suggestions(name, resorts)), None)),
+                "candidate_id": candidate.id if candidate else None,
+                "candidate_status": candidate.status if candidate else None,
+                "candidate_preview_url": (candidate_data["candidate_preview_url"]
+                                          if candidate else None),
+                "candidate_size_bytes": candidate.optimized_size_bytes if candidate else None,
+                "candidate_width": candidate.optimized_width if candidate else None,
+                "candidate_height": candidate.optimized_height if candidate else None,
+                "warnings": candidate.warning_codes() if candidate else [],
+                "preparation_required": bool(matched and logo.get("url") and
+                                             (not candidate or not candidate.optimized_s3_key)),
+                "preparation_error": (candidate.error_message
+                                      if candidate and candidate.status == "error" else None),
+            }
+            rows.append(row)
     statuses = [row["candidate_status"] for row in rows]
     stats = {"stations_received": len(rows),
         "stations_matched": sum(row["mapping_status"] == "matched" for row in rows),
         "stations_unmatched": sum(row["mapping_status"] == "unmatched" for row in rows),
         "logos_available": sum(row["source_has_logo"] for row in rows),
         "logos_without_source": sum(not row["source_has_logo"] for row in rows),
-        "candidates_pending": sum(status in {"pending", "updated"} for status in statuses),
+        "candidates_pending": statuses.count("pending"),
         "candidates_approved": statuses.count("approved"),
         "candidates_in_error": statuses.count("error"),
         "candidates_to_prepare": sum(row["preparation_required"] for row in rows)}
+    serialized_candidate_ids = {row["candidate_id"] for row in rows
+                                if row["candidate_id"] is not None}
+    database_candidate_ids = {candidate.id for values in candidates.values() for candidate in values}
+    if serialized_candidate_ids != database_candidate_ids:
+        raise RuntimeError("ANMSM workspace omitted persisted logo candidates")
+    if (sum(row["candidate_status"] == "pending" for row in rows) !=
+            stats["candidates_pending"] or
+            sum(row["mapping_status"] == "matched" for row in rows) !=
+            stats["stations_matched"]):
+        raise RuntimeError("ANMSM workspace statistics are inconsistent with rows")
     return {"ok": True, "rows": rows, "stats": stats}
 
 

@@ -38,18 +38,64 @@ class AnmsmLogoWorkflowTests(unittest.TestCase):
             optimized_url="https://stable/a.webp", optimized_width=512,
             optimized_height=512, optimized_size_bytes=8000, status=status)
 
-    def test_workspace_auto_matches_unique_exact_and_shows_old_and_new_logo(self):
+    def test_workspace_joins_existing_mapping_and_shows_old_and_new_logo(self):
+        AnmsmStationMapping.create(station=self.resort, source="anmsm",
+                                   external_station_id=" a1 ", verified=True)
         candidate = self.candidate()
         with patch("app.services.anmsm_logos.fetch_stations", return_value=self.feed), \
              patch("app.routes.admin_station_logos.s3.preview_url", return_value="https://signed/preview"):
             response = self.client.get("/api/admin/anmsm/logos/workspace")
         row = response.get_json()["rows"][0]
         self.assertEqual(row["station_id"], "station-real-id")
-        self.assertEqual(row["mapping_method"], "normalized_exact")
+        self.assertEqual(row["mapping_method"], "existing")
         self.assertEqual(row["current_logo_url"], "https://old/logo.webp")
         self.assertEqual(row["candidate_id"], candidate.id)
         self.assertEqual(row["candidate_preview_url"], "https://signed/preview")
         self.assertTrue(AnmsmStationMapping.get().verified)
+
+    def test_workspace_keeps_production_counts_and_all_pending_candidates(self):
+        """Regression for the 43 mapped / 32 pending / 9 to prepare dataset."""
+        feed = []
+        pending_ids = set()
+        for number in range(43):
+            external_id = f"ANMSM-{number:02d}"
+            resort = Resort.create(id=f"station-{number:02d}", name=f"Station {number:02d}",
+                                   slug=f"station-{number:02d}")
+            AnmsmStationMapping.create(station=resort, source="anmsm",
+                                       external_station_id=f" {external_id.lower()} ", verified=True)
+            has_logo = number < 41
+            feed.append({"external_station_id": external_id,
+                         "external_name": f"Nom ANMSM {number:02d}",
+                         "logo": {"url": f"https://media/{number}.png" if has_logo else None,
+                                  "title": None, "credit": None, "media_id": None}})
+            if number < 32:
+                candidate = StationLogoCandidate.create(
+                    station=resort, external_station_id=f" {external_id.swapcase()} ",
+                    source_url=f"https://media/{number}.png", source_checksum=f"{number:064x}",
+                    source_format="png", source_width=512, source_height=280,
+                    source_size_bytes=9000,
+                    optimized_s3_key=f"station-logos/candidates/{number}.webp",
+                    optimized_width=512, optimized_height=280, optimized_size_bytes=8120,
+                    status="pending")
+                pending_ids.add(candidate.id)
+
+        with patch("app.services.anmsm_logos.fetch_stations", return_value=feed), \
+             patch("app.routes.admin_station_logos.s3.preview_url",
+                   side_effect=lambda key: f"https://signed/{key}"):
+            body = self.client.get("/api/admin/anmsm/logos/workspace").get_json()
+
+        self.assertEqual(body["stats"]["stations_matched"], 43)
+        self.assertEqual(body["stats"]["candidates_pending"], 32)
+        self.assertEqual(body["stats"]["candidates_to_prepare"], 9)
+        self.assertEqual(sum(row["mapping_status"] == "matched" for row in body["rows"]), 43)
+        self.assertEqual(sum(row["candidate_status"] == "pending" for row in body["rows"]), 32)
+        self.assertEqual({row["candidate_id"] for row in body["rows"] if row["candidate_id"]},
+                         pending_ids)
+        pending = next(row for row in body["rows"] if row["candidate_id"])
+        self.assertEqual((pending["candidate_size_bytes"], pending["candidate_width"],
+                          pending["candidate_height"]), (8120, 512, 280))
+        self.assertFalse(pending["preparation_required"])
+        self.assertTrue(pending["candidate_preview_url"].startswith("https://signed/"))
 
     def test_workspace_has_no_unreliable_match(self):
         self.feed[0]["external_name"] = "Completely Different"
