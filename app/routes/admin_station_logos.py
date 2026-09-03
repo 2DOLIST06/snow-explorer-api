@@ -17,6 +17,8 @@ bp_admin_station_logos = Blueprint(
 def _candidate_json(candidate):
     return {"id": candidate.id, "station_id": candidate.station_id,
         "station_name": candidate.station.name, "external_station_id": candidate.external_station_id,
+        "current_logo_url": candidate.station.logo_url,
+        "previous_logo_url": candidate.previous_logo_url,
         "anmsm_media_id": candidate.anmsm_media_id, "anmsm_title": candidate.anmsm_title,
         "anmsm_credit": candidate.anmsm_credit, "source_url": candidate.source_url,
         "source_checksum": candidate.source_checksum, "source_format": candidate.source_format,
