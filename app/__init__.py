@@ -15,6 +15,8 @@ from app.models.admin_user import AdminUser
 from app.models.admin_session import AdminSession
 from app.models.admin_login_attempt import AdminLoginAttempt
 from app.models.ski_pass import SkiPassSeason, SkiPassPeriod, SkiPassProduct, SkiPassPrice
+from app.models.anmsm_station_mapping import AnmsmStationMapping
+from app.models.station_logo_candidate import StationLogoCandidate
 from app.routes.public_resorts import bp_public, bp_public_stations
 from app.routes.admin_resorts import bp_admin
 from app.routes.stations_widgets import bp_forfaits, bp_widgets
@@ -28,6 +30,7 @@ from app.services.admin_auth import protect_admin_routes
 from app.routes.admin_auth import bp_admin_auth
 from app.routes.admin_indexnow import bp_admin_indexnow
 from app.routes.admin_cache import bp_admin_cache
+from app.routes.admin_station_logos import bp_admin_station_logos
 from app.routes.ski_passes import (
     bp_admin_ski_passes, bp_admin_station_ski_passes, bp_public_station_ski_passes,
     bp_ski_passes,
@@ -86,6 +89,8 @@ def create_app(config=None):
         PUBLIC_CACHE_LOCK_TTL_SECONDS=int(os.getenv("PUBLIC_CACHE_LOCK_TTL_SECONDS", "10")),
         PUBLIC_CACHE_LOCK_WAIT_SECONDS=float(os.getenv("PUBLIC_CACHE_LOCK_WAIT_SECONDS", "0.2")),
         PUBLIC_CACHE_DEBUG_HEADERS=_env_bool("PUBLIC_CACHE_DEBUG_HEADERS", False),
+        ANMSM_STATIONS_FEED_URL=os.getenv("ANMSM_STATIONS_FEED_URL"),
+        ANMSM_LOGO_MAX_DOWNLOAD_BYTES=int(os.getenv("ANMSM_LOGO_MAX_DOWNLOAD_BYTES", str(10 * 1024 * 1024))),
     )
     if config:
         app.config.update(config)
@@ -148,7 +153,8 @@ def create_app(config=None):
         db.connect(reuse_if_open=True)
         db.create_tables([Region, Resort, Piste, Lift, ResortMap, StationWidgets, ResortImportHistory,
                           AdminUser, AdminSession, AdminLoginAttempt, SkiPassSeason,
-                          SkiPassPeriod, SkiPassProduct, SkiPassPrice])
+                          SkiPassPeriod, SkiPassProduct, SkiPassPrice,
+                          AnmsmStationMapping, StationLogoCandidate])
         db.close()
         # ``close()`` normally returns the connection to the pool.  Startup may
         # happen in a Gunicorn master with --preload, so do not leave a socket
@@ -170,6 +176,7 @@ def create_app(config=None):
     app.register_blueprint(bp_admin_auth)
     app.register_blueprint(bp_admin_indexnow)
     app.register_blueprint(bp_admin_cache)
+    app.register_blueprint(bp_admin_station_logos)
     app.register_blueprint(bp_ski_passes)
     app.register_blueprint(bp_public_station_ski_passes)
     app.register_blueprint(bp_admin_ski_passes)

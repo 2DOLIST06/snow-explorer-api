@@ -23,6 +23,15 @@ def _create_admin(email, password):
 
 
 def register_admin_commands(app):
+    @app.cli.command("sync-anmsm-logos")
+    @with_appcontext
+    def sync_anmsm_logos():
+        """Download ANMSM logos and prepare candidates for manual review."""
+        from app.services.anmsm_logos import sync
+        with db.connection_context():
+            stats = sync()
+        click.echo(f"ANMSM logos: {stats}")
+
     @app.cli.command("create-admin")
     @click.option("--email", prompt=True)
     @with_appcontext
