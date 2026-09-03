@@ -31,7 +31,6 @@ from app.routes.admin_auth import bp_admin_auth
 from app.routes.admin_indexnow import bp_admin_indexnow
 from app.routes.admin_cache import bp_admin_cache
 from app.routes.admin_station_logos import bp_admin_station_logos
-from app.routes.admin_anmsm_cors import bp_admin_anmsm_cors
 from app.routes.ski_passes import (
     bp_admin_ski_passes, bp_admin_station_ski_passes, bp_public_station_ski_passes,
     bp_ski_passes,
@@ -178,7 +177,6 @@ def create_app(config=None):
     app.register_blueprint(bp_admin_indexnow)
     app.register_blueprint(bp_admin_cache)
     app.register_blueprint(bp_admin_station_logos)
-    app.register_blueprint(bp_admin_anmsm_cors)
     app.register_blueprint(bp_ski_passes)
     app.register_blueprint(bp_public_station_ski_passes)
     app.register_blueprint(bp_admin_ski_passes)
@@ -194,4 +192,15 @@ def create_app(config=None):
     )
 
     register_admin_commands(app)
+
+    # Keep this startup diagnostic while the ANMSM deployment is being
+    # verified on Render. It makes the effective URL map and methods explicit.
+    for rule in app.url_map.iter_rules():
+        if "anmsm" in rule.rule:
+            app.logger.info(
+                "ANMSM route: %s methods=%s endpoint=%s",
+                rule.rule,
+                sorted(rule.methods),
+                rule.endpoint,
+            )
     return app
