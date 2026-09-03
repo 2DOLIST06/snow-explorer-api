@@ -2,6 +2,7 @@
 import re
 import unicodedata
 from difflib import SequenceMatcher
+from peewee import IntegrityError
 
 from app.datetime_utils import utcnow
 from app.models.anmsm_station_mapping import AnmsmStationMapping
@@ -18,7 +19,7 @@ def resort_json(resort):
     return {"station_id": resort.id, "name": resort.name, "slug": resort.slug}
 
 
-def suggestions(external_name, resorts, limit=5):
+def suggestions(external_name, resorts, limit=1):
     needle = normalize_name(external_name)
     if not needle:
         return []
@@ -36,6 +37,32 @@ def suggestions(external_name, resorts, limit=5):
     return [{**resort_json(resort), "score": score,
              "match_type": "normalized_exact" if exact else "similar"}
             for exact, score, resort in ranked[:limit]]
+
+
+def auto_match_exact(station, resorts, mappings):
+    """Persist only a unique normalized exact match; verified rows win forever."""
+    external_id = station["external_station_id"]
+    current = mappings.get(external_id)
+    if current is not None:
+        return current, "existing"
+    normalized = normalize_name(station.get("external_name"))
+    exact = [resort for resort in resorts if normalize_name(resort.name) == normalized]
+    already_used = {row.station_id for row in mappings.values() if row.station_id}
+    exact = [resort for resort in exact if resort.id not in already_used]
+    if normalized and len(exact) == 1:
+        try:
+            mapping = AnmsmStationMapping.create(
+                source="anmsm", external_station_id=external_id,
+                station=exact[0], verified=True,
+            )
+        except IntegrityError:
+            # A concurrent workspace request may have inserted it first.
+            mapping = AnmsmStationMapping.get(
+                (AnmsmStationMapping.source == "anmsm") &
+                (AnmsmStationMapping.external_station_id == external_id))
+        mappings[external_id] = mapping
+        return mapping, "normalized_exact" if mapping.station_id == exact[0].id else "existing"
+    return None, None
 
 
 def mapping_json(mapping):
