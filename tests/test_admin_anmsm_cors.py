@@ -8,6 +8,9 @@ from app import create_app
 from app.models.admin_login_attempt import AdminLoginAttempt
 from app.models.admin_session import AdminSession
 from app.models.admin_user import AdminUser
+from app.models.anmsm_station_mapping import AnmsmStationMapping
+from app.models.resort import Resort
+from app.models.station_logo_candidate import StationLogoCandidate
 from app.services.admin_auth import hash_password
 
 
@@ -17,8 +20,10 @@ PRODUCTION_ORIGINS = (
 )
 FORBIDDEN_ORIGIN = "https://example.com"
 LOGOS_ROUTE = "/api/admin/anmsm/logos"
+WORKSPACE_ROUTE = f"{LOGOS_ROUTE}/workspace"
 SYNC_ROUTE = f"{LOGOS_ROUTE}/sync"
-MODELS = [AdminUser, AdminSession, AdminLoginAttempt]
+MODELS = [Resort, AdminUser, AdminSession, AdminLoginAttempt,
+          AnmsmStationMapping, StationLogoCandidate]
 
 
 class AdminAnmsmRouteTests(unittest.TestCase):
@@ -70,8 +75,44 @@ class AdminAnmsmRouteTests(unittest.TestCase):
             if "anmsm" in rule.rule
         }
         self.assertIn("GET", rules[LOGOS_ROUTE])
+        self.assertIn("GET", rules[WORKSPACE_ROUTE])
+        self.assertIn("OPTIONS", rules[WORKSPACE_ROUTE])
         self.assertIn("POST", rules[SYNC_ROUTE])
         self.assertIn("OPTIONS", rules[SYNC_ROUTE])
+
+    def test_workspace_exact_production_route_is_authenticated_and_not_404(self):
+        unauthorized = self.client.get(WORKSPACE_ROUTE)
+        self.assertEqual(unauthorized.status_code, 401)
+        self.assertNotEqual(unauthorized.status_code, 404)
+
+        self._login()
+        with patch("app.services.anmsm_logos.fetch_stations", return_value=[]):
+            response = self.client.get(WORKSPACE_ROUTE)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(response.status_code, 404)
+        body = response.get_json()
+        self.assertEqual(body["ok"], True)
+        self.assertEqual(body["rows"], [])
+        self.assertIsInstance(body["stats"], dict)
+
+    def test_workspace_options_is_public_and_has_get_cors_headers(self):
+        response = self.client.options(WORKSPACE_ROUTE, headers={
+            "Origin": PRODUCTION_ORIGINS[0],
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        })
+
+        self.assertIn(response.status_code, {200, 204})
+        self.assertNotEqual(response.status_code, 404)
+        self.assertIn("GET", response.headers["Allow"])
+        self.assertEqual(
+            response.headers.get("Access-Control-Allow-Origin"),
+            PRODUCTION_ORIGINS[0],
+        )
+        self.assertEqual(
+            response.headers.get("Access-Control-Allow-Credentials"), "true"
+        )
 
     def test_sync_preflight_is_automatic_and_public(self):
         response = self._preflight()
