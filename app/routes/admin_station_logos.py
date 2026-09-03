@@ -95,7 +95,10 @@ def _workspace_data(stations):
                 "external_station_id": external_id,
                 "anmsm_station_name": name,
                 "anmsm_media_id": logo.get("media_id"), "anmsm_title": logo.get("title"),
-                "anmsm_credit": logo.get("credit"), "source_url": logo.get("url"),
+                "anmsm_credit": logo.get("credit"),
+                "source_logo_url": logo.get("url"),
+                # Compatibility alias used by preparation and older clients.
+                "source_url": logo.get("url"),
                 "source_has_logo": bool(logo.get("url")),
                 "mapping_status": "matched" if matched else "unmatched",
                 "mapping_method": "existing" if matched else None,
@@ -122,7 +125,10 @@ def _workspace_data(stations):
     stats = {"stations_received": len(rows),
         "stations_matched": sum(row["mapping_status"] == "matched" for row in rows),
         "stations_unmatched": sum(row["mapping_status"] == "unmatched" for row in rows),
-        "logos_available": sum(row["source_has_logo"] for row in rows),
+        "logos_available": sum(
+            1 for row in rows
+            if row["source_has_logo"] is True and row["source_logo_url"]
+        ),
         "logos_without_source": sum(not row["source_has_logo"] for row in rows),
         "candidates_pending": statuses.count("pending"),
         "candidates_approved": statuses.count("approved"),
@@ -136,7 +142,9 @@ def _workspace_data(stations):
     if (sum(row["candidate_status"] == "pending" for row in rows) !=
             stats["candidates_pending"] or
             sum(row["mapping_status"] == "matched" for row in rows) !=
-            stats["stations_matched"]):
+            stats["stations_matched"] or
+            sum(1 for row in rows if row["source_has_logo"] is True and
+                row["source_logo_url"]) != stats["logos_available"]):
         raise RuntimeError("ANMSM workspace statistics are inconsistent with rows")
     return {"ok": True, "rows": rows, "stats": stats}
 

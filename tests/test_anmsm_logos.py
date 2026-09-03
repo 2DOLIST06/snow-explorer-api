@@ -46,9 +46,16 @@ class AnmsmLogoProcessingTests(unittest.TestCase):
         self.assertEqual(station["logo"]["title"], "Titre")
 
     def test_shared_parser_prefers_real_anmsm_station_name(self):
-        station = parse_station({"SyndicObjectID": "42", "NOM": "Nom ANMSM réel",
-                                 "SyndicObjectName": "Libellé technique", "LOGO": []})
+        station = parse_station({"SyndicObjectID": "42",
+                                 "SyndicObjectName": "Libellé technique",
+                                 "Object": {"NOM": "Nom ANMSM réel", "LOGO": [{
+                                     "Url": "https://anmsm.media.tourinsoft.eu/logo.png",
+                                     "MediaID": "media-42", "Titre": "Logo officiel",
+                                     "Credit": "ANMSM"}]}})
         self.assertEqual(station["external_name"], "Nom ANMSM réel")
+        self.assertEqual(station["logo"], {
+            "url": "https://anmsm.media.tourinsoft.eu/logo.png",
+            "media_id": "media-42", "title": "Logo officiel", "credit": "ANMSM"})
 
 
 if __name__ == "__main__":
