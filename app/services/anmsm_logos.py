@@ -174,7 +174,10 @@ def _records(payload):
 def parse_station(record):
     """Parse the Tourinsoft station fields used by every ANMSM workflow."""
     external_id = str(record.get("SyndicObjectID") or "").strip()
-    external_name = str(record.get("SyndicObjectName") or "").strip()
+    # ``NOM`` is the actual station-name field exported by the ANMSM
+    # syndication.  SyndicObjectName is Tourinsoft technical metadata and is
+    # kept only as a compatibility fallback for older fixtures/exports.
+    external_name = str(record.get("NOM") or record.get("SyndicObjectName") or "").strip()
     logo = record.get("LOGO")
     if isinstance(logo, list):
         logo = logo[0] if logo else None

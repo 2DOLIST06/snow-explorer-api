@@ -45,6 +45,11 @@ class AnmsmLogoProcessingTests(unittest.TestCase):
         self.assertEqual(station["external_name"], "Station réelle")
         self.assertEqual(station["logo"]["title"], "Titre")
 
+    def test_shared_parser_prefers_real_anmsm_station_name(self):
+        station = parse_station({"SyndicObjectID": "42", "NOM": "Nom ANMSM réel",
+                                 "SyndicObjectName": "Libellé technique", "LOGO": []})
+        self.assertEqual(station["external_name"], "Nom ANMSM réel")
+
 
 if __name__ == "__main__":
     unittest.main()
