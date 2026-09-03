@@ -3,6 +3,7 @@ import os
 from urllib.parse import quote
 
 import boto3
+from botocore.config import Config
 
 
 def setting(name, legacy_name=None):
@@ -15,7 +16,15 @@ def setting(name, legacy_name=None):
 def client():
     return boto3.client("s3", aws_access_key_id=setting("AWS_ACCESS_KEY_ID"),
                         aws_secret_access_key=setting("AWS_SECRET_ACCESS_KEY"),
-                        region_name=setting("AWS_REGION"))
+                        region_name=setting("AWS_REGION"),
+                        config=Config(
+                            connect_timeout=float(setting("AWS_S3_CONNECT_TIMEOUT") or 3),
+                            read_timeout=float(setting("AWS_S3_READ_TIMEOUT") or 10),
+                            retries={
+                                "max_attempts": int(setting("AWS_S3_MAX_ATTEMPTS") or 2),
+                                "mode": "standard",
+                            },
+                        ))
 
 
 def bucket(): return setting("AWS_S3_BUCKET", "AWS_BUCKET_NAME")

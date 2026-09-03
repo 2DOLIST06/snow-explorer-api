@@ -122,14 +122,85 @@ class AnmsmStationMappingTests(unittest.TestCase):
                  "visual_occupancy_width": .02, "visual_occupancy_height": .02,
                  "optimized_width": 512, "optimized_height": 512, "warnings": []})), \
              patch("app.services.anmsm_logos.s3.put_webp", return_value="https://s3/candidate.webp"):
-            stats = sync()
-        expected = {"stations_received", "stations_matched", "stations_unmatched", "logos_created",
-                    "logos_updated", "logos_unchanged", "stations_without_logo",
+            outcome = sync()
+        stats = outcome["stats"]
+        expected = {"logos_created", "logos_updated", "logos_unchanged", "stations_without_logo",
                     "conversions_succeeded", "errors", "duration_seconds"}
         self.assertEqual(set(stats), expected)
         self.assertTrue(all(isinstance(stats[key], (int, float)) for key in expected))
-        self.assertEqual((stats["stations_matched"], stats["logos_created"]), (1, 1))
+        self.assertEqual(stats["logos_created"], 1)
+        self.assertFalse(outcome["batch"]["has_more"])
         self.assertEqual(StationLogoCandidate.get().status, "pending")
+
+    def _confirmed_batch(self):
+        for external_id, station in (("A1", self.alpha), ("A2", self.beta), ("A3", self.alpha)):
+            AnmsmStationMapping.create(station=station, external_station_id=external_id,
+                                       source="anmsm", verified=True)
+        return [{"external_station_id": external_id, "external_name": external_id,
+                 "logo": {"url": f"https://logo/{external_id}", "title": "Logo",
+                          "credit": "ANMSM", "media_id": external_id}}
+                for external_id in ("A1", "A2", "A3")]
+
+    @staticmethod
+    def _metadata():
+        return {"source_format": "png", "source_width": 10, "source_height": 10,
+                "content_width": 10, "content_height": 10, "aspect_ratio": 1,
+                "visual_occupancy_width": .02, "visual_occupancy_height": .02,
+                "optimized_width": 512, "optimized_height": 512, "warnings": []}
+
+    def test_sync_uses_stable_first_next_and_last_batches(self):
+        feed = self._confirmed_batch()
+        patches = (patch("app.services.anmsm_logos.fetch_stations", return_value=feed),
+                   patch("app.services.anmsm_logos.download", side_effect=lambda url, _session: url.encode()),
+                   patch("app.services.anmsm_logos.optimize", side_effect=lambda _raw: (b"webp", self._metadata())),
+                   patch("app.services.anmsm_logos.s3.put_webp", return_value="https://s3/logo.webp"))
+        with self.app.app_context(), patches[0], patches[1], patches[2], patches[3]:
+            first = sync()
+            last = sync(cursor=first["batch"]["next_cursor"])
+        self.assertEqual(first["batch"]["processed_external_station_ids"], ["A1", "A2"])
+        self.assertEqual(first["batch"]["next_cursor"], "A2")
+        self.assertTrue(first["batch"]["has_more"])
+        self.assertEqual(last["batch"]["processed_external_station_ids"], ["A3"])
+        self.assertIsNone(last["batch"]["next_cursor"])
+        self.assertFalse(last["batch"]["has_more"])
+
+    def test_retry_is_idempotent_and_reports_unchanged(self):
+        feed = self._confirmed_batch()[:1]
+        with self.app.app_context(), \
+             patch("app.services.anmsm_logos.fetch_stations", return_value=feed), \
+             patch("app.services.anmsm_logos.download", return_value=b"same"), \
+             patch("app.services.anmsm_logos.optimize", return_value=(b"webp", self._metadata())), \
+             patch("app.services.anmsm_logos.s3.put_webp", return_value="https://s3/logo.webp"):
+            sync(batch_size=1)
+            retried = sync(batch_size=1)
+        self.assertEqual(StationLogoCandidate.select().count(), 1)
+        self.assertEqual(retried["stats"]["logos_unchanged"], 1)
+        self.assertEqual(retried["results"][0]["status"], "unchanged")
+
+    def test_download_conversion_and_s3_errors_do_not_stop_batch(self):
+        feed = self._confirmed_batch()
+
+        def download_result(url, _session):
+            if url.endswith("A1"):
+                raise LogoImportError("source_download_timeout", "timeout")
+            return url.encode()
+
+        def conversion_result(raw):
+            if raw.endswith(b"A2"):
+                raise ValueError("broken image")
+            return b"webp", self._metadata()
+
+        with self.app.app_context(), \
+             patch("app.services.anmsm_logos.fetch_stations", return_value=feed), \
+             patch("app.services.anmsm_logos.download", side_effect=download_result), \
+             patch("app.services.anmsm_logos.optimize", side_effect=conversion_result), \
+             patch("app.services.anmsm_logos.s3.put_webp", side_effect=RuntimeError("S3 unavailable")):
+            outcome = sync(batch_size=3)
+        self.assertEqual([item["error_code"] for item in outcome["results"]],
+                         ["source_download_timeout", "logo_conversion_error", "s3_upload_error"])
+        self.assertEqual(outcome["stats"]["errors"], 3)
+        self.assertEqual(StationLogoCandidate.select().count(), 3)
+        self.assertLess(outcome["stats"]["duration_seconds"], 30)
 
 
 if __name__ == "__main__": unittest.main()
