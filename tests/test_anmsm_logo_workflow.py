@@ -104,6 +104,28 @@ class AnmsmLogoWorkflowTests(unittest.TestCase):
         self.assertEqual(row["mapping_status"], "unmatched")
         self.assertIsNone(row["suggestion"])
 
+    def test_unmatched_station_keeps_anmsm_name_and_source_logo(self):
+        self.feed[0]["external_name"] = "Station ANMSM non associée"
+        self.feed[0]["logo"].update({
+            "url": "https://anmsm.media.tourinsoft.eu/unmatched.png",
+            "media_id": "unmatched-media", "title": "Logo source", "credit": "ANMSM",
+        })
+        with patch("app.services.anmsm_logos.fetch_stations", return_value=self.feed):
+            body = self.client.get("/api/admin/anmsm/logos/workspace").get_json()
+
+        row = body["rows"][0]
+        self.assertEqual(row["anmsm_station_name"], "Station ANMSM non associée")
+        self.assertEqual(row["source_logo_url"],
+                         "https://anmsm.media.tourinsoft.eu/unmatched.png")
+        self.assertTrue(row["source_has_logo"])
+        self.assertEqual(row["anmsm_media_id"], "unmatched-media")
+        self.assertEqual(row["anmsm_title"], "Logo source")
+        self.assertEqual(row["anmsm_credit"], "ANMSM")
+        self.assertIsNone(row["station_id"])
+        self.assertIsNone(row["candidate_id"])
+        self.assertIsNone(row["candidate_preview_url"])
+        self.assertEqual(body["stats"]["logos_available"], 1)
+
     def test_prepare_one_resumes_without_download(self):
         AnmsmStationMapping.create(station=self.resort, source="anmsm",
                                    external_station_id="A1", verified=True)
