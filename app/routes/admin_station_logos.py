@@ -186,8 +186,14 @@ def prepare_one():
         return jsonify({"ok": True, "unchanged": unchanged,
                         "candidate": _candidate_json(candidate)})
     except LogoImportError as exc:
-        status = 422 if exc.code in {"station_not_mapped", "source_logo_missing",
-                                     "unknown_external_station"} else 502
+        if exc.code == "download_too_large": status = 413
+        elif exc.code in {"source_download_timeout", "source_feed_timeout"}: status = 504
+        elif exc.code == "conversion_timeout": status = 504
+        elif exc.code == "s3_upload_error": status = 502
+        elif exc.code in {"unsupported_format", "invalid_mime", "invalid_image",
+                          "excessive_dimensions", "conversion_interrupted", "empty_image",
+                          "optimization_limit"}: status = 422
+        else: status = 400
         return jsonify({"ok": False, "error": exc.code, "message": str(exc),
                         "external_station_id": external_id.strip()}), status
     except Exception:

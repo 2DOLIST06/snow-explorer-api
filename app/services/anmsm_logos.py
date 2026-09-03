@@ -1,19 +1,17 @@
 """Secure ANMSM logo ingestion. This service only creates review candidates."""
 import hashlib
-import io
 import ipaddress
 import json
 import os
-import re
 import socket
+import subprocess
+import sys
 import tempfile
 import time
-import warnings
 from urllib.parse import urljoin, urlparse
 
 import requests
 from flask import current_app, has_app_context
-from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.utils import secure_filename
 
 from app.datetime_utils import utcnow
@@ -30,12 +28,20 @@ OUTPUT_LIMIT = 50 * 1024
 DEFAULT_BATCH_SIZE = 1
 MAX_BATCH_SIZE = 1
 ALLOWED_CONTENT_TYPES = frozenset({
-    "image/jpeg", "image/png", "image/gif", "image/svg+xml",
+    "image/jpeg", "image/png", "image/gif",
 })
 
 class LogoImportError(Exception):
     def __init__(self, code, message):
         self.code = code; super().__init__(message)
+
+
+def _event(name, external_station_id, **fields):
+    payload = {"event": name, "external_station_id": external_station_id, **fields}
+    current_app.logger.info("anmsm_logo %s", json.dumps(payload, separators=(",", ":")))
+    for handler in current_app.logger.handlers:
+        try: handler.flush()
+        except Exception: pass
 
 def _assert_public_https(url):
     parsed = urlparse(url)
@@ -54,6 +60,7 @@ def _timeout(name, default):
 
 
 def download(url, session=requests):
+    """Stream a response to disk and return ``(path, bytes, mime)``."""
     configured = current_app.config.get("ANMSM_LOGO_MAX_DOWNLOAD_BYTES") if has_app_context() else None
     limit = int(configured or os.getenv("ANMSM_LOGO_MAX_DOWNLOAD_BYTES", str(10 * 1024 * 1024)))
     current = url
@@ -78,91 +85,83 @@ def download(url, session=requests):
         if content_type not in ALLOWED_CONTENT_TYPES:
             response.close(); raise LogoImportError("invalid_mime", "Media Content-Type is not allowed")
         declared = response.headers.get("Content-Length")
-        if declared and int(declared) > limit:
+        try: declared_size = int(declared) if declared else None
+        except (TypeError, ValueError): declared_size = None
+        if declared_size is not None and declared_size > limit:
             response.close(); raise LogoImportError("download_too_large", "Media exceeds configured size limit")
-        temporary = tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b")
+        temporary = tempfile.NamedTemporaryFile(prefix="anmsm-source-", delete=False)
+        path = temporary.name
         try:
             total = 0
             for chunk in response.iter_content(64 * 1024):
+                if not chunk: continue
                 total += len(chunk)
                 if total > limit: raise LogoImportError("download_too_large", "Media exceeds configured size limit")
                 temporary.write(chunk)
-            temporary.seek(0)
-            return temporary.read()
+            temporary.flush()
+            return path, total, content_type
+        except requests.Timeout as exc:
+            try: os.unlink(path)
+            except FileNotFoundError: pass
+            raise LogoImportError("source_download_timeout",
+                                  "Le téléchargement du logo a dépassé le délai autorisé.") from exc
+        except Exception:
+            try: os.unlink(path)
+            except FileNotFoundError: pass
+            raise
         finally:
             response.close()
             temporary.close()
     raise LogoImportError("too_many_redirects", "Too many media redirects")
 
-def _open_source(raw):
-    source_format = None
-    if raw.lstrip().startswith(b"<"):
-        lowered = raw.lower()
-        if (b"<!doctype" in lowered or b"<!entity" in lowered
-                or re.search(br"(?:href\s*=|url\s*\()\s*['\"]?(?:https?:|//|file:)", lowered)
-                or len(raw) > 2 * 1024 * 1024):
-            raise LogoImportError("invalid_svg", "Unsafe SVG document")
-        try:
-            import cairosvg
-            raw = cairosvg.svg2png(bytestring=raw)
-            source_format = "svg"
-        except Exception as exc:
-            raise LogoImportError("invalid_svg", "SVG rasterization failed") from exc
-    Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+def _convert_subprocess(source_path, output_path):
+    timeout = _timeout("ANMSM_CONVERSION_TIMEOUT", 15)
+    memory = int(_timeout("ANMSM_CONVERSION_MEMORY_MB", 256))
+    command = [sys.executable, "-m", "app.services.anmsm_image_worker", source_path, output_path,
+               "--max-pixels", str(MAX_PIXELS), "--size", str(OUTPUT_SIZE),
+               "--output-limit", str(OUTPUT_LIMIT), "--memory-mb", str(memory)]
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
-            image = Image.open(io.BytesIO(raw)); image.seek(0); image.load()
-    except (UnidentifiedImageError, OSError, ValueError,
-            Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
-        raise LogoImportError("invalid_image", "Unsupported, invalid, or oversized image") from exc
-    if image.format not in {"JPEG", "PNG", "GIF"}:
-        raise LogoImportError("invalid_mime", "Decoded media format is not allowed")
-    return image, source_format or image.format.lower()
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired as exc:
+        raise LogoImportError("conversion_timeout", "La conversion a dépassé le délai autorisé.") from exc
+    if result.returncode < 0:
+        raise LogoImportError("conversion_interrupted", f"Conversion interrompue par le signal {-result.returncode}.")
+    try: payload = json.loads(result.stdout)
+    except (ValueError, TypeError) as exc:
+        raise LogoImportError("conversion_interrupted", "Le convertisseur n'a pas retourné de résultat valide.") from exc
+    if result.returncode or not payload.get("ok"):
+        code = payload.get("error", "conversion_interrupted")
+        if code not in {"unsupported_format", "excessive_dimensions", "invalid_image",
+                        "empty_image", "optimization_limit"}: code = "conversion_interrupted"
+        raise LogoImportError(code, "La source ne peut pas être convertie en logo sûr.")
+    metadata = payload.get("metadata") or {}
+    size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+    try:
+        with open(output_path, "rb") as converted:
+            header = converted.read(12)
+    except OSError as exc:
+        raise LogoImportError("conversion_interrupted", "Le fichier converti est absent.") from exc
+    if (size <= 0 or size > OUTPUT_LIMIT or metadata.get("optimized_size_bytes") != size
+            or len(header) != 12 or header[:4] != b"RIFF" or header[8:] != b"WEBP"):
+        raise LogoImportError("conversion_interrupted", "Le fichier converti est invalide.")
+    return metadata
+
 
 def optimize(raw):
-    image, source_format = _open_source(raw)
-    converted = cropped = None
+    """Compatibility helper; Pillow still runs only in the isolated child."""
+    source = output = None
     try:
-        source_width, source_height = image.size
-        if source_width * source_height > MAX_PIXELS:
-            raise LogoImportError("invalid_image", "Image pixel count exceeds configured limit")
-        converted = ImageOps.exif_transpose(image).convert("RGBA")
-        alpha_box = converted.getchannel("A").getbbox()
-        if not alpha_box: raise LogoImportError("empty_image", "Image has no visible pixels")
-        cropped = converted.crop(alpha_box)
-        content_width, content_height = cropped.size
-        scale = min(1.0, OUTPUT_SIZE / content_width, OUTPUT_SIZE / content_height)
-        quality = 82
-        while True:
-            width = max(1, round(content_width * scale)); height = max(1, round(content_height * scale))
-            resized = cropped.resize((width, height), Image.Resampling.LANCZOS) if cropped.size != (width, height) else cropped
-            canvas = Image.new("RGBA", (OUTPUT_SIZE, OUTPUT_SIZE), (0, 0, 0, 0))
-            output = io.BytesIO()
-            try:
-                canvas.alpha_composite(resized, ((OUTPUT_SIZE-width)//2, (OUTPUT_SIZE-height)//2))
-                canvas.save(output, "WEBP", quality=quality, method=6)
-                encoded = output.getvalue()
-            finally:
-                output.close(); canvas.close()
-                if resized is not cropped: resized.close()
-            if len(encoded) <= OUTPUT_LIMIT: break
-            if quality > 48: quality -= 6
-            elif scale > 0.35: scale *= 0.88; quality = 70
-            else: raise LogoImportError("optimization_limit", "No usable WebP fits within 50 KiB")
-        warning_codes = []
-        ratio = content_width / content_height
-        if max(source_width, source_height) < 256: warning_codes.append("low_resolution")
-        if ratio > 6 or ratio < 1/6: warning_codes.append("extreme_aspect_ratio")
-        if width / OUTPUT_SIZE < .2 or height / OUTPUT_SIZE < .2: warning_codes.append("low_visual_occupancy")
-        return encoded, {"source_format": source_format, "source_width": source_width, "source_height": source_height,
-            "content_width": content_width, "content_height": content_height, "aspect_ratio": ratio,
-            "visual_occupancy_width": width / OUTPUT_SIZE, "visual_occupancy_height": height / OUTPUT_SIZE,
-            "optimized_width": OUTPUT_SIZE, "optimized_height": OUTPUT_SIZE, "warnings": warning_codes}
+        with tempfile.NamedTemporaryFile(delete=False) as handle:
+            source = handle.name; handle.write(raw)
+        with tempfile.NamedTemporaryFile(prefix="anmsm-output-", suffix=".webp", delete=False) as handle:
+            output = handle.name
+        metadata = _convert_subprocess(source, output)
+        with open(output, "rb") as handle: return handle.read(), metadata
     finally:
-        if cropped is not None: cropped.close()
-        if converted is not None: converted.close()
-        image.close()
+        for path in (source, output):
+            if path:
+                try: os.unlink(path)
+                except FileNotFoundError: pass
 
 def _records(payload):
     if isinstance(payload, list): return payload
@@ -254,17 +253,30 @@ def _process_one(mapping, station, stats, session, fetch_feed_ms=0):
     total_started = time.monotonic()
     timings = {"fetch_feed_ms": fetch_feed_ms, "download_ms": 0,
                "conversion_ms": 0, "s3_ms": 0}
-    raw = encoded = None
+    source_path = output_path = None
+    source_size = 0
+    checksum = hashlib.sha256(logo.get("url", "").encode()).hexdigest()
     stage = "download"
     try:
         if not isinstance(logo.get("url"), str) or not logo["url"].strip():
             stats["stations_without_logo"] += 1
             return {"external_station_id": external_id, "ok": True, "status": "without_logo"}
 
+        _event("download_started", external_id)
         stage_started = time.monotonic()
-        raw = download(logo["url"], session)
+        downloaded = download(logo["url"], session)
+        if isinstance(downloaded, tuple):
+            source_path, source_size, content_type = downloaded
+        else:  # retained for callers that provide a legacy test adapter
+            with tempfile.NamedTemporaryFile(prefix="anmsm-source-", delete=False) as handle:
+                source_path = handle.name; handle.write(downloaded)
+            source_size, content_type = len(downloaded), "application/octet-stream"
         timings["download_ms"] = _milliseconds(stage_started)
-        checksum = hashlib.sha256(raw).hexdigest()
+        _event("download_completed", external_id, bytes=source_size, mime_type=content_type)
+        digest = hashlib.sha256()
+        with open(source_path, "rb") as source:
+            for chunk in iter(lambda: source.read(64 * 1024), b""): digest.update(chunk)
+        checksum = digest.hexdigest()
         existing = StationLogoCandidate.get_or_none(
             (StationLogoCandidate.station == mapping.station_id) &
             (StationLogoCandidate.source_checksum == checksum))
@@ -274,16 +286,24 @@ def _process_one(mapping, station, stats, session, fetch_feed_ms=0):
 
         stage = "conversion"
         stage_started = time.monotonic()
-        encoded, metadata = optimize(raw)
+        with tempfile.NamedTemporaryFile(prefix="anmsm-output-", suffix=".webp", delete=False) as handle:
+            output_path = handle.name
+        _event("conversion_started", external_id, format=content_type, width=None, height=None)
+        metadata = _convert_subprocess(source_path, output_path)
         timings["conversion_ms"] = _milliseconds(stage_started)
+        _event("conversion_completed", external_id, format=metadata["source_format"],
+               width=metadata["source_width"], height=metadata["source_height"])
         stats["conversions_succeeded"] += 1
         safe_station_id = secure_filename(str(mapping.station_id)) or hashlib.sha256(
             str(mapping.station_id).encode()).hexdigest()[:24]
         key = f"station-logos/candidates/{safe_station_id}/{checksum}.webp"
         stage = "s3"
         stage_started = time.monotonic()
-        url = s3.put_webp(key, encoded)
+        _event("s3_upload_started", external_id)
+        with open(output_path, "rb") as optimized_file:
+            url = s3.put_webp(key, optimized_file)
         timings["s3_ms"] = _milliseconds(stage_started)
+        _event("s3_upload_completed", external_id)
         stage = "database"
         with StationLogoCandidate._meta.database.atomic():
             prior = (StationLogoCandidate.select()
@@ -293,8 +313,8 @@ def _process_one(mapping, station, stats, session, fetch_feed_ms=0):
             values = dict(
                 external_station_id=external_id, anmsm_media_id=logo.get("media_id"),
                 anmsm_title=logo.get("title"), anmsm_credit=logo.get("credit"),
-                source_url=logo["url"], source_size_bytes=len(raw), optimized_s3_key=key,
-                optimized_url=url, optimized_size_bytes=len(encoded), status="pending",
+                source_url=logo["url"], source_size_bytes=source_size, optimized_s3_key=key,
+                optimized_url=url, optimized_size_bytes=metadata.pop("optimized_size_bytes"), status="pending",
                 warnings=json.dumps(metadata.pop("warnings")), error_code=None,
                 error_message=None, checked_at=utcnow(), updated_at=utcnow(), **metadata)
             if existing is None:
@@ -303,6 +323,7 @@ def _process_one(mapping, station, stats, session, fetch_feed_ms=0):
             else:
                 for name, value in values.items(): setattr(existing, name, value)
                 existing.save()
+        _event("database_update_completed", external_id)
         stats["logos_updated" if prior or existing else "logos_created"] += 1
         return {"external_station_id": external_id, "ok": True,
                 "status": "updated" if prior or existing else "created"}
@@ -318,9 +339,8 @@ def _process_one(mapping, station, stats, session, fetch_feed_ms=0):
             code = "source_download_error"
         else:
             code = "processing_error"
-        checksum = hashlib.sha256(raw or logo["url"].encode()).hexdigest()
         try:
-            _error_candidate(mapping, station, checksum, raw, code, str(exc))
+            _error_candidate(mapping, station, checksum, None, code, str(exc))
         except Exception:
             current_app.logger.exception("Could not persist ANMSM logo failure for %s", external_id)
         return {"external_station_id": external_id, "ok": False,
@@ -331,8 +351,10 @@ def _process_one(mapping, station, stats, session, fetch_feed_ms=0):
         if stage + "_ms" in timings and timings[stage + "_ms"] == 0 and "stage_started" in locals():
             timings[stage + "_ms"] = _milliseconds(stage_started)
         _log_station_timing(station, timings, total_started)
-        raw = None
-        encoded = None
+        for path in (source_path, output_path):
+            if path:
+                try: os.unlink(path)
+                except FileNotFoundError: pass
 
 
 def sync(cursor=None, batch_size=DEFAULT_BATCH_SIZE, session=requests):
@@ -384,6 +406,7 @@ def sync(cursor=None, batch_size=DEFAULT_BATCH_SIZE, session=requests):
 
 def prepare(external_station_id, session=requests):
     """Prepare exactly one feed station and return its persisted candidate."""
+    _event("prepare_started", external_station_id)
     station = next((item for item in fetch_stations(session)
                     if item["external_station_id"] == external_station_id), None)
     if station is None:
@@ -394,6 +417,7 @@ def prepare(external_station_id, session=requests):
         AnmsmStationMapping.verified & AnmsmStationMapping.station.is_null(False))
     if mapping is None:
         raise LogoImportError("station_not_mapped", "La station ANMSM doit être associée.")
+    _event("source_resolved", external_station_id)
     logo = station["logo"]
     if not logo.get("url"):
         raise LogoImportError("source_logo_missing", "Aucun logo source n'est disponible.")
@@ -410,6 +434,7 @@ def prepare(external_station_id, session=requests):
             StationLogoCandidate.anmsm_media_id == logo["media_id"])
     existing = existing_query.order_by(StationLogoCandidate.updated_at.desc()).first()
     if existing and existing.optimized_s3_key:
+        _event("prepare_completed", external_station_id, unchanged=True)
         return existing, True
 
     stats = {key: 0 for key in ("logos_created", "logos_updated", "logos_unchanged",
@@ -421,4 +446,5 @@ def prepare(external_station_id, session=requests):
         .order_by(StationLogoCandidate.updated_at.desc()).first())
     if not outcome["ok"]:
         raise LogoImportError(outcome["error_code"], outcome["error_message"])
+    _event("prepare_completed", external_station_id, unchanged=outcome["status"] == "unchanged")
     return candidate, outcome["status"] == "unchanged"
