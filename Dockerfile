@@ -4,4 +4,4 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 ENV PORT=5001
-CMD [\"gunicorn\",\"-w\",\"2\",\"-b\",\"0.0.0.0:5001\",\"app.main:app\"]
+CMD [\"gunicorn\",\"-w\",\"2\",\"-b\",\"0.0.0.0:5001\",\"--timeout\",\"90\",\"app.main:app\"]

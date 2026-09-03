@@ -27,8 +27,8 @@ ALLOWED_MEDIA_HOSTS = frozenset({"anmsm.media.tourinsoft.eu"})
 MAX_PIXELS = 40_000_000
 OUTPUT_SIZE = 512
 OUTPUT_LIMIT = 50 * 1024
-DEFAULT_BATCH_SIZE = 2
-MAX_BATCH_SIZE = 3
+DEFAULT_BATCH_SIZE = 1
+MAX_BATCH_SIZE = 1
 ALLOWED_CONTENT_TYPES = frozenset({
     "image/jpeg", "image/png", "image/gif", "image/svg+xml",
 })
@@ -231,17 +231,36 @@ def _error_candidate(mapping, station, checksum, raw, code, message):
     return candidate
 
 
-def _process_one(mapping, station, stats, session):
+def _milliseconds(started):
+    return round((time.monotonic() - started) * 1000)
+
+
+def _log_station_timing(station, timings, total_started):
+    current_app.logger.info(
+        "ANMSM logo sync station=%s name=%s fetch_feed_ms=%s download_ms=%s "
+        "conversion_ms=%s s3_ms=%s total_ms=%s",
+        station["external_station_id"], station.get("external_name") or "",
+        timings["fetch_feed_ms"], timings["download_ms"],
+        timings["conversion_ms"], timings["s3_ms"], _milliseconds(total_started),
+    )
+
+
+def _process_one(mapping, station, stats, session, fetch_feed_ms=0):
     external_id = station["external_station_id"]
     logo = station["logo"]
-    if not isinstance(logo.get("url"), str) or not logo["url"].strip():
-        stats["stations_without_logo"] += 1
-        return {"external_station_id": external_id, "ok": True, "status": "without_logo"}
-
+    total_started = time.monotonic()
+    timings = {"fetch_feed_ms": fetch_feed_ms, "download_ms": 0,
+               "conversion_ms": 0, "s3_ms": 0}
     raw = encoded = None
     stage = "download"
     try:
+        if not isinstance(logo.get("url"), str) or not logo["url"].strip():
+            stats["stations_without_logo"] += 1
+            return {"external_station_id": external_id, "ok": True, "status": "without_logo"}
+
+        stage_started = time.monotonic()
         raw = download(logo["url"], session)
+        timings["download_ms"] = _milliseconds(stage_started)
         checksum = hashlib.sha256(raw).hexdigest()
         existing = StationLogoCandidate.get_or_none(
             (StationLogoCandidate.station == mapping.station_id) &
@@ -251,13 +270,17 @@ def _process_one(mapping, station, stats, session):
             return {"external_station_id": external_id, "ok": True, "status": "unchanged"}
 
         stage = "conversion"
+        stage_started = time.monotonic()
         encoded, metadata = optimize(raw)
+        timings["conversion_ms"] = _milliseconds(stage_started)
         stats["conversions_succeeded"] += 1
         safe_station_id = secure_filename(str(mapping.station_id)) or hashlib.sha256(
             str(mapping.station_id).encode()).hexdigest()[:24]
         key = f"station-logos/candidates/{safe_station_id}/{checksum}.webp"
         stage = "s3"
+        stage_started = time.monotonic()
         url = s3.put_webp(key, encoded)
+        timings["s3_ms"] = _milliseconds(stage_started)
         stage = "database"
         with db.atomic():
             prior = (StationLogoCandidate.select()
@@ -300,6 +323,11 @@ def _process_one(mapping, station, stats, session):
         return {"external_station_id": external_id, "ok": False,
                 "error_code": code, "error_message": str(exc)[:1000]}
     finally:
+        # Also emit measurements for failed stages; zero means the stage was
+        # not reached, while a failure in progress records its elapsed time.
+        if stage + "_ms" in timings and timings[stage + "_ms"] == 0 and "stage_started" in locals():
+            timings[stage + "_ms"] = _milliseconds(stage_started)
+        _log_station_timing(station, timings, total_started)
         raw = None
         encoded = None
 
@@ -322,18 +350,25 @@ def sync(cursor=None, batch_size=DEFAULT_BATCH_SIZE, session=requests):
     mappings = list(query.order_by(AnmsmStationMapping.external_station_id).limit(batch_size + 1))
     has_more = len(mappings) > batch_size
     mappings = mappings[:batch_size]
+    feed_started = time.monotonic()
     by_external_id = ({item["external_station_id"]: item for item in fetch_stations(session)}
                       if mappings else {})
+    fetch_feed_ms = _milliseconds(feed_started) if mappings else 0
     results = []
     for mapping in mappings:
         station = by_external_id.get(mapping.external_station_id)
         if station is None:
+            missing_station = {"external_station_id": mapping.external_station_id,
+                               "external_name": mapping.station.name}
+            timing_started = time.monotonic()
             stats["errors"] += 1
             results.append({"external_station_id": mapping.external_station_id, "ok": False,
                             "error_code": "station_not_in_feed",
                             "error_message": "La station vérifiée est absente du flux ANMSM."})
+            _log_station_timing(missing_station, {"fetch_feed_ms": fetch_feed_ms,
+                "download_ms": 0, "conversion_ms": 0, "s3_ms": 0}, timing_started)
             continue
-        results.append(_process_one(mapping, station, stats, session))
+        results.append(_process_one(mapping, station, stats, session, fetch_feed_ms))
     stats["duration_seconds"] = round(time.monotonic() - started, 3)
     processed_ids = [mapping.external_station_id for mapping in mappings]
     return {"batch": {"processed": len(mappings), "total_matched": total_matched,
