@@ -18,18 +18,12 @@ le `SyndicObjectId` de la station. Les champs média lus sont `MediaID` (repli
 sert jamais à déduire un type.
 
 Les formats acceptés par sécurité sont JPEG, PNG, WebP et PDF. Les PDF sont
-rendus par Poppler (`pdfinfo` puis première page avec `pdftoppm`) dans le même
-processus enfant isolé que le décodeur Pillow, jamais dans Gunicorn. Le build
-Docker installe explicitement `poppler-utils`. Les images produisent un WebP
+rendus avec la roue Python PyMuPDF dans le même processus enfant isolé que le
+décodeur Pillow, jamais dans Gunicorn. PyMuPDF est installé par la commande de
+build Python habituelle `pip install -r requirements.txt`; aucune dépendance
+système ni migration du service Render vers Docker n'est requise. Les images produisent un WebP
 haute définition, sans recadrage, sans agrandissement et en conservant
 l'orientation et les proportions.
-
-Le Blueprint `render.yaml` impose le runtime Docker. Le build vérifie
-explicitement `pdfinfo` et `pdftoppm`, puis la commande de démarrage refait la
-vérification avant Gunicorn et écoute le port fourni par Render (`$PORT`). Un
-service Render historique configuré depuis le dashboard avec le runtime Python
-natif doit être rattaché à ce Blueprint, ou converti manuellement en service
-Docker : la seule présence du Dockerfile ne change pas son runtime.
 
 ## Modèle public et exploitation
 

@@ -264,6 +264,44 @@ class AnmsmPisteMapWorkspaceTests(unittest.TestCase):
 
 
 class PisteMapConverterBoundaryTests(unittest.TestCase):
+    def test_pymupdf_renders_only_first_page_to_webp(self):
+        import pymupdf
+        from PIL import Image
+        app=Flask(__name__); app.config.update(
+            ANMSM_PISTE_MAP_DISPLAY_MAX_DIMENSION=1200,
+            ANMSM_PISTE_MAP_MAX_PIXELS=2_000_000)
+        source=tempfile.NamedTemporaryFile(delete=False,suffix=".pdf"); source.close()
+        output=source.name+".webp"
+        document=pymupdf.open()
+        for label in ("FIRST PAGE", "SECOND PAGE"):
+            page=document.new_page(width=600,height=400)
+            page.insert_text((72,100),label,fontsize=36)
+        document.save(source.name); document.close()
+        try:
+            with app.app_context(): metadata=_convert(source.name,output,"pdf")
+            self.assertEqual(metadata["source_format"],"pdf")
+            self.assertEqual((metadata["display_width"],metadata["display_height"]),(1200,800))
+            self.assertGreater(metadata["display_size_bytes"],0)
+            with Image.open(output) as display: self.assertEqual(display.format,"WEBP")
+        finally:
+            for path in (source.name,output):
+                try: os.unlink(path)
+                except FileNotFoundError: pass
+
+    def test_pymupdf_rejects_pdf_over_page_limit(self):
+        import pymupdf
+        app=Flask(__name__); app.config["ANMSM_PISTE_MAP_PDF_MAX_PAGES"]=1
+        source=tempfile.NamedTemporaryFile(delete=False,suffix=".pdf"); source.close()
+        output=source.name+".webp"; document=pymupdf.open()
+        document.new_page(); document.new_page(); document.save(source.name); document.close()
+        try:
+            with app.app_context(), self.assertRaises(LogoImportError) as raised:
+                _convert(source.name,output,"pdf")
+            self.assertEqual(raised.exception.code,"pdf_page_limit")
+            self.assertFalse(os.path.exists(output))
+        finally:
+            os.unlink(source.name)
+
     def test_child_converter_failure_is_controlled(self):
         app=Flask(__name__); process=Mock(pid=123,returncode=2)
         process.communicate.return_value=(json.dumps({"ok":False,"error":"pdf_conversion_failed"}),"")

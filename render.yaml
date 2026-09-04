@@ -1,7 +1,0 @@
-services:
-  - type: web
-    name: snow-explorer-api
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    autoDeployTrigger: commit
