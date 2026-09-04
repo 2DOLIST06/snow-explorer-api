@@ -19,6 +19,14 @@ PISTE_MAPS_FEED_URL = ("https://api-v3.tourinsoft.com/api/syndications/"
                        "?refreshCache=0&format=json")
 PISTE_MAP_COLLECTION = "PLANPISTESs"
 
+def _log(stage, status, **fields):
+    """Emit one-line structured diagnostics and flush configured handlers."""
+    if not has_app_context(): return
+    current_app.logger.info(json.dumps({"event":"anmsm_piste_map_prepare",
+        "stage":stage,"status":status,**fields},separators=(",",":")))
+    for handler in current_app.logger.handlers:
+        handler.flush()
+
 def _media_list(value):
     if isinstance(value, dict): return [value]
     return value if isinstance(value, list) else []
@@ -106,6 +114,7 @@ def download(url, session=requests):
     limit=int(current_app.config.get("ANMSM_PISTE_MAP_MAX_DOWNLOAD_BYTES") or 40*1024*1024)
     _assert_public_https(url); response=None; path=None
     try:
+        _log("anmsm_download","before")
         response=session.get(url,stream=True,allow_redirects=False,timeout=(_timeout("ANMSM_CONNECT_TIMEOUT",3.05),_timeout("ANMSM_MEDIA_READ_TIMEOUT",10)))
         if response.status_code != 200: raise LogoImportError("download_http_error",f"Media returned HTTP {response.status_code}")
         mime=response.headers.get("Content-Type","").split(";",1)[0].lower()
@@ -120,6 +129,7 @@ def download(url, session=requests):
                 total+=len(chunk)
                 if total>limit: raise LogoImportError("download_too_large","Piste map exceeds configured size limit")
                 digest.update(chunk); out.write(chunk)
+        _log("anmsm_download","after",size=total,mime=mime)
         return path,total,mime,digest.hexdigest()
     except requests.Timeout as exc: raise LogoImportError("source_download_timeout","Piste-map download timed out") from exc
     except Exception:
@@ -130,25 +140,50 @@ def download(url, session=requests):
     finally:
         if response is not None: response.close()
 
-def _convert(source, output, source_format=None):
-    cmd=[sys.executable,"-m","app.services.anmsm_piste_map_worker",source,output,
-         "--max-pixels",str(int(current_app.config.get("ANMSM_PISTE_MAP_MAX_PIXELS",120_000_000))),
-         "--max-dimension",str(int(current_app.config.get("ANMSM_PISTE_MAP_DISPLAY_MAX_DIMENSION",6000))),
-         "--output-limit",str(int(current_app.config.get("ANMSM_PISTE_MAP_DISPLAY_MAX_BYTES",12*1024*1024))),
-         "--max-pages",str(int(current_app.config.get("ANMSM_PISTE_MAP_PDF_MAX_PAGES",25))),
-         "--memory-mb",str(int(current_app.config.get("ANMSM_CONVERSION_MEMORY_MB",768)))]
+def _convert(source, output=None, source_format=None):
+    output_directory=tempfile.gettempdir()
+    cmd=[sys.executable,"-m","app.services.anmsm_piste_map_worker",source,
+         "--output-directory",output_directory,
+         "--max-pixels",str(int(current_app.config.get("ANMSM_PISTE_MAP_MAX_PIXELS",9_000_000))),
+         "--max-dimension",str(int(current_app.config.get("ANMSM_PISTE_MAP_DISPLAY_MAX_DIMENSION",3000))),
+         "--output-limit",str(int(current_app.config.get("ANMSM_PISTE_MAP_DISPLAY_MAX_BYTES",6*1024*1024))),
+         "--quality",str(int(current_app.config.get("ANMSM_PISTE_MAP_WEBP_QUALITY",88))),
+         "--memory-mb",str(int(current_app.config.get("ANMSM_CONVERSION_MEMORY_MB",256)))]
     if source_format: cmd.extend(["--source-format",source_format])
-    process=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)
-    try: stdout,stderr=process.communicate(timeout=float(current_app.config.get("ANMSM_CONVERSION_TIMEOUT",30)))
+    _log("child_process","before")
+    process=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
+                             start_new_session=True,close_fds=True)
+    try: stdout,stderr=process.communicate(timeout=float(current_app.config.get("ANMSM_CONVERSION_TIMEOUT",20)))
     except subprocess.TimeoutExpired as exc:
         os.killpg(process.pid,signal.SIGKILL); process.communicate()
+        _log("child_process","after",result="timeout")
         raise LogoImportError("conversion_timeout","Map conversion timed out") from exc
     result=subprocess.CompletedProcess(cmd,process.returncode,stdout,stderr)
-    if result.returncode<0: raise LogoImportError("conversion_interrupted","Map conversion was interrupted")
+    for line in stderr.splitlines():
+        if line.strip():
+            current_app.logger.info(line[:2000])
+    for handler in current_app.logger.handlers:
+        handler.flush()
+    _log("child_process","after",returncode=result.returncode)
+    if result.returncode<0:
+        child_signal=-result.returncode
+        codes={signal.SIGKILL:"conversion_memory_limit",signal.SIGSEGV:"conversion_sigsegv",
+               signal.SIGABRT:"conversion_sigabrt"}
+        raise LogoImportError(codes.get(child_signal,"conversion_interrupted"),
+                              "Map conversion subprocess was terminated")
     try: payload=json.loads(result.stdout)
     except ValueError as exc: raise LogoImportError("conversion_interrupted","Invalid converter response") from exc
     if result.returncode or not payload.get("ok"): raise LogoImportError(payload.get("error","conversion_interrupted"),"Map conversion failed")
-    return payload["metadata"]
+    child_path=payload.get("path")
+    if (not isinstance(child_path,str) or os.path.dirname(os.path.realpath(child_path)) != os.path.realpath(output_directory)
+            or not os.path.isfile(child_path)):
+        raise LogoImportError("conversion_interrupted","Converter returned an invalid output path")
+    if output:
+        os.replace(child_path,output); child_path=output
+    return {"source_format":source_format,"source_width":payload["width"],
+            "source_height":payload["height"],"display_width":payload["width"],
+            "display_height":payload["height"],"display_size_bytes":payload["size"],
+            "display_path":child_path,"warnings":[]}
 
 def _temporary(prefix, suffix=""):
     handle=tempfile.NamedTemporaryFile(prefix=prefix,suffix=suffix,delete=False); handle.close()
@@ -159,15 +194,20 @@ def _resume_pdf(candidate):
     source=_temporary("anmsm-map-s3-", ".pdf"); display=_temporary("anmsm-map-display-", ".webp")
     try:
         limit=int(current_app.config.get("ANMSM_PISTE_MAP_MAX_DOWNLOAD_BYTES") or 40*1024*1024)
-        try: s3.download_file(candidate.original_s3_key,source,limit)
+        try:
+            _log("s3_download","before")
+            s3.download_file(candidate.original_s3_key,source,limit)
+            _log("s3_download","after")
         except (ValueError, OSError) as exc: raise LogoImportError("stored_original_unavailable","Stored PDF original is unusable") from exc
         metadata=_convert(source,display,"pdf"); prefix=candidate.original_s3_key.rsplit("/",1)[0]
-        display_key=f"{prefix}/display.webp"; s3.put_file(display_key,display,"image/webp")
+        display_key=f"{prefix}/display.webp"; _log("s3_upload","before")
+        s3.put_file(display_key,display,"image/webp"); _log("s3_upload","after")
         candidate.display_s3_key=display_key; candidate.display_width=metadata["display_width"]
         candidate.display_height=metadata["display_height"]; candidate.display_size_bytes=metadata["display_size_bytes"]
         candidate.source_width=metadata["source_width"]; candidate.source_height=metadata["source_height"]
         candidate.warnings=json.dumps([x for x in candidate.warning_codes() if x!="pdf_display_not_generated"])
-        candidate.error_code=None; candidate.error_message=None; candidate.updated_at=utcnow(); candidate.save()
+        candidate.error_code=None; candidate.error_message=None; candidate.updated_at=utcnow()
+        _log("postgres_update","before"); candidate.save(); _log("postgres_update","after")
         return candidate
     finally:
         for path in (source,display):
@@ -200,14 +240,19 @@ def prepare(external_id, media_id, session=requests):
             metadata=_convert(source,display,fmt); display_key=f"{prefix}/display.webp"
         # Upload only after the isolated decoder has
         # accepted the source. No corrupt source is knowingly placed in S3.
-        s3.put_file(original_key,source,mime)
-        if display_key: s3.put_file(display_key,display,"image/webp")
+        _log("s3_upload","before",object="original"); s3.put_file(original_key,source,mime)
+        _log("s3_upload","after",object="original")
+        if display_key:
+            _log("s3_upload","before",object="display"); s3.put_file(display_key,display,"image/webp")
+            _log("s3_upload","after",object="display")
+        _log("postgres_update","before")
         candidate=StationPisteMapCandidate.create(station=mapping.station_id,external_station_id=external_id,
             anmsm_media_id=media_id,anmsm_title=media.get("title"),anmsm_credit=media.get("credit"),plan_type=media.get("plan_type"),
             source_url=media["url"],source_checksum=checksum,source_format=metadata["source_format"],source_width=metadata["source_width"],
             source_height=metadata["source_height"],source_size_bytes=size,original_s3_key=original_key,display_s3_key=display_key,
             display_width=metadata["display_width"],display_height=metadata["display_height"],display_size_bytes=metadata["display_size_bytes"],
             warnings=json.dumps(metadata["warnings"]),status="pending",detected_at=utcnow())
+        _log("postgres_update","after")
         return candidate,False
     finally:
         for path in (source,display):
