@@ -15,7 +15,7 @@ from app.services.anmsm_logos import (_assert_public_https, _records, _timeout,
 MIME_FORMATS={"image/jpeg":"jpeg","image/png":"png","image/webp":"webp","application/pdf":"pdf"}
 EXTENSIONS={"jpeg":"jpg","png":"png","webp":"webp","pdf":"pdf"}
 PISTE_MAPS_FEED_URL = ("https://api-v3.tourinsoft.com/api/syndications/"
-                       "anmsm.tourinsoft.com/5F758A63-EEBC-47B4-A995-5F33532012F4"
+                       "anmsm.tourinsoft.com/FF021E97-A3CE-4144-97C5-EF8BB81B94D2"
                        "?refreshCache=0&format=json")
 PISTE_MAP_FIELDS = ("PLANPISTES", "PLAN_DES_PISTES")
 
@@ -59,7 +59,9 @@ def fetch_maps(session=requests):
         response=session.get(url,timeout=(_timeout("ANMSM_CONNECT_TIMEOUT",3.05),_timeout("ANMSM_FEED_READ_TIMEOUT",10)))
         if has_app_context(): current_app.logger.info("ANMSM piste-map feed response feed=espace_neige status=%s",response.status_code)
         if not 200 <= response.status_code < 300:
-            raise LogoImportError("source_feed_http_error",f"ANMSM piste-map feed returned HTTP {response.status_code}")
+            error=LogoImportError("source_feed_http_error",f"ANMSM piste-map feed returned HTTP {response.status_code}")
+            error.source_http_status=response.status_code
+            raise error
         try: payload=response.json()
         except (ValueError, requests.exceptions.JSONDecodeError) as exc:
             raise LogoImportError("invalid_feed_json","ANMSM piste-map feed returned invalid JSON") from exc
@@ -68,7 +70,7 @@ def fetch_maps(session=requests):
             raise LogoImportError("invalid_feed","ANMSM feed records must be JSON objects")
         objects=[record.get("Object",record) for record in records]
         if not records or not any(isinstance(obj,dict) and any(field in obj for field in PISTE_MAP_FIELDS) for obj in objects):
-            raise LogoImportError("invalid_feed_structure","ANMSM Espace neige feed does not contain PLANPISTES")
+            raise LogoImportError("invalid_feed_structure","ANMSM Espace neige feed does not contain PLANPISTES or PLAN_DES_PISTES")
         stations=[]; rejected={"missing_station_id":0,"missing_url":0}; detected=0
         for record in records:
             station=parse_record(record)

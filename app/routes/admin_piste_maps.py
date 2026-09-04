@@ -12,6 +12,10 @@ from app.services.public_cache import invalidate_station
 
 bp_admin_piste_maps=Blueprint("admin_piste_maps",__name__,url_prefix="/api/admin/anmsm/piste-maps")
 
+def _normalized_external_id(value):
+    """Normalize only the comparison key; persisted/source values stay intact."""
+    return str(value or "").strip().casefold()
+
 def _urls(candidate):
     return (s3.preview_url(candidate.display_s3_key) if candidate and candidate.display_s3_key else None,
             s3.preview_url(candidate.original_s3_key) if candidate and candidate.original_s3_key else None)
@@ -23,19 +27,24 @@ def _candidate_row(candidate):
             "warnings":candidate.warning_codes(),"error":candidate.error_message}
 
 def workspace_data(stations):
-    mappings={m.external_station_id.casefold():m for m in AnmsmStationMapping.select().where((AnmsmStationMapping.source=="anmsm")&(AnmsmStationMapping.verified==True))}
+    mappings={_normalized_external_id(m.external_station_id):m for m in AnmsmStationMapping.select().where((AnmsmStationMapping.source=="anmsm")&(AnmsmStationMapping.verified==True))}
     resorts={str(r.id):r for r in Resort.select()}
     candidates={}
     for c in StationPisteMapCandidate.select().order_by(StationPisteMapCandidate.updated_at.desc()):
-        candidates.setdefault((c.external_station_id.casefold(),c.anmsm_media_id),c)
-    rows=[]
+        candidates.setdefault((_normalized_external_id(c.external_station_id),c.anmsm_media_id),c)
+    rows=[]; station_rows=[]
     for source in stations:
-        mapping=mappings.get(source["external_station_id"].casefold()); resort=resorts.get(str(mapping.station_id)) if mapping else None
+        mapping=mappings.get(_normalized_external_id(source["external_station_id"])); resort=resorts.get(str(mapping.station_id)) if mapping else None
+        station_rows.append({"external_station_id":source["external_station_id"],
+            "anmsm_station_name":source["external_name"],"plans_detected":len(source["piste_maps"]),
+            "station_id":resort.id if resort else None,"station_name":resort.name if resort else None,
+            "mapping_status":"matched" if resort else "unmatched"})
         for media in source["piste_maps"]:
-            candidate=candidates.get((source["external_station_id"].casefold(),media["media_id"]))
+            candidate=candidates.get((_normalized_external_id(source["external_station_id"]),media["media_id"]))
             row={"external_station_id":source["external_station_id"],"anmsm_station_name":source["external_name"],
                  "anmsm_media_id":media["media_id"],"anmsm_title":media.get("title"),"anmsm_credit":media.get("credit"),
-                 "plan_type":media.get("plan_type"),"source_url":media["url"],"source_format":media.get("format"),
+                 "plan_type":media.get("plan_type"),"source_modified_at":media.get("modified_at"),
+                 "source_url":media["url"],"source_format":media.get("format"),
                  "station_id":resort.id if resort else None,"station_name":resort.name if resort else None,
                  "mapping_status":"matched" if resort else "unmatched","current_plan_url":resort.pistes_large_map_url if resort else None,
                  "candidate_id":None,"candidate_status":None,"candidate_preview_url":None,"candidate_original_url":None,
@@ -43,9 +52,9 @@ def workspace_data(stations):
             if candidate: row.update(_candidate_row(candidate)); row["preparation_required"]=False
             rows.append(row)
     statuses=Counter(r["candidate_status"] for r in rows)
-    return {"ok":True,"rows":rows,"stats":{"plans_detected":len(rows),
-        "stations_matched":len({r["external_station_id"] for r in rows if r["mapping_status"]=="matched"}),
-        "stations_unmatched":len({r["external_station_id"] for r in rows if r["mapping_status"]=="unmatched"}),
+    return {"ok":True,"stations":station_rows,"rows":rows,"stats":{"stations_detected":len(station_rows),"plans_detected":len(rows),
+        "stations_matched":sum(r["mapping_status"]=="matched" for r in station_rows),
+        "stations_unmatched":sum(r["mapping_status"]=="unmatched" for r in station_rows),
         "plans_ready":sum(bool(r["candidate_id"] and not r["error"]) for r in rows),
         "plans_to_prepare":sum(r["preparation_required"] for r in rows),"plans_approved":statuses["approved"],
         "errors":sum(bool(r["error"]) for r in rows)}}
@@ -54,7 +63,11 @@ def workspace_data(stations):
 def workspace():
     from app.services.anmsm_piste_maps import fetch_maps, LogoImportError
     try: return jsonify(workspace_data(fetch_maps()))
-    except LogoImportError as exc: return jsonify({"ok":False,"rows":[],"error":exc.code,"message":str(exc)}),502
+    except LogoImportError as exc:
+        payload={"ok":False,"error":exc.code,"message":str(exc)}
+        source_status=getattr(exc,"source_http_status",None)
+        if source_status is not None: payload["source_http_status"]=source_status
+        return jsonify(payload),502
 
 @bp_admin_piste_maps.post("/prepare")
 def prepare():
