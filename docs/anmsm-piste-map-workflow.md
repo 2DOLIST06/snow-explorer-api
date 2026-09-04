@@ -24,6 +24,13 @@ Docker installe explicitement `poppler-utils`. Les images produisent un WebP
 haute définition, sans recadrage, sans agrandissement et en conservant
 l'orientation et les proportions.
 
+Le Blueprint `render.yaml` impose le runtime Docker. Le build vérifie
+explicitement `pdfinfo` et `pdftoppm`, puis la commande de démarrage refait la
+vérification avant Gunicorn et écoute le port fourni par Render (`$PORT`). Un
+service Render historique configuré depuis le dashboard avec le runtime Python
+natif doit être rattaché à ce Blueprint, ou converti manuellement en service
+Docker : la seule présence du Dockerfile ne change pas son runtime.
+
 ## Modèle public et exploitation
 
 Le modal public consomme le champ canonique `resort.pistes_large_map_url`. La
