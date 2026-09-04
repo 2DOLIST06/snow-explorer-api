@@ -13,22 +13,20 @@ from app.services.anmsm_logos import LogoImportError
 from app.services.anmsm_piste_maps import PISTE_MAPS_FEED_URL, fetch_maps, parse_record
 
 
-# Shape returned by the ANMSM Espace neige Tourinsoft syndication.  In
-# particular, PLANPISTES is a dedicated media column inside Object; it is not
-# the generic image collection from the separate Media syndication.
-REAL_ESPACE_NEIGE_RECORD = {
-    "SyndicObjectID": "STATANMSM00000001",
-    "SyndicObjectName": "Libellé de syndication",
+# Real Donnees Stations/Tourinsoft V3 shape from the Monts Jura example.
+REAL_DONNEES_STATIONS_RECORD = {
+    "SyndicObjectID": "PARENT-OBJECT-ID",
+    "SyndicObjectName": "Monts Jura",
     "Object": {
-        "NOM": "Station réelle",
-        "PLANPISTES": [{
-            "MediaID": "a6b48780-7ec1-4b0a-a76d-abc123456789",
-            "Url": "https://anmsm.media.tourinsoft.eu/upload/plan-des-pistes.jpg",
-            "Titre": "Plan des pistes",
-            "Credit": "Office de tourisme",
-            "Extension": "JPG",
-            "DateModification": "2026-08-31T14:05:22.0000000+02:00",
-            "TypePlan": "Alpine ski map",
+        "NOM": "Monts Jura",
+        "PLANPISTESs": [{
+            "SyndicObjectId": "STATANMSM01010012",
+            "Plandespistes": {
+                "MediaID": "1ff8893b-e626-4801-9d3f-1b5af61cc825",
+                "Titre": "Plan des pistes hiver 2023-2024",
+                "Credit": "Monts Jura",
+                "Url": "https://anmsm.media.tourinsoft.eu/upload/MONTS-JURA-General-hiver-2023-2024-V7-HD.pdf",
+            },
         }],
         # A title must never turn an unrelated generic image into a piste map.
         "PHOTOS": [{"MediaID": "generic", "Url": "https://media/generic.jpg",
@@ -59,37 +57,37 @@ class AnmsmPisteMapFeedTests(unittest.TestCase):
         app.config["ANMSM_PISTE_MAPS_FEED_URL"] = configured
         return app
 
-    def test_parses_exact_espace_neige_plan_column(self):
-        station = parse_record(REAL_ESPACE_NEIGE_RECORD)
-        self.assertEqual(station["external_station_id"], "STATANMSM00000001")
-        self.assertEqual(station["external_name"], "Station réelle")
+    def test_parses_exact_monts_jura_nested_plan_collection(self):
+        station = parse_record(REAL_DONNEES_STATIONS_RECORD)
+        self.assertEqual(station["external_station_id"], "STATANMSM01010012")
+        self.assertEqual(station["external_name"], "Monts Jura")
         self.assertEqual(station["piste_maps"], [{
-            "media_id": "a6b48780-7ec1-4b0a-a76d-abc123456789",
-            "url": "https://anmsm.media.tourinsoft.eu/upload/plan-des-pistes.jpg",
-            "format": "jpeg", "title": "Plan des pistes",
-            "credit": "Office de tourisme",
-            "modified_at": "2026-08-31T14:05:22.0000000+02:00",
-            "plan_type": "Alpine ski map",
+            "media_id": "1ff8893b-e626-4801-9d3f-1b5af61cc825",
+            "url": "https://anmsm.media.tourinsoft.eu/upload/MONTS-JURA-General-hiver-2023-2024-V7-HD.pdf",
+            "format": "pdf", "title": "Plan des pistes hiver 2023-2024",
+            "credit": "Monts Jura", "modified_at": None, "plan_type": None,
         }])
 
-    def test_supports_alternate_dedicated_plan_des_pistes_column(self):
-        record = {"SyndicObjectID": "EN-2", "Object": {"NOM": "Second station",
-            "PLAN_DES_PISTES": {"ID": "pdf-2", "Url": "https://media/map.pdf",
-                                  "Format": "PDF", "Titre": "Original English map"},
-            "PHOTOS": [{"Url": "https://media/not-a-map.jpg", "Titre": "Piste map"}]}}
+    def test_supports_collection_at_root_when_object_envelope_is_absent(self):
+        record = {"NOM": "Second station", "PLANPISTESs": {
+            "SyndicObjectId": "EN-2", "Plandespistes": {
+                "ID": "pdf-2", "Url": "https://media/map.pdf", "Format": "PDF"}}}
         station = parse_record(record)
         self.assertEqual([media["media_id"] for media in station["piste_maps"]], ["pdf-2"])
         self.assertEqual(station["piste_maps"][0]["format"], "pdf")
 
-    def test_fetch_uses_espace_neige_and_reports_counts(self):
-        response = Response([REAL_ESPACE_NEIGE_RECORD])
+    def test_fetch_uses_donnees_stations_and_reports_counts(self):
+        station_without_plan = {"SyndicObjectID": "STAT-WITHOUT-PLAN",
+                                "Object": {"NOM": "No map"}}
+        response = Response([REAL_DONNEES_STATIONS_RECORD, station_without_plan])
         session = Mock(); session.get.return_value = response
         app = self.app()
         with app.app_context():
             result = fetch_maps(session)
         session.get.assert_called_once()
         self.assertEqual(session.get.call_args.args[0], PISTE_MAPS_FEED_URL)
-        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[1]["piste_maps"], [])
         self.assertTrue(response.closed)
 
     def test_missing_explicit_url_is_an_error(self):
@@ -102,7 +100,7 @@ class AnmsmPisteMapFeedTests(unittest.TestCase):
         cases = [
             (Response(status=503), "source_feed_http_error"),
             (Response(json_error=ValueError("bad JSON")), "invalid_feed_json"),
-            (Response([{"SyndicObjectID": "STAT1", "Object": {"PHOTOS": []}}]),
+            (Response([{"SyndicObjectID": "STAT1", "Object": {"PLANPISTES": []}}]),
              "invalid_feed_structure"),
             (Response([]), "invalid_feed_structure"),
         ]
@@ -124,7 +122,7 @@ class AnmsmPisteMapWorkspaceTests(unittest.TestCase):
         self.database.bind(MODELS); self.database.connect(); self.database.create_tables(MODELS)
         self.resort = Resort.create(id="station-1", name="Mapped station", slug="mapped-station")
         AnmsmStationMapping.create(station=self.resort, source="anmsm",
-                                   external_station_id="  statanmsm00000001  ", verified=True)
+                                   external_station_id="  statanmsm01010012  ", verified=True)
         app = Flask(__name__); app.register_blueprint(bp_admin_piste_maps)
         self.client = app.test_client()
 
@@ -133,11 +131,14 @@ class AnmsmPisteMapWorkspaceTests(unittest.TestCase):
 
     def test_workspace_matches_normalized_id_preserves_values_and_does_not_mutate(self):
         second = {"SyndicObjectID": "UNMATCHED", "Object": {"NOM": "Unmatched",
-            "PLANPISTES": [{"MediaID": "map-2", "Url": "https://media/map-2.pdf",
-                              "Extension": "PDF"}]}}
+            "PLANPISTESs": [{"SyndicObjectId": "UNMATCHED", "Plandespistes": {
+                "MediaID": "map-2", "Url": "https://media/map-2.pdf",
+                "Extension": "PDF"}}]}}
         before = {model: model.select().count() for model in MODELS}
         with patch("app.services.anmsm_piste_maps.fetch_maps",
-                   return_value=[parse_record(REAL_ESPACE_NEIGE_RECORD), parse_record(second)]), \
+                   return_value=[parse_record(REAL_DONNEES_STATIONS_RECORD), parse_record(second)]), \
+             patch("app.services.anmsm_piste_maps.download") as download, \
+             patch("app.services.anmsm_piste_maps.StationPisteMapCandidate.create") as create, \
              patch("app.routes.admin_piste_maps.s3.preview_url") as preview:
             response = self.client.get("/api/admin/anmsm/piste-maps/workspace")
 
@@ -150,12 +151,15 @@ class AnmsmPisteMapWorkspaceTests(unittest.TestCase):
         self.assertEqual(body["stats"]["plans_to_prepare"], 2)
         self.assertEqual(len(body["stations"]), 2)
         mapped = next(row for row in body["rows"] if row["mapping_status"] == "matched")
-        self.assertEqual(mapped["external_station_id"], "STATANMSM00000001")
-        self.assertEqual(mapped["source_modified_at"], "2026-08-31T14:05:22.0000000+02:00")
-        self.assertEqual(mapped["anmsm_title"], "Plan des pistes")
+        self.assertEqual(mapped["external_station_id"], "STATANMSM01010012")
+        self.assertEqual(mapped["anmsm_media_id"], "1ff8893b-e626-4801-9d3f-1b5af61cc825")
+        self.assertEqual(mapped["source_format"], "pdf")
+        self.assertEqual(mapped["anmsm_title"], "Plan des pistes hiver 2023-2024")
         self.assertEqual(AnmsmStationMapping.get().external_station_id,
-                         "  statanmsm00000001  ")
+                         "  statanmsm01010012  ")
         self.assertEqual({model: model.select().count() for model in MODELS}, before)
+        download.assert_not_called()
+        create.assert_not_called()
         preview.assert_not_called()
 
     def test_workspace_returns_explicit_upstream_http_status(self):

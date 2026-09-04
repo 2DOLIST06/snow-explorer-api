@@ -2,24 +2,20 @@
 
 ## Analyse de la source
 
-Le flux configuré est la syndication **Espace neige** déjà utilisée pour les
-stations (`ANMSM_PISTE_MAPS_FEED_URL`, avec repli sur `ANMSM_STATIONS_FEED_URL`).
-La valeur historique est la syndication Tourinsoft
+Le flux configuré est la syndication française **Données Stations**
+(`ANMSM_PISTE_MAPS_FEED_URL`). Sa valeur par défaut est la syndication Tourinsoft
 `343718C6-9088-4732-AA05-26695D1E3059`, en JSON et impérativement avec
-`refreshCache=0`. Le proxy réseau de l'environnement de développement a refusé
-la requête d'inspection le 3 septembre 2026 (HTTP 403 avant Tourinsoft). Il
-n'était donc pas honnête d'affirmer avoir observé des formats ou un champ
-« Média » distinct. Aucune récupération de production n'a été lancée.
+`refreshCache=0`.
 
 La structure prise en charge correspond à celle déjà vérifiée par l'intégration
 ANMSM : tableau racine (ou `value`, `items`, `results`), puis
-`SyndicObjectID`, `SyndicObjectName`, et un objet `Object`. Dans celui-ci,
-`NOM` porte le nom; les colonnes média explicitement exportées
-`PLANPISTES`/`PLAN_DES_PISTES` contiennent une liste de médias. Les champs lus
-sont `MediaID` (repli `ID`), `Url`, `Extension`/`Format`, `Titre`, `Credit`,
+`SyndicObjectID`, `SyndicObjectName`, et un objet `Object`. Le chemin documenté
+est exactement `Object.PLANPISTESs[].Plandespistes`; sans enveloppe `Object`, le
+parseur accepte `PLANPISTESs[].Plandespistes` à la racine. Chaque relation porte
+le `SyndicObjectId` de la station. Les champs média lus sont `MediaID` (repli
+`ID`), `Url`, `Extension`/`Format`, `Titre`, `Credit`,
 `DateModification`, et uniquement `TypePlan`/`Type` pour le type. Le titre ne
-sert jamais à déduire un type. `ANMSM_PISTE_MAP_FIELDS` permet d'indiquer les
-noms de colonnes confirmés sans changer le code.
+sert jamais à déduire un type.
 
 Les formats acceptés par sécurité sont JPEG, PNG, WebP et PDF. **Aucun format
 réellement rencontré n'a pu être certifié dans cet environnement**. Un PDF est
