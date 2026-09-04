@@ -286,21 +286,22 @@ class PisteMapConverterBoundaryTests(unittest.TestCase):
                 try: os.unlink(path)
                 except FileNotFoundError: pass
 
-    def test_pdfium_rejects_pdf_over_page_limit(self):
+    def test_pdfium_ignores_later_pages(self):
         from PIL import Image
-        app=Flask(__name__); app.config["ANMSM_PISTE_MAP_PDF_MAX_PAGES"]=1
+        app=Flask(__name__)
         source=tempfile.NamedTemporaryFile(delete=False,suffix=".pdf"); source.close()
         output=source.name+".webp"; pages=[Image.new("RGB",(100,100)) for _ in range(2)]
         try: pages[0].save(source.name,"PDF",save_all=True,append_images=pages[1:])
         finally:
             for page in pages: page.close()
         try:
-            with app.app_context(), self.assertRaises(LogoImportError) as raised:
-                _convert(source.name,output,"pdf")
-            self.assertEqual(raised.exception.code,"pdf_page_limit")
-            self.assertFalse(os.path.exists(output))
+            with app.app_context(): metadata=_convert(source.name,output,"pdf")
+            self.assertEqual((metadata["display_width"],metadata["display_height"]),(3000,3000))
+            self.assertLessEqual(metadata["display_width"]*metadata["display_height"],9_000_000)
         finally:
-            os.unlink(source.name)
+            for path in (source.name,output):
+                try: os.unlink(path)
+                except FileNotFoundError: pass
 
     def test_child_converter_failure_is_controlled(self):
         app=Flask(__name__); process=Mock(pid=123,returncode=2)
@@ -309,6 +310,24 @@ class PisteMapConverterBoundaryTests(unittest.TestCase):
              self.assertRaises(LogoImportError) as raised:
             _convert("in.pdf","out.webp","pdf")
         self.assertEqual(raised.exception.code,"pdf_conversion_failed")
+
+    def test_sigkill_is_reported_as_memory_limit(self):
+        app=Flask(__name__); process=Mock(pid=123,returncode=-__import__('signal').SIGKILL)
+        process.communicate.return_value=("","")
+        with app.app_context(), patch("app.services.anmsm_piste_maps.subprocess.Popen",return_value=process), \
+             self.assertRaises(LogoImportError) as raised:
+            _convert("in.pdf","out.webp","pdf")
+        self.assertEqual(raised.exception.code,"conversion_memory_limit")
+
+    def test_sigsegv_and_sigabrt_are_controlled(self):
+        for child_signal, code in ((__import__('signal').SIGSEGV,"conversion_sigsegv"),
+                                   (__import__('signal').SIGABRT,"conversion_sigabrt")):
+            process=Mock(pid=123,returncode=-child_signal); process.communicate.return_value=("","")
+            with self.subTest(signal=child_signal), Flask(__name__).app_context(), \
+                 patch("app.services.anmsm_piste_maps.subprocess.Popen",return_value=process), \
+                 self.assertRaises(LogoImportError) as raised:
+                _convert("in.pdf","out.webp","pdf")
+            self.assertEqual(raised.exception.code,code)
 
     def test_timeout_kills_isolated_process_group(self):
         app=Flask(__name__); app.config["ANMSM_CONVERSION_TIMEOUT"]=0.01
