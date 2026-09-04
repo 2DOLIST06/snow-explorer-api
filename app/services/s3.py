@@ -50,6 +50,21 @@ def put_file(key, path, content_type):
     return public_url(key)
 
 
+def download_file(key, path, maximum_size):
+    """Download a bounded private object to disk without buffering it in RAM."""
+    remote = client()
+    metadata = remote.head_object(Bucket=bucket(), Key=key)
+    size = int(metadata.get("ContentLength") or 0)
+    if size <= 0 or size > maximum_size:
+        raise ValueError("stored_object_too_large")
+    with open(path, "wb") as body:
+        remote.download_fileobj(bucket(), key, body)
+    actual_size = os.path.getsize(path)
+    if actual_size != size or actual_size > maximum_size:
+        raise ValueError("stored_object_size_mismatch")
+    return actual_size
+
+
 def validate_object(key):
     metadata = client().head_object(Bucket=bucket(), Key=key)
     return int(metadata.get("ContentLength") or 0) > 0

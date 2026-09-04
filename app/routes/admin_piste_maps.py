@@ -48,14 +48,16 @@ def workspace_data(stations):
                  "station_id":resort.id if resort else None,"station_name":resort.name if resort else None,
                  "mapping_status":"matched" if resort else "unmatched","current_plan_url":resort.pistes_large_map_url if resort else None,
                  "candidate_id":None,"candidate_status":None,"candidate_preview_url":None,"candidate_original_url":None,
-                 "warnings":[],"preparation_required":True,"error":None}
-            if candidate: row.update(_candidate_row(candidate)); row["preparation_required"]=False
+                 "warnings":[],"preparation_required":bool(resort),"error":None}
+            if candidate:
+                row.update(_candidate_row(candidate))
+                row["preparation_required"]=bool(resort and candidate.status=="pending" and not candidate.display_s3_key)
             rows.append(row)
     statuses=Counter(r["candidate_status"] for r in rows)
     return {"ok":True,"stations":station_rows,"rows":rows,"stats":{"stations_detected":len(station_rows),"plans_detected":len(rows),
         "stations_matched":sum(r["mapping_status"]=="matched" for r in station_rows),
         "stations_unmatched":sum(r["mapping_status"]=="unmatched" for r in station_rows),
-        "plans_ready":sum(bool(r["candidate_id"] and not r["error"]) for r in rows),
+        "plans_ready":sum(bool(r["candidate_id"] and r["candidate_preview_url"] and not r["error"]) for r in rows),
         "plans_to_prepare":sum(r["preparation_required"] for r in rows),"plans_approved":statuses["approved"],
         "errors":sum(bool(r["error"]) for r in rows)}}
 
@@ -94,7 +96,8 @@ def _approve(candidate_id):
     candidate=StationPisteMapCandidate.get_or_none(StationPisteMapCandidate.id==candidate_id)
     if not candidate:return {"candidate_id":candidate_id,"ok":False,"error":"candidate_not_found"}
     if candidate.status=="approved":return {"candidate_id":candidate_id,"ok":True,"status":"approved","unchanged":True}
-    key=candidate.display_s3_key or (candidate.original_s3_key if candidate.source_format!="pdf" else None)
+    if candidate.status!="pending":return {"candidate_id":candidate_id,"ok":False,"error":"candidate_not_pending"}
+    key=candidate.display_s3_key
     if not key or not s3.validate_object(key):return {"candidate_id":candidate_id,"ok":False,"error":"invalid_candidate_object"}
     resort=None
     try:
