@@ -17,10 +17,11 @@ le `SyndicObjectId` de la station. Les champs média lus sont `MediaID` (repli
 `DateModification`, et uniquement `TypePlan`/`Type` pour le type. Le titre ne
 sert jamais à déduire un type.
 
-Les formats acceptés par sécurité sont JPEG, PNG, WebP et PDF. **Aucun format
-réellement rencontré n'a pu être certifié dans cet environnement**. Un PDF est
-conservé comme original, mais n'est pas rendu avant inspection réelle du flux;
-il n'est donc pas publiable dans le modal image. Les images produisent un WebP
+Les formats acceptés par sécurité sont JPEG, PNG, WebP et PDF. Les PDF sont
+rendus avec la roue Python PyMuPDF dans le même processus enfant isolé que le
+décodeur Pillow, jamais dans Gunicorn. PyMuPDF est installé par la commande de
+build Python habituelle `pip install -r requirements.txt`; aucune dépendance
+système ni migration du service Render vers Docker n'est requise. Les images produisent un WebP
 haute définition, sans recadrage, sans agrandissement et en conservant
 l'orientation et les proportions.
 
@@ -43,6 +44,11 @@ Les objets sont immuables sous `anmsm/piste-maps/<station>/<media>/<sha256>/`.
 Original et éventuel WebP d'affichage sont conservés. Les clés seules sont
 persistées; les aperçus privés sont présignés à la demande. Aucun chemin de ce
 workflow n'appelle une suppression S3.
+
+La publication exige toujours `display_s3_key` et écrit son URL publique dans
+`resort.pistes_large_map_url`. Le PDF original n'est donc jamais envoyé au modal.
+La valeur précédente reste dans `previous_plan_url`/`previous_plan_s3_key` du
+candidat. Chaque candidat est publié dans une transaction limitée à sa station.
 
 La table n'est volontairement pas ajoutée à `create_tables`: exécuter
 manuellement le script additif

@@ -1,3 +1,6 @@
+import json
+import os
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -10,7 +13,7 @@ from app.models.resort import Resort
 from app.models.station_piste_map_candidate import StationPisteMapCandidate
 from app.routes.admin_piste_maps import bp_admin_piste_maps
 from app.services.anmsm_logos import LogoImportError
-from app.services.anmsm_piste_maps import PISTE_MAPS_FEED_URL, fetch_maps, parse_record
+from app.services.anmsm_piste_maps import PISTE_MAPS_FEED_URL, _convert, fetch_maps, parse_record
 
 
 # Real Donnees Stations/Tourinsoft V3 shape from the Monts Jura example.
@@ -148,7 +151,9 @@ class AnmsmPisteMapWorkspaceTests(unittest.TestCase):
         self.assertEqual(body["stats"]["plans_detected"], 2)
         self.assertEqual(body["stats"]["stations_matched"], 1)
         self.assertEqual(body["stats"]["stations_unmatched"], 1)
-        self.assertEqual(body["stats"]["plans_to_prepare"], 2)
+        self.assertEqual(body["stats"]["plans_to_prepare"], 1)
+        unmatched = next(row for row in body["rows"] if row["mapping_status"] == "unmatched")
+        self.assertFalse(unmatched["preparation_required"])
         self.assertEqual(len(body["stations"]), 2)
         mapped = next(row for row in body["rows"] if row["mapping_status"] == "matched")
         self.assertEqual(mapped["external_station_id"], "STATANMSM01010012")
@@ -175,6 +180,153 @@ class AnmsmPisteMapWorkspaceTests(unittest.TestCase):
             "source_http_status": 503,
         })
         self.assertEqual(StationPisteMapCandidate.select().count(), 0)
+
+    def _candidate(self, **changes):
+        values=dict(station=self.resort, external_station_id="STATANMSM01010012",
+            anmsm_media_id="1ff8893b-e626-4801-9d3f-1b5af61cc825", source_url="https://media/map.pdf",
+            source_checksum="a"*64, source_format="pdf", source_size_bytes=100,
+            original_s3_key="maps/original.pdf", display_s3_key=None, warnings='["pdf_display_not_generated"]')
+        values.update(changes); return StationPisteMapCandidate.create(**values)
+
+    def test_resume_pdf_uses_s3_original_without_duplicate_or_source_download(self):
+        candidate=self._candidate(); paths=[]
+        def stored(key,path,limit):
+            paths.append(path); open(path,"wb").write(b"%PDF-valid"); return 10
+        def converted(source,output,fmt):
+            paths.append(output); open(output,"wb").write(b"webp")
+            return {"source_format":"pdf","source_width":4000,"source_height":2800,
+                    "display_width":4000,"display_height":2800,"display_size_bytes":4,"warnings":[]}
+        with patch("app.services.anmsm_piste_maps.fetch_maps",return_value=[parse_record(REAL_DONNEES_STATIONS_RECORD)]), \
+             patch("app.services.anmsm_piste_maps.download") as source_download, \
+             patch("app.services.anmsm_piste_maps.s3.download_file",side_effect=stored), \
+             patch("app.services.anmsm_piste_maps._convert",side_effect=converted), \
+             patch("app.services.anmsm_piste_maps.s3.put_file") as upload, \
+             patch("app.routes.admin_piste_maps.s3.preview_url",side_effect=lambda key:f"https://signed/{key}"):
+            response=self.client.post("/api/admin/anmsm/piste-maps/prepare",json={
+                "external_station_id":"STATANMSM01010012","anmsm_media_id":candidate.anmsm_media_id})
+        self.assertEqual(response.status_code,200); self.assertEqual(StationPisteMapCandidate.select().count(),1)
+        source_download.assert_not_called(); upload.assert_called_once()
+        candidate=StationPisteMapCandidate.get_by_id(candidate.id)
+        self.assertEqual(candidate.original_s3_key,"maps/original.pdf")
+        self.assertEqual(candidate.display_s3_key,"maps/display.webp")
+        self.assertEqual(candidate.warning_codes(),[])
+        self.assertEqual(response.get_json()["row"]["candidate_preview_url"],"https://signed/maps/display.webp")
+        self.assertTrue(all(not os.path.exists(path) for path in paths))
+
+    def test_new_pdf_keeps_original_and_creates_webp_display(self):
+        source=tempfile.NamedTemporaryFile(delete=False); source.write(b"%PDF-valid"); source.close()
+        def converted(src,out,fmt):
+            open(out,"wb").write(b"webp")
+            return {"source_format":"pdf","source_width":5000,"source_height":3000,
+                    "display_width":5000,"display_height":3000,"display_size_bytes":4,"warnings":[]}
+        with patch("app.services.anmsm_piste_maps.fetch_maps",return_value=[parse_record(REAL_DONNEES_STATIONS_RECORD)]), \
+             patch("app.services.anmsm_piste_maps.download",return_value=(source.name,10,"application/pdf","b"*64)), \
+             patch("app.services.anmsm_piste_maps._convert",side_effect=converted), \
+             patch("app.services.anmsm_piste_maps.s3.put_file") as upload, \
+             patch("app.routes.admin_piste_maps.s3.preview_url",side_effect=lambda key:f"https://signed/{key}"):
+            response=self.client.post("/api/admin/anmsm/piste-maps/prepare",json={
+                "external_station_id":"STATANMSM01010012","anmsm_media_id":"1ff8893b-e626-4801-9d3f-1b5af61cc825"})
+        self.assertEqual(response.status_code,200); candidate=StationPisteMapCandidate.get()
+        self.assertTrue(candidate.original_s3_key.endswith("/original.pdf")); self.assertTrue(candidate.display_s3_key.endswith("/display.webp"))
+        self.assertEqual(candidate.display_width,5000); self.assertEqual(upload.call_count,2)
+        self.assertFalse(os.path.exists(source.name))
+
+    def test_converter_error_leaves_resumable_candidate_and_original_untouched(self):
+        candidate=self._candidate()
+        with patch("app.services.anmsm_piste_maps.fetch_maps",return_value=[parse_record(REAL_DONNEES_STATIONS_RECORD)]), \
+             patch("app.services.anmsm_piste_maps.s3.download_file",side_effect=ValueError("bad")), \
+             patch("app.services.anmsm_piste_maps.download") as source_download:
+            response=self.client.post("/api/admin/anmsm/piste-maps/prepare",json={
+                "external_station_id":"STATANMSM01010012","anmsm_media_id":candidate.anmsm_media_id})
+        self.assertEqual(response.status_code,422); self.assertEqual(response.get_json()["error"],"stored_original_unavailable")
+        source_download.assert_not_called(); self.assertEqual(StationPisteMapCandidate.select().count(),1)
+        self.assertEqual(StationPisteMapCandidate.get().original_s3_key,"maps/original.pdf")
+
+    def test_pdf_without_display_cannot_be_published_and_old_plan_is_unchanged(self):
+        self.resort.pistes_large_map_url="https://old/map.webp"; self.resort.save(); candidate=self._candidate()
+        with patch("app.routes.admin_piste_maps.s3.validate_object") as validate:
+            response=self.client.post("/api/admin/anmsm/piste-maps/bulk-approve",json={"candidate_ids":[candidate.id]})
+        self.assertEqual(response.get_json()["results"][0]["error"],"invalid_candidate_object")
+        validate.assert_not_called(); self.assertEqual(Resort.get_by_id(self.resort.id).pistes_large_map_url,"https://old/map.webp")
+
+    def test_publish_writes_only_requested_station_display_and_preserves_previous(self):
+        self.resort.pistes_large_map_url="https://old/map.webp"; self.resort.save()
+        other=Resort.create(id="station-2",name="Other",slug="other",pistes_large_map_url="https://old/other")
+        candidate=self._candidate(display_s3_key="maps/display.webp")
+        with patch("app.routes.admin_piste_maps.s3.validate_object",return_value=True), \
+             patch("app.routes.admin_piste_maps.s3.public_url",return_value="https://public/display.webp"), \
+             patch("app.routes.admin_piste_maps.invalidate_station"):
+            response=self.client.post("/api/admin/anmsm/piste-maps/bulk-approve",json={"candidate_ids":[candidate.id]})
+        self.assertEqual(response.status_code,200); candidate=StationPisteMapCandidate.get_by_id(candidate.id)
+        self.assertEqual(candidate.previous_plan_url,"https://old/map.webp")
+        self.assertEqual(Resort.get_by_id(self.resort.id).pistes_large_map_url,"https://public/display.webp")
+        self.assertEqual(Resort.get_by_id(other.id).pistes_large_map_url,"https://old/other")
+
+
+class PisteMapConverterBoundaryTests(unittest.TestCase):
+    def test_pymupdf_renders_only_first_page_to_webp(self):
+        import pymupdf
+        from PIL import Image
+        app=Flask(__name__); app.config.update(
+            ANMSM_PISTE_MAP_DISPLAY_MAX_DIMENSION=1200,
+            ANMSM_PISTE_MAP_MAX_PIXELS=2_000_000)
+        source=tempfile.NamedTemporaryFile(delete=False,suffix=".pdf"); source.close()
+        output=source.name+".webp"
+        document=pymupdf.open()
+        for label in ("FIRST PAGE", "SECOND PAGE"):
+            page=document.new_page(width=600,height=400)
+            page.insert_text((72,100),label,fontsize=36)
+        document.save(source.name); document.close()
+        try:
+            with app.app_context(): metadata=_convert(source.name,output,"pdf")
+            self.assertEqual(metadata["source_format"],"pdf")
+            self.assertEqual((metadata["display_width"],metadata["display_height"]),(1200,800))
+            self.assertGreater(metadata["display_size_bytes"],0)
+            with Image.open(output) as display: self.assertEqual(display.format,"WEBP")
+        finally:
+            for path in (source.name,output):
+                try: os.unlink(path)
+                except FileNotFoundError: pass
+
+    def test_pymupdf_rejects_pdf_over_page_limit(self):
+        import pymupdf
+        app=Flask(__name__); app.config["ANMSM_PISTE_MAP_PDF_MAX_PAGES"]=1
+        source=tempfile.NamedTemporaryFile(delete=False,suffix=".pdf"); source.close()
+        output=source.name+".webp"; document=pymupdf.open()
+        document.new_page(); document.new_page(); document.save(source.name); document.close()
+        try:
+            with app.app_context(), self.assertRaises(LogoImportError) as raised:
+                _convert(source.name,output,"pdf")
+            self.assertEqual(raised.exception.code,"pdf_page_limit")
+            self.assertFalse(os.path.exists(output))
+        finally:
+            os.unlink(source.name)
+
+    def test_child_converter_failure_is_controlled(self):
+        app=Flask(__name__); process=Mock(pid=123,returncode=2)
+        process.communicate.return_value=(json.dumps({"ok":False,"error":"pdf_conversion_failed"}),"")
+        with app.app_context(), patch("app.services.anmsm_piste_maps.subprocess.Popen",return_value=process), \
+             self.assertRaises(LogoImportError) as raised:
+            _convert("in.pdf","out.webp","pdf")
+        self.assertEqual(raised.exception.code,"pdf_conversion_failed")
+
+    def test_timeout_kills_isolated_process_group(self):
+        app=Flask(__name__); app.config["ANMSM_CONVERSION_TIMEOUT"]=0.01
+        process=Mock(pid=123,returncode=None); process.communicate.side_effect=[__import__('subprocess').TimeoutExpired("worker",.01),("","")]
+        with app.app_context(), patch("app.services.anmsm_piste_maps.subprocess.Popen",return_value=process), \
+             patch("app.services.anmsm_piste_maps.os.killpg") as kill, self.assertRaises(LogoImportError) as raised:
+            _convert("in.pdf","out.webp","pdf")
+        self.assertEqual(raised.exception.code,"conversion_timeout"); kill.assert_called_once()
+
+    def test_invalid_pdf_is_reported_by_child(self):
+        app=Flask(__name__); source=tempfile.NamedTemporaryFile(delete=False,suffix=".pdf")
+        source.write(b"not a pdf"); source.close(); output=source.name+".webp"
+        try:
+            with app.app_context(), self.assertRaises(LogoImportError) as raised: _convert(source.name,output,"pdf")
+            self.assertEqual(raised.exception.code,"invalid_pdf")
+            self.assertFalse(os.path.exists(output))
+        finally:
+            os.unlink(source.name)
 
 
 if __name__ == "__main__":
