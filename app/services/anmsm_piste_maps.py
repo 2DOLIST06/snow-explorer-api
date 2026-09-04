@@ -1,5 +1,5 @@
 """Safe, one-at-a-time ingestion of ANMSM piste maps (never logos)."""
-import hashlib, json, os, subprocess, sys, tempfile
+import hashlib, json, os, signal, subprocess, sys, tempfile
 from pathlib import Path
 
 import requests
@@ -130,24 +130,62 @@ def download(url, session=requests):
     finally:
         if response is not None: response.close()
 
-def _convert(source, output):
+def _convert(source, output, source_format=None):
     cmd=[sys.executable,"-m","app.services.anmsm_piste_map_worker",source,output,
          "--max-pixels",str(int(current_app.config.get("ANMSM_PISTE_MAP_MAX_PIXELS",120_000_000))),
          "--max-dimension",str(int(current_app.config.get("ANMSM_PISTE_MAP_DISPLAY_MAX_DIMENSION",6000))),
          "--output-limit",str(int(current_app.config.get("ANMSM_PISTE_MAP_DISPLAY_MAX_BYTES",12*1024*1024))),
+         "--max-pages",str(int(current_app.config.get("ANMSM_PISTE_MAP_PDF_MAX_PAGES",25))),
          "--memory-mb",str(int(current_app.config.get("ANMSM_CONVERSION_MEMORY_MB",768)))]
-    try: result=subprocess.run(cmd,capture_output=True,text=True,timeout=float(current_app.config.get("ANMSM_CONVERSION_TIMEOUT",30)),check=False)
-    except subprocess.TimeoutExpired as exc: raise LogoImportError("conversion_timeout","Map conversion timed out") from exc
+    if source_format: cmd.extend(["--source-format",source_format])
+    process=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)
+    try: stdout,stderr=process.communicate(timeout=float(current_app.config.get("ANMSM_CONVERSION_TIMEOUT",30)))
+    except subprocess.TimeoutExpired as exc:
+        os.killpg(process.pid,signal.SIGKILL); process.communicate()
+        raise LogoImportError("conversion_timeout","Map conversion timed out") from exc
+    result=subprocess.CompletedProcess(cmd,process.returncode,stdout,stderr)
     if result.returncode<0: raise LogoImportError("conversion_interrupted","Map conversion was interrupted")
     try: payload=json.loads(result.stdout)
     except ValueError as exc: raise LogoImportError("conversion_interrupted","Invalid converter response") from exc
     if result.returncode or not payload.get("ok"): raise LogoImportError(payload.get("error","conversion_interrupted"),"Map conversion failed")
     return payload["metadata"]
 
+def _temporary(prefix, suffix=""):
+    handle=tempfile.NamedTemporaryFile(prefix=prefix,suffix=suffix,delete=False); handle.close()
+    return handle.name
+
+def _resume_pdf(candidate):
+    """Fill only the missing display object, using the immutable S3 original."""
+    source=_temporary("anmsm-map-s3-", ".pdf"); display=_temporary("anmsm-map-display-", ".webp")
+    try:
+        limit=int(current_app.config.get("ANMSM_PISTE_MAP_MAX_DOWNLOAD_BYTES") or 40*1024*1024)
+        try: s3.download_file(candidate.original_s3_key,source,limit)
+        except (ValueError, OSError) as exc: raise LogoImportError("stored_original_unavailable","Stored PDF original is unusable") from exc
+        metadata=_convert(source,display,"pdf"); prefix=candidate.original_s3_key.rsplit("/",1)[0]
+        display_key=f"{prefix}/display.webp"; s3.put_file(display_key,display,"image/webp")
+        candidate.display_s3_key=display_key; candidate.display_width=metadata["display_width"]
+        candidate.display_height=metadata["display_height"]; candidate.display_size_bytes=metadata["display_size_bytes"]
+        candidate.source_width=metadata["source_width"]; candidate.source_height=metadata["source_height"]
+        candidate.warnings=json.dumps([x for x in candidate.warning_codes() if x!="pdf_display_not_generated"])
+        candidate.error_code=None; candidate.error_message=None; candidate.updated_at=utcnow(); candidate.save()
+        return candidate
+    finally:
+        for path in (source,display):
+            try: os.unlink(path)
+            except FileNotFoundError: pass
+
 def prepare(external_id, media_id, session=requests):
     station,media=find_media(external_id,media_id,session)
-    mapping=AnmsmStationMapping.get_or_none((AnmsmStationMapping.source=="anmsm") & (AnmsmStationMapping.external_station_id==station["external_station_id"]) & (AnmsmStationMapping.verified==True))
+    mapping=next((m for m in AnmsmStationMapping.select().where(
+        (AnmsmStationMapping.source=="anmsm")&(AnmsmStationMapping.verified==True))
+        if m.external_station_id.strip().casefold()==station["external_station_id"].strip().casefold()),None)
     if not mapping: raise LogoImportError("station_unmatched","Confirm the existing station mapping first")
+    resumable=(StationPisteMapCandidate.select().where(
+        (StationPisteMapCandidate.station==mapping.station_id)&(StationPisteMapCandidate.anmsm_media_id==media_id)&
+        (StationPisteMapCandidate.status=="pending")&StationPisteMapCandidate.original_s3_key.is_null(False)&
+        StationPisteMapCandidate.display_s3_key.is_null(True)
+    ).order_by(StationPisteMapCandidate.updated_at.desc()).first())
+    if resumable and resumable.source_format=="pdf": return _resume_pdf(resumable),False
     source=display=None
     try:
         source,size,mime,checksum=download(media["url"],session)
@@ -157,15 +195,10 @@ def prepare(external_id, media_id, session=requests):
         original_key=f"{prefix}/original.{EXTENSIONS[fmt]}"
         metadata={"source_format":fmt,"source_width":None,"source_height":None,"display_width":None,"display_height":None,"display_size_bytes":None,"warnings":[]}
         display_key=None
-        if fmt in {"jpeg","png","webp"}:
+        if fmt in {"jpeg","png","webp","pdf"}:
             with tempfile.NamedTemporaryFile(prefix="anmsm-map-display-",suffix=".webp",delete=False) as out: display=out.name
-            metadata=_convert(source,display); display_key=f"{prefix}/display.webp"
-        # Real-feed inspection must precede PDF rendering; retain PDF original only.
-        elif fmt=="pdf":
-            with open(source,"rb") as handle:
-                if handle.read(5) != b"%PDF-": raise LogoImportError("invalid_pdf","Invalid PDF signature")
-            metadata["warnings"]=["pdf_display_not_generated"]
-        # Upload only after the isolated decoder (or PDF signature check) has
+            metadata=_convert(source,display,fmt); display_key=f"{prefix}/display.webp"
+        # Upload only after the isolated decoder has
         # accepted the source. No corrupt source is knowingly placed in S3.
         s3.put_file(original_key,source,mime)
         if display_key: s3.put_file(display_key,display,"image/webp")
