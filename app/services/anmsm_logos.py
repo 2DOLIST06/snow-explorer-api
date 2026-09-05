@@ -379,8 +379,11 @@ def sync(cursor=None, batch_size=DEFAULT_BATCH_SIZE, session=requests):
     has_more = len(mappings) > batch_size
     mappings = mappings[:batch_size]
     feed_started = time.monotonic()
-    by_external_id = ({item["external_station_id"]: item for item in fetch_stations(session)}
-                      if mappings else {})
+    feed = fetch_stations(session) if mappings else []
+    if mappings:
+        from app.services.anmsm_snapshots import record_logo_snapshot
+        record_logo_snapshot(feed)
+    by_external_id = {item["external_station_id"]: item for item in feed}
     fetch_feed_ms = _milliseconds(feed_started) if mappings else 0
     results = []
     for mapping in mappings:

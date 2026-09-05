@@ -64,7 +64,13 @@ def workspace_data(stations):
 @bp_admin_piste_maps.get("/workspace")
 def workspace():
     from app.services.anmsm_piste_maps import fetch_maps, LogoImportError
-    try: return jsonify(workspace_data(fetch_maps()))
+    try:
+        stations = fetch_maps()
+        # fetch_maps returns only after the complete Donnees Stations response
+        # has passed its HTTP, JSON and PLANPISTESs structure checks.
+        from app.services.anmsm_snapshots import record_piste_map_snapshot
+        record_piste_map_snapshot(stations, complete=True)
+        return jsonify(workspace_data(stations))
     except LogoImportError as exc:
         payload={"ok":False,"error":exc.code,"message":str(exc)}
         source_status=getattr(exc,"source_http_status",None)
