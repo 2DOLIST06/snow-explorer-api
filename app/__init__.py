@@ -18,6 +18,7 @@ from app.models.ski_pass import SkiPassSeason, SkiPassPeriod, SkiPassProduct, Sk
 from app.models.anmsm_station_mapping import AnmsmStationMapping
 from app.models.station_logo_candidate import StationLogoCandidate
 from app.models.station_piste_map_candidate import StationPisteMapCandidate
+from app.models.anmsm_station_snapshot import AnmsmStationSnapshot
 from app.routes.public_resorts import bp_public, bp_public_stations
 from app.routes.admin_resorts import bp_admin
 from app.routes.stations_widgets import bp_forfaits, bp_widgets
@@ -34,6 +35,7 @@ from app.routes.admin_cache import bp_admin_cache
 from app.routes.admin_station_logos import bp_admin_station_logos
 from app.routes.admin_anmsm_mappings import bp_admin_anmsm_mappings
 from app.routes.admin_piste_maps import bp_admin_piste_maps
+from app.routes.admin_anmsm_coverage import bp_admin_anmsm_coverage
 from app.routes.ski_passes import (
     bp_admin_ski_passes, bp_admin_station_ski_passes, bp_public_station_ski_passes,
     bp_ski_passes,
@@ -169,7 +171,8 @@ def create_app(config=None):
         db.create_tables([Region, Resort, Piste, Lift, ResortMap, StationWidgets, ResortImportHistory,
                           AdminUser, AdminSession, AdminLoginAttempt, SkiPassSeason,
                           SkiPassPeriod, SkiPassProduct, SkiPassPrice,
-                          AnmsmStationMapping, StationLogoCandidate])
+                          AnmsmStationMapping, StationLogoCandidate,
+                          StationPisteMapCandidate, AnmsmStationSnapshot])
         db.close()
         # ``close()`` normally returns the connection to the pool.  Startup may
         # happen in a Gunicorn master with --preload, so do not leave a socket
@@ -194,6 +197,7 @@ def create_app(config=None):
     app.register_blueprint(bp_admin_station_logos)
     app.register_blueprint(bp_admin_anmsm_mappings)
     app.register_blueprint(bp_admin_piste_maps)
+    app.register_blueprint(bp_admin_anmsm_coverage)
     app.register_blueprint(bp_ski_passes)
     app.register_blueprint(bp_public_station_ski_passes)
     app.register_blueprint(bp_admin_ski_passes)

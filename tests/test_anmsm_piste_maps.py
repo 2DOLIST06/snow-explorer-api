@@ -9,6 +9,7 @@ from peewee import SqliteDatabase
 
 from app.models.admin_user import AdminUser
 from app.models.anmsm_station_mapping import AnmsmStationMapping
+from app.models.anmsm_station_snapshot import AnmsmStationSnapshot
 from app.models.resort import Resort
 from app.models.station_piste_map_candidate import StationPisteMapCandidate
 from app.routes.admin_piste_maps import bp_admin_piste_maps
@@ -116,7 +117,8 @@ class AnmsmPisteMapFeedTests(unittest.TestCase):
                 self.assertTrue(response.closed)
 
 
-MODELS = [Resort, AdminUser, AnmsmStationMapping, StationPisteMapCandidate]
+MODELS = [Resort, AdminUser, AnmsmStationMapping, AnmsmStationSnapshot,
+          StationPisteMapCandidate]
 
 
 class AnmsmPisteMapWorkspaceTests(unittest.TestCase):
@@ -132,12 +134,11 @@ class AnmsmPisteMapWorkspaceTests(unittest.TestCase):
     def tearDown(self):
         self.database.drop_tables(MODELS); self.database.close()
 
-    def test_workspace_matches_normalized_id_preserves_values_and_does_not_mutate(self):
+    def test_workspace_matches_normalized_id_and_records_complete_observations(self):
         second = {"SyndicObjectID": "UNMATCHED", "Object": {"NOM": "Unmatched",
             "PLANPISTESs": [{"SyndicObjectId": "UNMATCHED", "Plandespistes": {
                 "MediaID": "map-2", "Url": "https://media/map-2.pdf",
                 "Extension": "PDF"}}]}}
-        before = {model: model.select().count() for model in MODELS}
         with patch("app.services.anmsm_piste_maps.fetch_maps",
                    return_value=[parse_record(REAL_DONNEES_STATIONS_RECORD), parse_record(second)]), \
              patch("app.services.anmsm_piste_maps.download") as download, \
@@ -162,7 +163,12 @@ class AnmsmPisteMapWorkspaceTests(unittest.TestCase):
         self.assertEqual(mapped["anmsm_title"], "Plan des pistes hiver 2023-2024")
         self.assertEqual(AnmsmStationMapping.get().external_station_id,
                          "  statanmsm01010012  ")
-        self.assertEqual({model: model.select().count() for model in MODELS}, before)
+        snapshots = {row.external_station_id: row for row in AnmsmStationSnapshot.select()}
+        self.assertEqual(set(snapshots), {"STATANMSM01010012", "UNMATCHED"})
+        self.assertTrue(snapshots["STATANMSM01010012"].piste_map_available)
+        self.assertTrue(snapshots["STATANMSM01010012"].piste_map_observation_complete)
+        self.assertTrue(snapshots["UNMATCHED"].piste_map_available)
+        self.assertEqual(StationPisteMapCandidate.select().count(), 0)
         download.assert_not_called()
         create.assert_not_called()
         preview.assert_not_called()
@@ -180,6 +186,50 @@ class AnmsmPisteMapWorkspaceTests(unittest.TestCase):
             "source_http_status": 503,
         })
         self.assertEqual(StationPisteMapCandidate.select().count(), 0)
+
+    def test_failed_catalogue_does_not_replace_previous_observation(self):
+        observed = AnmsmStationSnapshot.create(
+            external_station_id="OLD", station_name="Old", piste_map_available=True,
+            piste_map_url="https://media/old.pdf", piste_map_observation_complete=True,
+            piste_map_seen_at="2026-09-01T00:00:00+00:00",
+            station_catalog_seen_at="2026-09-01T00:00:00+00:00",
+            last_seen_at="2026-09-01T00:00:00+00:00")
+        error = LogoImportError("source_feed_request_error", "failed")
+        with patch("app.services.anmsm_piste_maps.fetch_maps", side_effect=error):
+            response = self.client.get("/api/admin/anmsm/piste-maps/workspace")
+        self.assertEqual(response.status_code, 502)
+        observed = AnmsmStationSnapshot.get_by_id("OLD")
+        self.assertTrue(observed.piste_map_available)
+        self.assertEqual(observed.piste_map_url, "https://media/old.pdf")
+
+    def test_complete_catalogue_records_station_without_plan_as_unavailable(self):
+        without_plan = {"external_station_id": "EMPTY", "external_name": "Empty",
+                        "piste_maps": []}
+        with patch("app.services.anmsm_piste_maps.fetch_maps", return_value=[without_plan]), \
+             patch("app.routes.admin_piste_maps.workspace_data", return_value={"ok": True}):
+            response = self.client.get("/api/admin/anmsm/piste-maps/workspace")
+        self.assertEqual(response.status_code, 200)
+        snapshot = AnmsmStationSnapshot.get_by_id("EMPTY")
+        self.assertFalse(snapshot.piste_map_available)
+        self.assertTrue(snapshot.piste_map_observation_complete)
+        self.assertIsNotNone(snapshot.station_catalog_seen_at)
+
+    def test_multiple_media_create_one_observation_without_preparation(self):
+        station = {"external_station_id": "MULTI", "external_name": "Multi",
+                   "piste_maps": [
+                       {"media_id": "one", "url": "https://media/one.pdf"},
+                       {"media_id": "two", "url": "https://media/two.pdf"},
+                   ]}
+        with patch("app.services.anmsm_piste_maps.fetch_maps", return_value=[station]), \
+             patch("app.routes.admin_piste_maps.workspace_data", return_value={"ok": True}), \
+             patch("app.services.anmsm_piste_maps.prepare") as prepare, \
+             patch("app.routes.admin_piste_maps._approve") as approve:
+            response = self.client.get("/api/admin/anmsm/piste-maps/workspace")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(AnmsmStationSnapshot.select().count(), 1)
+        self.assertEqual(AnmsmStationSnapshot.get().piste_map_url,
+                         "https://media/one.pdf")
+        prepare.assert_not_called(); approve.assert_not_called()
 
     def _candidate(self, **changes):
         values=dict(station=self.resort, external_station_id="STATANMSM01010012",
