@@ -19,6 +19,14 @@ class ConversionError(ValueError):
     """An expected, safe-to-report conversion failure."""
 
 
+PROBE_SIZE = 1024
+CONTENT_FRACTION = 0.88
+
+
+class ConversionError(ValueError):
+    """An expected, safe-to-report conversion failure."""
+
+
 def _limit(memory_mb):
     if hasattr(resource, "RLIMIT_AS"):
         limit = memory_mb * 1024 * 1024
