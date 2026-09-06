@@ -137,7 +137,8 @@ def _convert_subprocess(source_path, output_path):
         code = payload.get("error", "conversion_interrupted")
         allowed = {"unsupported_format", "unreadable_dimensions", "excessive_dimensions",
                    "memory_limit_exceeded", "empty_image", "decode_failed",
-                   "webp_encode_failed", "conversion_interrupted"}
+                   "png_reduced_decode_unsupported", "webp_encode_failed",
+                   "worker_internal_error", "conversion_interrupted"}
         if code not in allowed: code = "conversion_interrupted"
         messages = {
             "unsupported_format": "Le format du logo n'est pas autorisé.",
@@ -146,7 +147,9 @@ def _convert_subprocess(source_path, output_path):
             "memory_limit_exceeded": "La conversion a atteint sa limite mémoire.",
             "empty_image": "Aucun contenu visible n'a été trouvé dans le logo.",
             "decode_failed": "Le fichier image ne peut pas être décodé.",
+            "png_reduced_decode_unsupported": "Ce type de PNG ne permet pas une réduction mémoire sûre.",
             "webp_encode_failed": "Le logo ne peut pas être encodé en WebP dans la limite prévue.",
+            "worker_internal_error": "Le convertisseur isolé a rencontré une erreur interne contrôlée.",
             "conversion_interrupted": "La conversion isolée a échoué.",
         }
         detail = payload.get("detail")

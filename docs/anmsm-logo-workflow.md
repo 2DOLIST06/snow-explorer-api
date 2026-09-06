@@ -60,8 +60,10 @@ supprime prudemment les marges transparentes ou le fond presque blanc connecté
 aux bords, puis centre le contenu sur une toile WebP transparente de 512 × 512.
 Le contenu vise 88 % de la toile (environ 450 px), y compris lorsque la source est
 petite. Les JPEG demandent au décodeur natif une réduction 1/2, 1/4 ou 1/8 avant
-l’allocation du raster ; les PNG restent décodés uniquement dans le processus
-isolé, sans copie pleine taille supplémentaire.
+l’allocation du raster. Les PNG 8 bits non entrelacés sont décompressés ligne par
+ligne vers un raster RGBA borné à 2 048 px : seules la ligne courante, la ligne
+précédente et la sortie réduite sont conservées. Aucun raster PNG pleine taille
+ni aucune copie pleine taille n’est donc alloué, même dans le processus enfant.
 
 Les limites par défaut sont : 16 000 px en largeur et hauteur, 80 millions de
 pixels, 512 Mio d’espace d’adressage pour le processus enfant, 30 secondes de

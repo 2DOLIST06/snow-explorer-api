@@ -4,8 +4,19 @@ from collections import deque
 import json
 import os
 import resource
+import struct
 import sys
 import warnings
+import zlib
+
+
+PROBE_SIZE = 1024
+PNG_DECODE_SIZE = 2048
+CONTENT_FRACTION = 0.88
+
+
+class ConversionError(ValueError):
+    """An expected, safe-to-report conversion failure."""
 
 
 PROBE_SIZE = 1024
@@ -20,6 +31,126 @@ def _limit(memory_mb):
     if hasattr(resource, "RLIMIT_AS"):
         limit = memory_mb * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+
+
+def _png_chunks(source):
+    """Read and CRC-check a PNG without asking Pillow to allocate its raster."""
+    with open(source, "rb") as stream:
+        if stream.read(8) != b"\x89PNG\r\n\x1a\n":
+            raise ConversionError("decode_failed")
+        while True:
+            header = stream.read(8)
+            if len(header) != 8:
+                raise ConversionError("decode_failed")
+            length, kind = struct.unpack(">I4s", header)
+            if length > 10 * 1024 * 1024:
+                raise ConversionError("decode_failed")
+            data, checksum = stream.read(length), stream.read(4)
+            if len(data) != length or len(checksum) != 4:
+                raise ConversionError("decode_failed")
+            if zlib.crc32(kind + data) & 0xffffffff != struct.unpack(">I", checksum)[0]:
+                raise ConversionError("decode_failed")
+            yield kind, data
+            if kind == b"IEND":
+                return
+
+
+def _paeth(left, above, upper_left):
+    estimate = left + above - upper_left
+    distances = abs(estimate - left), abs(estimate - above), abs(estimate - upper_left)
+    return (left, above, upper_left)[distances.index(min(distances))]
+
+
+def _load_png_reduced(source, Image):
+    """Decode a non-interlaced 8-bit PNG row-by-row into a bounded RGBA raster."""
+    width = height = colour_type = interlace = None
+    palette = transparency = None
+    compressed = bytearray()
+    for kind, data in _png_chunks(source):
+        if kind == b"IHDR":
+            if len(data) != 13:
+                raise ConversionError("decode_failed")
+            width, height, depth, colour_type, compression, filtering, interlace = struct.unpack(">IIBBBBB", data)
+            if depth != 8 or compression or filtering:
+                raise ConversionError("png_reduced_decode_unsupported")
+        elif kind == b"PLTE": palette = data
+        elif kind == b"tRNS": transparency = data
+        elif kind == b"IDAT": compressed.extend(data)
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(colour_type)
+    if not width or not height or channels is None or interlace:
+        raise ConversionError("png_reduced_decode_unsupported")
+    target_scale = min(1.0, PNG_DECODE_SIZE / max(width, height))
+    target_width = max(1, round(width * target_scale))
+    target_height = max(1, round(height * target_scale))
+    selected_x = [min(width - 1, (x * width + width // 2) // target_width)
+                  for x in range(target_width)]
+    selected_y = {min(height - 1, (y * height + height // 2) // target_height): y
+                  for y in range(target_height)}
+    output = bytearray(target_width * target_height * 4)
+    row_bytes = width * channels
+    decoder = zlib.decompressobj()
+    pending = bytearray()
+    compressed_offset = 0
+
+    def next_row():
+        nonlocal compressed_offset
+        required = row_bytes + 1
+        try:
+            while len(pending) < required:
+                if decoder.unconsumed_tail:
+                    chunk = decoder.unconsumed_tail
+                elif compressed_offset < len(compressed):
+                    chunk = compressed[compressed_offset:compressed_offset + 64 * 1024]
+                    compressed_offset += len(chunk)
+                else:
+                    break
+                pending.extend(decoder.decompress(chunk, required - len(pending)))
+        except zlib.error as exc:
+            raise ConversionError("decode_failed") from exc
+        if len(pending) < required:
+            raise ConversionError("decode_failed")
+        row = bytes(pending[:required])
+        del pending[:required]
+        return row
+
+    previous = bytearray(row_bytes)
+    for y in range(height):
+        encoded = next_row()
+        filter_type = encoded[0]
+        scanline = bytearray(encoded[1:])
+        if filter_type > 4:
+            raise ConversionError("decode_failed")
+        if filter_type:
+            for index in range(row_bytes):
+                left = scanline[index - channels] if index >= channels else 0
+                above = previous[index]
+                upper_left = previous[index - channels] if index >= channels else 0
+                predictor = (left, above, (left + above) // 2,
+                             _paeth(left, above, upper_left))[filter_type - 1]
+                scanline[index] = (scanline[index] + predictor) & 255
+        output_y = selected_y.get(y)
+        if output_y is not None:
+            for output_x, source_x in enumerate(selected_x):
+                index = source_x * channels
+                if colour_type == 6:
+                    pixel = scanline[index:index + 4]
+                elif colour_type == 2:
+                    pixel = scanline[index:index + 3] + b"\xff"
+                elif colour_type == 4:
+                    pixel = bytes((scanline[index],) * 3 + (scanline[index + 1],))
+                elif colour_type == 0:
+                    pixel = bytes((scanline[index],) * 3 + (255,))
+                else:
+                    palette_index = scanline[index]
+                    base = palette_index * 3
+                    if palette is None or base + 3 > len(palette):
+                        raise ConversionError("decode_failed")
+                    alpha = transparency[palette_index] if transparency and palette_index < len(transparency) else 255
+                    pixel = palette[base:base + 3] + bytes((alpha,))
+                destination = (output_y * target_width + output_x) * 4
+                output[destination:destination + 4] = pixel
+        previous = scanline
+    return Image.frombytes("RGBA", (target_width, target_height), bytes(output)), width, height
 
 
 def _scaled_box(box, probe_size, image_size, padding=True):
@@ -148,9 +279,11 @@ def convert(source, output, max_pixels, output_size, output_limit,
                 # JPEG draft asks libjpeg to decode at 1/2, 1/4 or 1/8 size.
                 # PNG has no reduced decoder in Pillow; only this child holds its
                 # full raster and RLIMIT_AS bounds that allocation.
+                reduced_png = source_format == "PNG" and max(source_width, source_height) > PNG_DECODE_SIZE
                 if source_format == "JPEG":
                     image.draft("RGB", (PROBE_SIZE, PROBE_SIZE))
-                image.load()
+                if not reduced_png:
+                    image.load()
         except UnidentifiedImageError as exc:
             raise ConversionError("decode_failed") from exc
         except Image.DecompressionBombError as exc:
@@ -158,7 +291,13 @@ def convert(source, output, max_pixels, output_size, output_limit,
         except (OSError, SyntaxError) as exc:
             raise ConversionError("decode_failed") from exc
 
-        orientation = image.getexif().get(0x0112, 1)
+        if reduced_png:
+            image.close()
+            image, checked_width, checked_height = _load_png_reduced(source, Image)
+            if (checked_width, checked_height) != (source_width, source_height):
+                raise ConversionError("decode_failed")
+
+        orientation = image.getexif().get(0x0112, 1) if source_format != "PNG" else 1
         transpose = {
             2: Image.Transpose.FLIP_LEFT_RIGHT, 3: Image.Transpose.ROTATE_180,
             4: Image.Transpose.FLIP_TOP_BOTTOM, 5: Image.Transpose.TRANSPOSE,
@@ -228,7 +367,7 @@ def main():
     except ConversionError as exc:
         result, status = {"ok": False, "error": str(exc)}, 2
     except Exception as exc:
-        result, status = {"ok": False, "error": "conversion_interrupted",
+        result, status = {"ok": False, "error": "worker_internal_error",
                           "detail": type(exc).__name__}, 3
     sys.stdout.write(json.dumps(result, separators=(",", ":"))); sys.stdout.flush()
     return status

@@ -2,8 +2,10 @@
 import io
 import os
 import subprocess
+import struct
 import tempfile
 import unittest
+import zlib
 from unittest.mock import patch
 
 from PIL import Image
@@ -27,6 +29,20 @@ class _Session:
 
 
 class AnmsmLogoSafetyTests(unittest.TestCase):
+    @staticmethod
+    def solid_png(width, height):
+        """Build a highly compressed large RGBA fixture without a large test raster."""
+        def chunk(kind, data):
+            return (struct.pack(">I", len(data)) + kind + data +
+                    struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff))
+        compressor = zlib.compressobj(9)
+        row = b"\0" + bytes((20, 80, 160, 255)) * width
+        payload = bytearray()
+        for _ in range(height): payload.extend(compressor.compress(row))
+        payload.extend(compressor.flush())
+        header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+        return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", payload) + chunk(b"IEND", b"")
+
     def image(self, image_format="PNG", size=(64, 32)):
         output = io.BytesIO()
         Image.new("RGBA", size, "red").save(output, image_format)
@@ -125,6 +141,11 @@ class AnmsmLogoSafetyTests(unittest.TestCase):
         metadata = self.convert_bytes(raw.getvalue(), max_pixels=80_000_000)
         self.assertEqual((metadata["source_width"], metadata["source_height"]), (6722, 4219))
         self.assertAlmostEqual(metadata["aspect_ratio"], 6722 / 4219, places=2)
+
+    def test_valberg_sized_rgba_png_is_streamed_into_a_bounded_raster(self):
+        metadata = self.convert_bytes(self.solid_png(10054, 5508), max_pixels=80_000_000)
+        self.assertEqual((metadata["source_width"], metadata["source_height"]), (10054, 5508))
+        self.assertAlmostEqual(metadata["aspect_ratio"], 10054 / 5508, places=2)
 
     def test_worker_reports_memory_limit_and_parent_remains_usable(self):
         payload = '{"ok":false,"error":"memory_limit_exceeded"}'
