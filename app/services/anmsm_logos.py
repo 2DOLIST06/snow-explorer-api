@@ -22,7 +22,9 @@ from app.services import s3
 
 FEED_URL = "https://api-v3.tourinsoft.com/api/syndications/anmsm.tourinsoft.com/343718C6-9088-4732-AA05-26695D1E3059?refreshCache=0&format=json"
 ALLOWED_MEDIA_HOSTS = frozenset({"anmsm.media.tourinsoft.eu"})
-MAX_PIXELS = 40_000_000
+MAX_WIDTH = 16_000
+MAX_HEIGHT = 16_000
+MAX_PIXELS = 80_000_000
 OUTPUT_SIZE = 512
 OUTPUT_LIMIT = 50 * 1024
 DEFAULT_BATCH_SIZE = 1
@@ -115,25 +117,43 @@ def download(url, session=requests):
     raise LogoImportError("too_many_redirects", "Too many media redirects")
 
 def _convert_subprocess(source_path, output_path):
-    timeout = _timeout("ANMSM_CONVERSION_TIMEOUT", 15)
-    memory = int(_timeout("ANMSM_CONVERSION_MEMORY_MB", 256))
+    timeout = _timeout("ANMSM_CONVERSION_TIMEOUT", 30)
+    memory = int(_timeout("ANMSM_CONVERSION_MEMORY_MB", 512))
     command = [sys.executable, "-m", "app.services.anmsm_image_worker", source_path, output_path,
                "--max-pixels", str(MAX_PIXELS), "--size", str(OUTPUT_SIZE),
+               "--max-width", str(MAX_WIDTH), "--max-height", str(MAX_HEIGHT),
                "--output-limit", str(OUTPUT_LIMIT), "--memory-mb", str(memory)]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
         raise LogoImportError("conversion_timeout", "La conversion a dépassé le délai autorisé.") from exc
     if result.returncode < 0:
-        raise LogoImportError("conversion_interrupted", f"Conversion interrompue par le signal {-result.returncode}.")
+        code = "memory_limit_exceeded" if -result.returncode in {6, 9, 11} else "conversion_interrupted"
+        raise LogoImportError(code, f"Conversion interrompue par le signal {-result.returncode}.")
     try: payload = json.loads(result.stdout)
     except (ValueError, TypeError) as exc:
         raise LogoImportError("conversion_interrupted", "Le convertisseur n'a pas retourné de résultat valide.") from exc
     if result.returncode or not payload.get("ok"):
         code = payload.get("error", "conversion_interrupted")
-        if code not in {"unsupported_format", "excessive_dimensions", "invalid_image",
-                        "empty_image", "optimization_limit"}: code = "conversion_interrupted"
-        raise LogoImportError(code, "La source ne peut pas être convertie en logo sûr.")
+        allowed = {"unsupported_format", "unreadable_dimensions", "excessive_dimensions",
+                   "memory_limit_exceeded", "empty_image", "decode_failed",
+                   "webp_encode_failed", "conversion_interrupted"}
+        if code not in allowed: code = "conversion_interrupted"
+        messages = {
+            "unsupported_format": "Le format du logo n'est pas autorisé.",
+            "unreadable_dimensions": "Les dimensions du logo sont illisibles.",
+            "excessive_dimensions": "Les dimensions du logo dépassent la limite de sécurité.",
+            "memory_limit_exceeded": "La conversion a atteint sa limite mémoire.",
+            "empty_image": "Aucun contenu visible n'a été trouvé dans le logo.",
+            "decode_failed": "Le fichier image ne peut pas être décodé.",
+            "webp_encode_failed": "Le logo ne peut pas être encodé en WebP dans la limite prévue.",
+            "conversion_interrupted": "La conversion isolée a échoué.",
+        }
+        detail = payload.get("detail")
+        if has_app_context():
+            current_app.logger.warning("ANMSM logo worker failed code=%s detail=%s stderr=%s",
+                                       code, detail or "", result.stderr[-500:])
+        raise LogoImportError(code, messages[code])
     metadata = payload.get("metadata") or {}
     size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
     try:

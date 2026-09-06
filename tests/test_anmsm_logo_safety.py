@@ -50,7 +50,7 @@ class AnmsmLogoSafetyTests(unittest.TestCase):
             self.convert_bytes(self.image(size=(2000, 2000)), max_pixels=1000)
 
     def test_corrupt_and_unsupported_files_are_rejected(self):
-        with self.assertRaisesRegex(ValueError, "invalid_image"):
+        with self.assertRaisesRegex(ValueError, "decode_failed"):
             self.convert_bytes(b"not an image")
         with self.assertRaisesRegex(ValueError, "unsupported_format"):
             self.convert_bytes(self.image("BMP"))
@@ -75,12 +75,65 @@ class AnmsmLogoSafetyTests(unittest.TestCase):
         with patch("app.services.anmsm_logos.subprocess.run", return_value=result):
             with self.assertRaises(LogoImportError) as signal:
                 _convert_subprocess("source", "output")
-        self.assertEqual(signal.exception.code, "conversion_interrupted")
+        self.assertEqual(signal.exception.code, "memory_limit_exceeded")
 
     def test_success_still_works_immediately_after_invalid_image(self):
-        with self.assertRaisesRegex(ValueError, "invalid_image"):
+        with self.assertRaisesRegex(ValueError, "decode_failed"):
             self.convert_bytes(b"corrupt")
         self.assertEqual(self.convert_bytes(self.image())["source_format"], "png")
+
+    def test_small_vars_sized_gif_is_enlarged_centered_and_uses_first_frame(self):
+        first = Image.new("P", (95, 70), 0)
+        first.putpalette([0, 0, 0, 255, 0, 0] + [0, 0, 0] * 254)
+        first.info["transparency"] = 0
+        for x in range(95):
+            for y in range(70): first.putpixel((x, y), 1)
+        second = Image.new("P", (95, 70), 0)
+        raw = io.BytesIO()
+        first.save(raw, "GIF", save_all=True, append_images=[second], loop=0,
+                   duration=20, transparency=0)
+        metadata = self.convert_bytes(raw.getvalue())
+        self.assertAlmostEqual(metadata["aspect_ratio"], 95 / 70, places=2)
+        self.assertAlmostEqual(metadata["visual_occupancy_width"], .88, places=2)
+        self.assertGreater(metadata["visual_occupancy_height"], .60)
+
+    def test_transparent_margin_is_removed_but_white_logo_remains_visible(self):
+        image = Image.new("RGBA", (400, 300), (0, 0, 0, 0))
+        for x in range(100, 300):
+            for y in range(100, 200): image.putpixel((x, y), (255, 255, 255, 255))
+        raw = io.BytesIO(); image.save(raw, "PNG")
+        metadata = self.convert_bytes(raw.getvalue())
+        self.assertLess(metadata["content_width"], 230)
+        self.assertAlmostEqual(metadata["visual_occupancy_width"], .88, places=2)
+
+    def test_connected_white_border_is_removed_without_removing_internal_white(self):
+        image = Image.new("RGB", (500, 400), "white")
+        for x in range(100, 400):
+            for y in range(100, 300): image.putpixel((x, y), (0, 50, 180))
+        # An internal white hole belongs to the logo and must not become edge background.
+        for x in range(220, 280):
+            for y in range(160, 240): image.putpixel((x, y), "white")
+        raw = io.BytesIO(); image.save(raw, "JPEG", quality=95)
+        metadata = self.convert_bytes(raw.getvalue())
+        self.assertLess(metadata["content_width"], 350)
+        self.assertGreater(metadata["content_width"], 280)
+        self.assertAlmostEqual(metadata["aspect_ratio"], 1.5, delta=.08)
+
+    def test_large_valmorel_ratio_jpeg_uses_reduced_decode(self):
+        raw = io.BytesIO()
+        Image.new("RGB", (6722, 4219), (20, 80, 160)).save(raw, "JPEG", quality=70)
+        metadata = self.convert_bytes(raw.getvalue(), max_pixels=80_000_000)
+        self.assertEqual((metadata["source_width"], metadata["source_height"]), (6722, 4219))
+        self.assertAlmostEqual(metadata["aspect_ratio"], 6722 / 4219, places=2)
+
+    def test_worker_reports_memory_limit_and_parent_remains_usable(self):
+        payload = '{"ok":false,"error":"memory_limit_exceeded"}'
+        result = subprocess.CompletedProcess([], 2, payload, "")
+        with patch("app.services.anmsm_logos.subprocess.run", return_value=result):
+            with self.assertRaises(LogoImportError) as raised:
+                _convert_subprocess("source", "output")
+        self.assertEqual(raised.exception.code, "memory_limit_exceeded")
+        self.assertEqual(self.convert_bytes(self.image())["optimized_width"], 512)
 
 
 if __name__ == "__main__":

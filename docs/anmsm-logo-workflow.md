@@ -50,3 +50,25 @@ correspond au bucket configuré, sa clé dans `previous_logo_s3_key`. Aucun appe
 S3 de suppression n’est effectué. Les tables et colonnes additives nécessaires
 existent déjà dans `migrations/20260903_add_anmsm_logo_candidates.sql`; aucune
 nouvelle requête SQL n’est nécessaire pour cette évolution.
+
+## Conversion isolée et limites
+
+Le téléchargement reste limité à 10 Mio. Le fichier compressé est écrit dans un
+fichier temporaire : le processus web ne l’ouvre jamais avec Pillow. Un processus
+Python distinct inspecte les métadonnées, décode uniquement la première image,
+supprime prudemment les marges transparentes ou le fond presque blanc connecté
+aux bords, puis centre le contenu sur une toile WebP transparente de 512 × 512.
+Le contenu vise 88 % de la toile (environ 450 px), y compris lorsque la source est
+petite. Les JPEG demandent au décodeur natif une réduction 1/2, 1/4 ou 1/8 avant
+l’allocation du raster ; les PNG restent décodés uniquement dans le processus
+isolé, sans copie pleine taille supplémentaire.
+
+Les limites par défaut sont : 16 000 px en largeur et hauteur, 80 millions de
+pixels, 512 Mio d’espace d’adressage pour le processus enfant, 30 secondes de
+conversion et 50 Kio pour le WebP produit. `RLIMIT_AS`, le timeout du parent et
+la limite Pillow restent tous actifs. Ces valeurs acceptent les sources Valberg
+(10 054 × 5 508) et Valmorel (6 722 × 4 219), tout en laissant une borne stricte.
+Les codes contrôlés distinguent notamment téléchargement trop lourd, format
+interdit, dimensions illisibles ou excessives, mémoire, timeout, image vide,
+décodage et encodage WebP. Aucun nouveau paquet n’est requis : Pillow 11.3.0,
+déjà fixé dans `requirements.txt`, réalise la conversion.
