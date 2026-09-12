@@ -169,6 +169,20 @@ def create_resort():
     if Resort.get_or_none(Resort.slug == slug):
         abort(409, "slug déjà existant")
 
+    expected = None
+    if payload.get("station_ref"):
+        from app.models.ski_area import SkiAreaExpectedStation
+        expected_rows = list(SkiAreaExpectedStation.select().where(
+            SkiAreaExpectedStation.station_ref == payload["station_ref"]
+        ).limit(2))
+        if not expected_rows:
+            abort(404, "station_ref introuvable")
+        if len(expected_rows) > 1:
+            abort(409, "station_ref ambigu entre plusieurs catalogues")
+        expected = expected_rows[0]
+        if expected.resort_id:
+            abort(409, "station_ref déjà rattaché")
+
     with db.atomic():
         r = Resort.create(
             id=payload.get("id") or str(uuid.uuid4()),
@@ -236,6 +250,9 @@ def create_resort():
                 "snow": {"enabled": False, "iframeUrl": None},
             })
         )
+        if expected:
+            from app.services.ski_area_catalog import resolve_identity
+            resolve_identity(expected, r, note="selected during station creation")
 
     bump_public_resorts_version()
     invalidate_station(slug)
