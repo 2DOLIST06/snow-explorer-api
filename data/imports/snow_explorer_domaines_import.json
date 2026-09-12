@@ -18,15 +18,15 @@
   "counts": {
     "existing_resorts": 83,
     "existing_active": 48,
-    "areas": 64,
+    "areas": 39,
     "expected_stations": 156,
-    "confirmed_memberships": 175,
-    "existing_resorts_with_verified_membership": 82,
+    "confirmed_memberships": 144,
+    "existing_resorts_with_verified_membership": 57,
     "missing_french_stations": 34,
     "missing_international_stations": 11,
     "optional_detail_pages": 28,
-    "memberships_to_existing_resorts": 94,
-    "pending_memberships": 81
+    "memberships_to_existing_resorts": 67,
+    "pending_memberships": 77
   },
   "import_policy": {
     "create_areas_as": "draft",
@@ -1484,48 +1484,6 @@
       ]
     },
     {
-      "catalog_key": "les-7-laux",
-      "name": "Les 7 Laux",
-      "slug": "les-7-laux",
-      "status": "draft",
-      "area_kind": "linked_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Office de tourisme des 7 Laux",
-          "url": "https://www.les7laux.com/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "",
-      "members": [
-        {
-          "station_ref": "snow:les-7-laux",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        },
-        {
-          "station_ref": "fr:prapoutel",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        },
-        {
-          "station_ref": "fr:pipay",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        },
-        {
-          "station_ref": "fr:le-pleynet",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
       "catalog_key": "jura-sur-leman",
       "name": "Jura sur Léman",
       "slug": "jura-sur-leman",
@@ -1553,600 +1511,6 @@
         },
         {
           "station_ref": "fr:lamoura",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "les-2-alpes",
-      "name": "Les 2 Alpes",
-      "slug": "les-2-alpes",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Office de tourisme des 2 Alpes",
-          "url": "https://www.les2alpes.com/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:les-2-alpes",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "ax-3-domaines",
-      "name": "Ax 3 Domaines",
-      "slug": "ax-3-domaines",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Ax 3 Domaines",
-          "url": "https://www.ax.ski/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:ax-3-domaines",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "metabief",
-      "name": "Métabief",
-      "slug": "metabief",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Métabief Montagnes du Jura",
-          "url": "https://www.station-metabief.com/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:metabief",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "les-karellis",
-      "name": "Les Karellis",
-      "slug": "les-karellis",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Domaine skiable des Karellis",
-          "url": "https://www.leskarellis.com/fr/DOMAINE",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:les-karellis",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "cauterets-cirque-du-lys",
-      "name": "Cauterets – Cirque du Lys",
-      "slug": "cauterets-cirque-du-lys",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Cauterets",
-          "url": "https://www.cauterets.com/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:cauterets",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "puy-saint-vincent",
-      "name": "Puy-Saint-Vincent",
-      "slug": "puy-saint-vincent",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Puy-Saint-Vincent",
-          "url": "https://www.puysaintvincent.com/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:puy-saint-vincent",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "gourette",
-      "name": "Gourette",
-      "slug": "gourette",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Office de tourisme de Gourette",
-          "url": "https://www.gourette.com/loisirs/station-de-ski-de-gourette/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:gourette",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "la-norma",
-      "name": "La Norma",
-      "slug": "la-norma",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Sogenor La Norma",
-          "url": "https://www.la-norma.ski/en/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:la-norma",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "la-bresse-hohneck",
-      "name": "La Bresse-Hohneck",
-      "slug": "la-bresse-hohneck",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Labellemontagne La Bresse",
-          "url": "https://labresse.labellemontagne.com/fr/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:la-bresse-hohneck",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "luz-ardiden",
-      "name": "Luz Ardiden",
-      "slug": "luz-ardiden",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Office de tourisme des Vallées de Gavarnie",
-          "url": "https://www.valleesdegavarnie.com/en/loisirs/station-de-ski-luz-ardiden/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:luz-ardiden",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "le-lioran",
-      "name": "Le Lioran",
-      "slug": "le-lioran",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Domaine du Lioran",
-          "url": "https://www.lelioran.com/hiver/domaine-skiable/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:le-lioran",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "aillons-margeriaz-1400",
-      "name": "Aillons-Margériaz 1400",
-      "slug": "aillons-margeriaz-1400",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "SEM des Bauges",
-          "url": "https://www.aillons-margeriaz.com/aillons-margeriaz-naturellement-familiale",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:aillon-margeriaz",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "auron",
-      "name": "Auron",
-      "slug": "auron",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Stations Nice Côte d’Azur",
-          "url": "https://www.stationsnicecotedazur.com/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:auron",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "ceillac",
-      "name": "Ceillac",
-      "slug": "ceillac",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Commune de Ceillac",
-          "url": "https://ceillac.fr/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:ceillac",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "orcieres-merlette-1850",
-      "name": "Orcières Merlette 1850",
-      "slug": "orcieres-merlette-1850",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Office de tourisme d’Orcières",
-          "url": "https://www.orcieres.com/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:orcieres-merlette-1850",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "saint-lary",
-      "name": "Saint-Lary",
-      "slug": "saint-lary",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Office de tourisme de Saint-Lary",
-          "url": "https://www.saintlary.com/winter/to-do-on-site/glide/ski-area/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:saint-lary-soulan",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "sainte-foy-tarentaise",
-      "name": "Sainte-Foy-Tarentaise",
-      "slug": "sainte-foy-tarentaise",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Office de tourisme de Sainte-Foy-Tarentaise",
-          "url": "https://www.saintefoy-tarentaise.com/a-faire/activites-hiver/ski-et-snowboard/plan-des-pistes/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:sainte-foy-tarentaise",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "les-angles",
-      "name": "Les Angles",
-      "slug": "les-angles",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Station des Angles",
-          "url": "https://lesangles.com/en/le-domaine/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:les-angles",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "les-orres",
-      "name": "Les Orres",
-      "slug": "les-orres",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Office de tourisme des Orres",
-          "url": "https://www.lesorres.com/skier-aux-orres/le-domaine-skiable",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:les-orres",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "chamrousse-alpine-park",
-      "name": "Chamrousse – Alpine Park",
-      "slug": "chamrousse-alpine-park",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Office de tourisme de Chamrousse",
-          "url": "https://www.chamrousse.com/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:chamrousse",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "isola-2000",
-      "name": "Isola 2000",
-      "slug": "isola-2000",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Stations Nice Côte d’Azur",
-          "url": "https://www.stationsnicecotedazur.com/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine local : liste détaillée des éventuels villages/accès non exhaustive. Aucun chiffre de la fiche station n’est recopié.",
-      "members": [
-        {
-          "station_ref": "snow:isola-2000",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "la-grave-la-meije",
-      "name": "La Grave – La Meije",
-      "slug": "la-grave-la-meije",
-      "status": "draft",
-      "area_kind": "high_mountain_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Téléphériques de La Grave",
-          "url": "https://la-grave.com/en/le-domaine-de-haute-montagne-hiver/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Domaine de haute montagne et hors-piste : ne pas présenter comme un domaine alpin conventionnel ni le relier automatiquement aux 2 Alpes.",
-      "members": [
-        {
-          "station_ref": "snow:la-grave",
           "evidence_status": "confirmed",
           "relation_kind": "member_or_access_point"
         }
@@ -2189,75 +1553,6 @@
         },
         {
           "station_ref": "fr:termignon",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "brevent-flegere",
-      "name": "Brévent – Flégère",
-      "slug": "brevent-flegere",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Office de tourisme de la Vallée de Chamonix",
-          "url": "https://en.chamonix.com/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "Conserver la fiche locale existante et la fiche destination Chamonix.",
-      "members": [
-        {
-          "station_ref": "snow:chamonix",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        },
-        {
-          "station_ref": "snow:brevent-flegere",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        }
-      ]
-    },
-    {
-      "catalog_key": "grands-montets",
-      "name": "Grands Montets",
-      "slug": "grands-montets",
-      "status": "draft",
-      "area_kind": "local_area",
-      "country_codes": [
-        "FR"
-      ],
-      "membership_evidence": "official_source",
-      "sources": [
-        {
-          "publisher": "Compagnie du Mont-Blanc",
-          "url": "https://domaineschamonix.montblancnaturalresort.com/",
-          "publication_date": null,
-          "checked_on": "2026-09-12"
-        }
-      ],
-      "notes": "",
-      "members": [
-        {
-          "station_ref": "snow:chamonix",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        },
-        {
-          "station_ref": "snow:grands-montets",
-          "evidence_status": "confirmed",
-          "relation_kind": "member_or_access_point"
-        },
-        {
-          "station_ref": "fr:argentiere",
           "evidence_status": "confirmed",
           "relation_kind": "member_or_access_point"
         }
@@ -4550,8 +3845,6 @@
       "country_code": "FR",
       "department": "Haute-Savoie",
       "verified_area_keys": [
-        "brevent-flegere",
-        "grands-montets",
         "balme-le-tour-vallorcine"
       ],
       "review_status": "mapped",
@@ -4604,9 +3897,7 @@
       "is_active": true,
       "country_code": "FR",
       "department": "Isère",
-      "verified_area_keys": [
-        "les-2-alpes"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.les2alpes.com"
     },
@@ -4696,9 +3987,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Ariège",
-      "verified_area_keys": [
-        "ax-3-domaines"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.ax-ski.com"
     },
@@ -4709,9 +3998,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Doubs",
-      "verified_area_keys": [
-        "metabief"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.metabief.fr"
     },
@@ -4777,9 +4064,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Savoie",
-      "verified_area_keys": [
-        "les-karellis"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.karellis.com"
     },
@@ -4803,9 +4088,7 @@
       "is_active": true,
       "country_code": "FR",
       "department": "Hautes-Pyrénées",
-      "verified_area_keys": [
-        "cauterets-cirque-du-lys"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.cauterets.com"
     },
@@ -4829,9 +4112,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Hautes-Alpes",
-      "verified_area_keys": [
-        "puy-saint-vincent"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.puysaintvincent.com"
     },
@@ -4855,9 +4136,7 @@
       "is_active": true,
       "country_code": "FR",
       "department": "Hautes-Alpes",
-      "verified_area_keys": [
-        "la-grave-la-meije"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://la-grave.com"
     },
@@ -4868,9 +4147,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Pyrénées-Atlantiques",
-      "verified_area_keys": [
-        "gourette"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.gourette.com"
     },
@@ -4881,9 +4158,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Savoie",
-      "verified_area_keys": [
-        "la-norma"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.la-norma.com"
     },
@@ -4907,9 +4182,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Vosges",
-      "verified_area_keys": [
-        "la-bresse-hohneck"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.labresse.net"
     },
@@ -4984,9 +4257,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Hautes-Pyrénées",
-      "verified_area_keys": [
-        "luz-ardiden"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.luz.org"
     },
@@ -5023,9 +4294,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Cantal",
-      "verified_area_keys": [
-        "le-lioran"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.lelioran.com"
     },
@@ -5076,9 +4345,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Savoie",
-      "verified_area_keys": [
-        "aillons-margeriaz-1400"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.chamberymontagnes.com/aillonsmargeriaz"
     },
@@ -5129,9 +4396,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Haute-Savoie",
-      "verified_area_keys": [
-        "brevent-flegere"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.chamonix.com"
     },
@@ -5142,9 +4407,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Haute-Savoie",
-      "verified_area_keys": [
-        "grands-montets"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.chamonix.com"
     },
@@ -5207,9 +4470,7 @@
       "is_active": true,
       "country_code": null,
       "department": "Alpes-Maritimes",
-      "verified_area_keys": [
-        "auron"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://hiver.auron.com/"
     },
@@ -5220,9 +4481,7 @@
       "is_active": true,
       "country_code": "FR",
       "department": "Isère",
-      "verified_area_keys": [
-        "les-7-laux"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.les7laux.com"
     },
@@ -5311,9 +4570,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Hautes-Alpes",
-      "verified_area_keys": [
-        "ceillac"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.ceillac.fr"
     },
@@ -5376,9 +4633,7 @@
       "is_active": true,
       "country_code": "FR",
       "department": "Hautes-Alpes",
-      "verified_area_keys": [
-        "orcieres-merlette-1850"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.orcieres.com"
     },
@@ -5402,9 +4657,7 @@
       "is_active": true,
       "country_code": "FR",
       "department": "Hautes-Pyrénées",
-      "verified_area_keys": [
-        "saint-lary"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.saintlary.com"
     },
@@ -5429,9 +4682,7 @@
       "is_active": false,
       "country_code": "FR",
       "department": "Savoie",
-      "verified_area_keys": [
-        "sainte-foy-tarentaise"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.saintefoy-tarentaise.com"
     },
@@ -5442,9 +4693,7 @@
       "is_active": true,
       "country_code": "FR",
       "department": "Pyrénées-Orientales",
-      "verified_area_keys": [
-        "les-angles"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.lesangles.com"
     },
@@ -5469,9 +4718,7 @@
       "is_active": true,
       "country_code": "FR",
       "department": "Hautes-Alpes",
-      "verified_area_keys": [
-        "les-orres"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.lesorres.com"
     },
@@ -5482,9 +4729,7 @@
       "is_active": true,
       "country_code": "FR",
       "department": "Isère",
-      "verified_area_keys": [
-        "chamrousse-alpine-park"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://www.chamrousse.com"
     },
@@ -5508,9 +4753,7 @@
       "is_active": true,
       "country_code": null,
       "department": "Alpes-Maritimes",
-      "verified_area_keys": [
-        "isola-2000"
-      ],
+      "verified_area_keys": [],
       "review_status": "mapped",
       "website_url_from_export": "https://isola2000.com/"
     },
