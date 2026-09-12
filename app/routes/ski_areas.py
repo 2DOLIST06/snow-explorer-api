@@ -236,6 +236,9 @@ def add_station(area_id, station_id):
 def remove_station(area_id, station_id):
     with SkiArea._meta.database.atomic():
         deleted = SkiAreaResort.delete().where((SkiAreaResort.ski_area == area_id) & (SkiAreaResort.resort == station_id)).execute()
+        if deleted:
+            from app.services.ski_area_catalog import mark_membership_ignored
+            mark_membership_ignored(area_id, station_id)
     if not deleted: return _error("relation_not_found", "Relation not found", 404)
     station = Resort.get_or_none(Resort.id == station_id); invalidate_ski_areas(station.slug if station else "")
     return "", 204
@@ -272,8 +275,11 @@ def replace_station_areas(station_id):
     areas = list(SkiArea.select().where(SkiArea.id.in_(ids))) if ids else []
     if len(areas) != len(ids): return _error("ski_area_not_found", "One or more ski areas do not exist", 404)
     with SkiArea._meta.database.atomic():
+        old_ids = {link.ski_area_id for link in SkiAreaResort.select().where(SkiAreaResort.resort == station)}
         SkiAreaResort.delete().where(SkiAreaResort.resort == station).execute()
         for area in areas: SkiAreaResort.create(ski_area=area, resort=station)
+        from app.services.ski_area_catalog import mark_membership_ignored
+        for removed_id in old_ids - set(ids): mark_membership_ignored(removed_id, station.id)
     invalidate_ski_areas(station.slug)
     return jsonify({"station": _station_json(station), "ski_areas": [_area_json(a, True) for a in areas]})
 
