@@ -58,6 +58,24 @@ def station_key(slug):
     return f"snow:public:station:{normalize_component(slug)}"
 
 
+def ski_areas_list_key():
+    return f"snow:public:ski-areas:list:{query_variation(('page', 'per_page'))}"
+
+
+def ski_area_key(slug):
+    return f"snow:public:ski-area:{normalize_component(slug)}"
+
+
+def invalidate_ski_areas(*station_slugs):
+    patterns = ["snow:public:ski-areas:*", "snow:public:ski-area:*"]
+    for slug in station_slugs:
+        try:
+            patterns.append(f"snow:public:station:{normalize_component(slug)}")
+        except ValueError:
+            pass
+    return invalidate_patterns(*patterns)
+
+
 def widgets_key(slug):
     return f"snow:public:widgets:{normalize_component(slug)}"
 

@@ -19,6 +19,7 @@ from app.models.anmsm_station_mapping import AnmsmStationMapping
 from app.models.station_logo_candidate import StationLogoCandidate
 from app.models.station_piste_map_candidate import StationPisteMapCandidate
 from app.models.anmsm_station_snapshot import AnmsmStationSnapshot
+from app.models.ski_area import SkiArea, SkiAreaResort
 from app.routes.public_resorts import bp_public, bp_public_stations
 from app.routes.admin_resorts import bp_admin
 from app.routes.stations_widgets import bp_forfaits, bp_widgets
@@ -41,6 +42,8 @@ from app.routes.ski_passes import (
     bp_ski_passes,
 )
 from app.services.public_cache import configure_cache_logging, log_cache_startup
+from app.routes.ski_areas import (bp_admin_ski_areas, bp_public_ski_areas,
+                                  bp_station_ski_areas)
 from app.cli import register_admin_commands
 
 
@@ -173,6 +176,7 @@ def create_app(config=None):
                           SkiPassPeriod, SkiPassProduct, SkiPassPrice,
                           AnmsmStationMapping, StationLogoCandidate,
                           StationPisteMapCandidate, AnmsmStationSnapshot])
+        db.create_tables([SkiArea, SkiAreaResort])
         db.close()
         # ``close()`` normally returns the connection to the pool.  Startup may
         # happen in a Gunicorn master with --preload, so do not leave a socket
@@ -202,6 +206,9 @@ def create_app(config=None):
     app.register_blueprint(bp_public_station_ski_passes)
     app.register_blueprint(bp_admin_ski_passes)
     app.register_blueprint(bp_admin_station_ski_passes)
+    app.register_blueprint(bp_public_ski_areas)
+    app.register_blueprint(bp_admin_ski_areas)
+    app.register_blueprint(bp_station_ski_areas)
     # Le front historique utilise ``/api/admin/stations`` tandis que les
     # routes d'import/export ont d'abord été publiées sous ``resorts``.
     # Enregistrer le même blueprint une seconde fois garde les deux contrats
