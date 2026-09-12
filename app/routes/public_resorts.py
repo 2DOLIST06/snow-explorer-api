@@ -285,6 +285,9 @@ def _get_station_response(slug: str):
 
         data = _resort_public_dict(resort, _station_snowparks_count(slug))
         data["ski_pass"] = _station_active_ski_pass(resort.id)
+        # Additive field: legacy station keys and routes remain unchanged.
+        from app.routes.ski_areas import public_station_domains
+        data["ski_areas"] = public_station_domains(resort)
     except Exception:
         current_app.logger.exception("Unable to retrieve public station %s", slug)
         return jsonify({"error": "Unable to retrieve station"}), 500
