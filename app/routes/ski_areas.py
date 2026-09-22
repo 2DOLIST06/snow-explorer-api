@@ -7,6 +7,7 @@ from peewee import IntegrityError, OperationalError
 from app.datetime_utils import utcnow
 from app.models.resort import Resort
 from app.models.ski_area import SkiArea, SkiAreaResort
+from app.models.station_widgets import StationWidgets
 from app.services.public_cache import (cached_json, invalidate_ski_areas,
                                        ski_area_key, ski_areas_list_key)
 
@@ -45,9 +46,30 @@ def _iso(value):
     return value.isoformat() if value is not None else None
 
 
-def _station_json(station):
+def _snowparks_count(config):
+    """Return a station's valid snowpark count, treating bad/missing data as zero."""
+    snowparks = config.get("snowparks") if isinstance(config, dict) else None
+    count = snowparks.get("count") if isinstance(snowparks, dict) else None
+    return count if isinstance(count, int) and not isinstance(count, bool) and count >= 0 else 0
+
+
+def _station_snowparks_counts(stations):
+    slugs = [station.slug for station in stations]
+    counts = {slug: 0 for slug in slugs}
+    if not slugs:
+        return counts
+    rows = StationWidgets.select().where(StationWidgets.station_slug.in_(slugs))
+    for row in rows:
+        counts[row.station_slug] = _snowparks_count(StationWidgets.from_json(row.config))
+    return counts
+
+
+def _station_json(station, snowparks_count=None):
+    if snowparks_count is None:
+        snowparks_count = _station_snowparks_counts([station])[station.slug]
     return {"id": str(station.id), "name": station.name, "slug": station.slug,
-            "cover_image_url": station.cover_image_url, "logo_url": station.logo_url}
+            "cover_image_url": station.cover_image_url, "logo_url": station.logo_url,
+            "snowparks_count": snowparks_count}
 
 
 def _area_json(area, admin=False, stations=None):
@@ -65,7 +87,8 @@ def _area_json(area, admin=False, stations=None):
     if admin:
         data.update(source=area.source, verified_at=_iso(area.verified_at), created_at=_iso(area.created_at))
     if stations is not None:
-        data["stations"] = [_station_json(s) for s in stations]
+        counts = _station_snowparks_counts(stations)
+        data["stations"] = [_station_json(s, counts[s.slug]) for s in stations]
     return data
 
 
@@ -161,6 +184,8 @@ def admin_create():
     if error: return error
     stations, error = _station_ids(payload)
     if error: return error
+    if "snowparks_count" not in values:
+        values["snowparks_count"] = sum(_station_snowparks_counts(stations or []).values())
     try:
         with SkiArea._meta.database.atomic():
             area = SkiArea.create(**values)
