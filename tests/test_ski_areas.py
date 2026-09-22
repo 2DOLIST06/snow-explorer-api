@@ -19,6 +19,7 @@ from peewee import SqliteDatabase
 
 from app.models.resort import Resort
 from app.models.ski_area import SkiArea, SkiAreaResort
+from app.models.station_widgets import StationWidgets
 from app.routes.ski_areas import (bp_admin_ski_areas, bp_public_ski_areas,
                                   bp_station_ski_areas)
 from app.services.admin_auth import protect_admin_routes
@@ -27,7 +28,7 @@ from app.services.admin_auth import protect_admin_routes
 class SkiAreaApiTests(unittest.TestCase):
     def setUp(self):
         self.database = SqliteDatabase(":memory:", pragmas={"foreign_keys": 1})
-        self.models = [Resort, SkiArea, SkiAreaResort]
+        self.models = [Resort, SkiArea, SkiAreaResort, StationWidgets]
         self.database.bind(self.models, bind_refs=False, bind_backrefs=False)
         self.database.create_tables(self.models)
         app = Flask(__name__)
@@ -90,6 +91,56 @@ class SkiAreaApiTests(unittest.TestCase):
             switched_area = public_station_domains(self.a)[0]
         self.assertEqual(switched_area["snowpark_name"], "The Park")
         self.assertEqual(switched_area["snowparks_count"], 2)
+
+    def test_station_counts_and_default_area_total(self):
+        StationWidgets.create(station_slug="alpha", config=StationWidgets.to_json({
+            "snowparks": {"count": 2},
+        }))
+        StationWidgets.create(station_slug="beta", config=StationWidgets.to_json({
+            "snowparks": {"count": None},
+        }))
+
+        options = self.client.get("/api/admin/ski-areas/station-options").get_json()["items"]
+        self.assertEqual({row["slug"]: row["snowparks_count"] for row in options}, {
+            "alpha": 2, "beta": 0, "hidden": 0,
+        })
+
+        response = self.client.post("/api/admin/ski-areas", json={
+            "name": "Combined", "slug": "combined", "station_ids": ["a", "b"],
+        })
+        self.assertEqual(response.status_code, 201)
+        area = response.get_json()["ski_area"]
+        self.assertEqual(area["snowparks_count"], 2)
+        self.assertEqual(
+            {row["slug"]: row["snowparks_count"] for row in area["stations"]},
+            {"alpha": 2, "beta": 0},
+        )
+
+    def test_empty_area_defaults_to_zero_and_manual_value_is_preserved(self):
+        response = self.client.post("/api/admin/ski-areas", json={
+            "name": "Empty", "slug": "empty",
+        })
+        area = response.get_json()["ski_area"]
+        self.assertEqual(area["snowparks_count"], 0)
+
+        response = self.client.patch(
+            f"/api/admin/ski-areas/{area['id']}", json={"snowparks_count": 7},
+        )
+        self.assertEqual(response.get_json()["ski_area"]["snowparks_count"], 7)
+        response = self.client.patch(
+            f"/api/admin/ski-areas/{area['id']}", json={"description": "manual total stays"},
+        )
+        self.assertEqual(response.get_json()["ski_area"]["snowparks_count"], 7)
+
+    def test_explicit_create_total_overrides_station_sum(self):
+        StationWidgets.create(station_slug="alpha", config=StationWidgets.to_json({
+            "snowparks": {"count": 2},
+        }))
+        response = self.client.post("/api/admin/ski-areas", json={
+            "name": "Corrected", "slug": "corrected", "station_ids": ["a"],
+            "snowparks_count": 9,
+        })
+        self.assertEqual(response.get_json()["ski_area"]["snowparks_count"], 9)
 
     def test_many_to_many_duplicate_and_remove_in_both_directions(self):
         area1 = SkiArea.create(name="One", slug="one")
