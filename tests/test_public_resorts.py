@@ -174,6 +174,46 @@ class PublicResortsTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), [])
 
+    def test_station_map_is_lightweight_and_only_contains_active_geolocated_stations(self):
+        Region.create(id="auvergne-rhone-alpes", name="Auvergne-Rhône-Alpes")
+        self.create_resort(
+            "1", "Chamonix", "chamonix", latitude=45.9237, longitude=6.8694,
+            logo_url="https://cdn.example.test/chamonix.svg",
+            department="Haute-Savoie", region_id="auvergne-rhone-alpes",
+            region_name="Ancienne valeur", description_html="Heavy station content",
+            cover_image_url="https://cdn.example.test/large-cover.jpg",
+        )
+        self.create_resort(
+            "2", "Inactive", "inactive", is_active=False,
+            latitude=45.0, longitude=6.0,
+        )
+        self.create_resort("3", "No latitude", "no-latitude", longitude=6.0)
+        self.create_resort("4", "No longitude", "no-longitude", latitude=45.0)
+
+        response = self.client.get("/api/stations/map")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers["Cache-Control"],
+            "public, max-age=300, s-maxage=3600",
+        )
+        self.assertEqual(response.get_json(), [{
+            "id": "1",
+            "name": "Chamonix",
+            "slug": "chamonix",
+            "latitude": 45.9237,
+            "longitude": 6.8694,
+            "logo": "https://cdn.example.test/chamonix.svg",
+            "department": "Haute-Savoie",
+            "region": "Auvergne-Rhône-Alpes",
+        }])
+        station = response.get_json()[0]
+        self.assertIsInstance(station["latitude"], float)
+        self.assertIsInstance(station["longitude"], float)
+        self.assertNotIn("description_html", station)
+        self.assertNotIn("cover_image_url", station)
+        self.assertNotIn("ski_pass", station)
+
     def test_public_detail_contract_counts_region_dates_urls_and_cfg(self):
         Region.create(id="paca", name="Provence-Alpes-Côte d’Azur")
         resort = self.create_resort(
