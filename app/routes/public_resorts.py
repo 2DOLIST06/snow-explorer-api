@@ -1,5 +1,6 @@
 from flask import Blueprint, current_app, jsonify, request
 from app.models.resort import Resort
+from app.models.region import Region
 from app.models.station_widgets import StationWidgets
 from app.services.public_resort import get_public_resort
 from app.services.public_cache import (cached_json, get_public_resorts_version,
@@ -7,7 +8,7 @@ from app.services.public_cache import (cached_json, get_public_resorts_version,
 from functools import reduce
 import operator
 
-from peewee import Field, fn, prefetch
+from peewee import JOIN, Field, fn, prefetch
 
 from app.models.ski_pass import (
     SkiPassPeriod,
@@ -110,6 +111,59 @@ def _resort_public_dict(r: Resort, snowparks_count=None) -> dict:
     base["resort_is_active"] = base["is_active"]
 
     return base
+
+
+def _station_map_dict(row):
+    """Serialize the deliberately small station contract used by maps."""
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "slug": row["slug"],
+        "latitude": float(row["latitude"]),
+        "longitude": float(row["longitude"]),
+        "logo": row["logo"],
+        "department": row["department"],
+        "region": row["region"],
+    }
+
+
+@bp_public_stations.get("/map")
+def station_map():
+    """Return active, geolocated stations using a single projection query."""
+    try:
+        rows = (
+            Resort.select(
+                Resort.id,
+                Resort.name,
+                Resort.slug,
+                Resort.latitude,
+                Resort.longitude,
+                Resort.logo_url.alias("logo"),
+                Resort.department,
+                fn.COALESCE(Region.name, Resort.region_name).alias("region"),
+            )
+            .join(
+                Region,
+                JOIN.LEFT_OUTER,
+                on=(Resort.region_id == Region.id),
+            )
+            .where(
+                (Resort.is_active == True)
+                & Resort.latitude.is_null(False)
+                & Resort.longitude.is_null(False)
+            )
+            .order_by(Resort.name.asc(), Resort.id.asc())
+            .dicts()
+        )
+        data = [_station_map_dict(row) for row in rows]
+    except Exception:
+        current_app.logger.exception("Unable to retrieve stations for map")
+        return jsonify({"error": "Unable to retrieve stations"}), 500
+
+    response = jsonify(data)
+    response.headers["Cache-Control"] = "public, max-age=300, s-maxage=3600"
+    response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
+    return response, 200
 
 
 @bp_public.get("/")
