@@ -23,6 +23,8 @@ class SkiArea(Model):
     red_pistes_count = IntegerField(null=True)
     black_pistes_count = IntegerField(null=True)
     lifts_count = IntegerField(null=True)
+    snowpark_name = TextField(null=True)
+    snowparks_count = IntegerField(null=True)
     forecast_open_date = DateField(null=True)
     forecast_close_date = DateField(null=True)
     season = CharField(null=True, max_length=32)

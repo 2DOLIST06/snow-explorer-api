@@ -18,6 +18,8 @@ donnée station n'est copiée, additionnée ou déduite. Il n'y a pas de hiérar
 | `altitude_min_m`, `altitude_max_m` | entier ≥ 0/null | non | Mètres; minimum ≤ maximum |
 | `ski_area_km` | entier ≥ 0/null | non | Kilomètres de pistes |
 | `pistes_count`, `green_pistes_count`, `blue_pistes_count`, `red_pistes_count`, `black_pistes_count`, `lifts_count` | entier ≥ 0/null | non | Comptages |
+| `snowpark_name` | chaîne/null | non | Nom public du snowpark; une chaîne vide est normalisée en `null` |
+| `snowparks_count` | entier ≥ 0/null | non | Nombre de snowparks; zéro est une valeur renseignée |
 | `forecast_open_date`, `forecast_close_date` | `YYYY-MM-DD`/null | non | Dates prévisionnelles; ouverture ≤ fermeture |
 | `season` | chaîne/null | non | Libellé, par ex. `2026-2027` |
 | `source` | chaîne/null | non | **Administration seulement** |
@@ -65,6 +67,7 @@ X-CSRF-Token: demonstration-csrf
  "piste_map_url":"https://cdn.example.test/map.webp","altitude_min_m":1100,
  "altitude_max_m":2800,"ski_area_km":150,"pistes_count":80,"green_pistes_count":10,
  "blue_pistes_count":30,"red_pistes_count":30,"black_pistes_count":10,"lifts_count":35,
+ "snowpark_name":"Sunset Park","snowparks_count":2,
  "forecast_open_date":"2026-12-05","forecast_close_date":"2027-04-18",
  "season":"2026-2027","source":"https://source.example.test","verified_at":"2026-09-12T10:00:00Z",
  "station_ids":["station-demo-a","station-demo-b"]}
@@ -76,6 +79,7 @@ X-CSRF-Token: demonstration-csrf
 "piste_map_url":"https://cdn.example.test/map.webp","altitude_min_m":1100,"altitude_max_m":2800,
 "ski_area_km":150,"pistes_count":80,"green_pistes_count":10,"blue_pistes_count":30,
 "red_pistes_count":30,"black_pistes_count":10,"lifts_count":35,
+"snowpark_name":"Sunset Park","snowparks_count":2,
 "forecast_open_date":"2026-12-05","forecast_close_date":"2027-04-18","season":"2026-2027",
 "updated_at":"2026-09-12T10:00:00+00:00","source":"https://source.example.test",
 "verified_at":"2026-09-12T10:00:00+00:00","created_at":"2026-09-12T10:00:00+00:00",
@@ -106,6 +110,7 @@ Les objets publics omettent `source`, `verified_at` et `created_at`. Exemple fic
 "description":null,"cover_image_url":null,"piste_map_url":null,"altitude_min_m":0,
 "altitude_max_m":null,"ski_area_km":null,"pistes_count":0,"green_pistes_count":null,
 "blue_pistes_count":null,"red_pistes_count":null,"black_pistes_count":null,"lifts_count":null,
+"snowpark_name":null,"snowparks_count":null,
 "forecast_open_date":null,"forecast_close_date":null,"season":null,
 "updated_at":"2026-09-12T10:00:00+00:00","stations":[]}}
 ```
@@ -116,8 +121,9 @@ Erreurs JSON: `400 invalid_json|unknown_fields|validation_error|invalid_paginati
 authentification, `404 ski_area_not_found|station_not_found|relation_not_found`, `409 slug_conflict|
 relation_conflict|duplicate_station`; incident inattendu `500`. `fields` détaille les erreurs de champ.
 
-Exécuter, après sauvegarde et **uniquement avec autorisation de production**:
-`psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/20260912_add_ski_areas.sql`, puis redémarrer
+Exécuter, après sauvegarde et **uniquement avec autorisation de production**, les migrations dans
+l'ordre: `migrations/20260912_add_ski_areas.sql`, puis
+`migrations/20260922_add_ski_area_snowparks.sql` avec `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f …`, puis redémarrer
 l'API. Les écritures invalident les clés Redis domaines et les fiches station concernées; aucune action
 front n'est requise. Un purge manuel global existant reste possible via `POST /api/admin/cache/purge`.
 

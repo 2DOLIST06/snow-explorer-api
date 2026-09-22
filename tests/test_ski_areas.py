@@ -49,19 +49,47 @@ class SkiAreaApiTests(unittest.TestCase):
         response = self.client.post("/api/admin/ski-areas", json={
             "name": "Domaine Démo", "slug": "domaine-demo",
             "pistes_count": 0, "lifts_count": None,
+            "snowpark_name": "  Le Sunset Park  ", "snowparks_count": 0,
         })
         self.assertEqual(response.status_code, 201)
         body = response.get_json()["ski_area"]
         self.assertEqual(body["pistes_count"], 0)
         self.assertIsNone(body["lifts_count"])
+        self.assertEqual(body["snowpark_name"], "Le Sunset Park")
+        self.assertEqual(body["snowparks_count"], 0)
         self.assertEqual(self.client.get("/api/ski-areas/domaine-demo").status_code, 404)
 
         area_id = body["id"]
         response = self.client.patch(f"/api/admin/ski-areas/{area_id}", json={"description": "texte"})
         self.assertEqual(response.status_code, 200)
-        response = self.client.patch(f"/api/admin/ski-areas/{area_id}", json={"description": ""})
+        response = self.client.patch(f"/api/admin/ski-areas/{area_id}", json={
+            "description": "", "snowpark_name": "", "snowparks_count": None,
+        })
         self.assertIsNone(response.get_json()["ski_area"]["description"])
+        self.assertIsNone(response.get_json()["ski_area"]["snowpark_name"])
+        self.assertIsNone(response.get_json()["ski_area"]["snowparks_count"])
         self.assertEqual(response.get_json()["ski_area"]["pistes_count"], 0)
+
+    def test_snowpark_fields_are_exposed_by_public_and_station_routes(self):
+        area = SkiArea.create(
+            name="Park domain", slug="park-domain", status="published",
+            snowpark_name="The Park", snowparks_count=2,
+        )
+        SkiAreaResort.create(ski_area=area, resort=self.a)
+
+        public_area = self.client.get("/api/ski-areas/park-domain").get_json()["ski_area"]
+        self.assertEqual(public_area["snowpark_name"], "The Park")
+        self.assertEqual(public_area["snowparks_count"], 2)
+
+        station_area = self.client.get("/api/admin/stations/a/ski-areas").get_json()["ski_areas"][0]
+        self.assertEqual(station_area["snowpark_name"], "The Park")
+        self.assertEqual(station_area["snowparks_count"], 2)
+
+        from app.routes.ski_areas import public_station_domains
+        with self.client.application.test_request_context():
+            switched_area = public_station_domains(self.a)[0]
+        self.assertEqual(switched_area["snowpark_name"], "The Park")
+        self.assertEqual(switched_area["snowparks_count"], 2)
 
     def test_many_to_many_duplicate_and_remove_in_both_directions(self):
         area1 = SkiArea.create(name="One", slug="one")
@@ -89,10 +117,14 @@ class SkiAreaApiTests(unittest.TestCase):
         response = self.client.post("/api/admin/ski-areas", json={
             "name": "Bad", "slug": "bad", "altitude_min_m": 2000,
             "altitude_max_m": 1000, "forecast_open_date": "2027-04-01",
-            "forecast_close_date": "2026-12-01",
+            "forecast_close_date": "2026-12-01", "snowparks_count": -1,
         })
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["error"], "validation_error")
+        self.assertEqual(
+            response.get_json()["fields"]["snowparks_count"],
+            "must be a non-negative integer or null",
+        )
 
     def test_application_protects_admin_routes(self):
         app = Flask(__name__)
