@@ -14,10 +14,11 @@ bp_public_ski_areas = Blueprint("public_ski_areas", __name__, url_prefix="/api/s
 bp_admin_ski_areas = Blueprint("admin_ski_areas", __name__, url_prefix="/api/admin/ski-areas")
 bp_station_ski_areas = Blueprint("station_ski_areas", __name__, url_prefix="/api/admin/stations")
 
-TEXT_FIELDS = {"description", "cover_image_url", "piste_map_url", "season", "source"}
+TEXT_FIELDS = {"description", "cover_image_url", "piste_map_url", "season", "source",
+               "snowpark_name"}
 COUNT_FIELDS = {"altitude_min_m", "altitude_max_m", "ski_area_km", "pistes_count",
                 "green_pistes_count", "blue_pistes_count", "red_pistes_count",
-                "black_pistes_count", "lifts_count"}
+                "black_pistes_count", "lifts_count", "snowparks_count"}
 DATE_FIELDS = {"forecast_open_date", "forecast_close_date"}
 EDITABLE_FIELDS = TEXT_FIELDS | COUNT_FIELDS | DATE_FIELDS | {"name", "slug", "status", "verified_at"}
 
@@ -57,6 +58,7 @@ def _area_json(area, admin=False, stations=None):
             "pistes_count": area.pistes_count, "green_pistes_count": area.green_pistes_count,
             "blue_pistes_count": area.blue_pistes_count, "red_pistes_count": area.red_pistes_count,
             "black_pistes_count": area.black_pistes_count, "lifts_count": area.lifts_count,
+            "snowpark_name": area.snowpark_name, "snowparks_count": area.snowparks_count,
             "forecast_open_date": _iso(area.forecast_open_date),
             "forecast_close_date": _iso(area.forecast_close_date), "season": area.season,
             "updated_at": _iso(area.updated_at)}
