@@ -14,6 +14,9 @@ from app.models.lift import Lift
 from app.models.piste import Piste
 from app.models.resort import Resort
 from app.models.station_widgets import StationWidgets
+from app.models.ski_area import SkiArea, SkiAreaResort
+from app.models.ski_pass import SkiPassSeason
+from app.services.ski_passes import prefetch_seasons, replace_grid, serialize_season, validate_grid
 from app.datetime_utils import utcnow
 
 SCHEMA_VERSION = "1.0"
@@ -46,14 +49,18 @@ DATE_FIELDS = {"season_open_date", "season_close_date"}
 URL_FIELDS = {"website_url", "cover_image_url", "logo_url"}
 HTML_FIELDS = {"description_html"}
 OPTIONAL_TEXT = set(STATION_FIELDS) - REQUIRED - BOOL_FIELDS - INT_FIELDS - FLOAT_FIELDS - DATE_FIELDS
-BLOCKS = {"pistes", "remontees", "snowpark", "webcams", "meteo", "snow", "forfaits"}
+BLOCKS = {"pistes", "remontees", "snowpark", "webcams", "meteo", "snow", "forfaits",
+          "description", "forfaits_avances", "domaines_skiables"}
 BLOCK_FIELDS = {
-    "pistes": {"enabled", "green", "blue", "red", "black", "small_map_url", "large_map_url", "caption", "items"},
+    "pistes": {"enabled", "green", "blue", "red", "black", "small_map_url", "large_map_url", "official_map_url", "caption", "items"},
     "remontees": {"tire_fesses", "telesieges", "telepheriques", "items"},
     "snowpark": {"enabled", "count", "map_url", "image_url", "logo_url", "caption", "description_html"},
     "webcams": {"enabled", "items"}, "meteo": {"enabled", "iframe_url"},
     "snow": {"enabled", "iframe_url", "opening_date", "closing_date"},
     "forfaits": {"enabled", "columns", "items"},
+    "description": {"enabled", "html", "meta_title", "meta_description"},
+    "forfaits_avances": {"seasons"},
+    "domaines_skiables": {"items"},
 }
 
 
@@ -107,6 +114,32 @@ def _widget(cfg, block, key, default=None):
     return data.get(key, default)
 
 
+def _advanced_passes(resort):
+    seasons = prefetch_seasons(
+        SkiPassSeason.select().where(SkiPassSeason.resort == resort.id)
+        .order_by(SkiPassSeason.season.asc(), SkiPassSeason.id.asc())
+    )
+    # Reuse the normalized tariff contract, while excluding database-only ids.
+    result = []
+    for row in seasons:
+        value = serialize_season(row)
+        result.append({
+            "season": value["season"], "is_active": value["is_active"],
+            "currency": value["currency"], "source_url": value["source_url"],
+            "periods": [{k: p[k] for k in ("id", "name", "start_date", "end_date", "sort_order")} for p in value["periods"]],
+            "passes": [{**{k: product[k] for k in ("id", "name", "duration_days", "duration_label", "sort_order")},
+                        "prices": [{k: price[k] for k in ("period_id", "category", "category_label", "price_type", "price", "price_min", "price_max", "dynamic_label", "note", "sort_order")} for price in product["prices"]]}
+                       for product in value["passes"]],
+        })
+    return result
+
+
+def _ski_areas(resort):
+    query = (SkiArea.select().join(SkiAreaResort)
+             .where(SkiAreaResort.resort == resort.id).order_by(SkiArea.slug.asc()))
+    return [{"id": area.id, "slug": area.slug} for area in query]
+
+
 def serialize_station(resort, widgets=None, pistes=None, lifts=None):
     cfg = widgets if isinstance(widgets, dict) else {}
     pistes = list(pistes if pistes is not None else Piste.select().where(Piste.resort == resort.id))
@@ -118,7 +151,7 @@ def serialize_station(resort, widgets=None, pistes=None, lifts=None):
     out["pistes"] = {
         "enabled": bool(_widget(cfg, "pistes", "enabled", False)), **difficulties,
         "small_map_url": resort.pistes_small_map_url, "large_map_url": resort.pistes_large_map_url,
-        "caption": resort.pistes_caption,
+        "official_map_url": _widget(cfg, "pistes", "officialMapUrl"), "caption": resort.pistes_caption,
         "items": [{"id": p.id, "name": p.name, "difficulty": p.difficulty, "length_m": p.length_m, "elevation_diff_m": p.elevation_diff_m} for p in pistes],
     }
     out["remontees"] = {name: sum(l.type == typ for l in lifts) for name, typ in lift_types.items()}
@@ -129,6 +162,16 @@ def serialize_station(resort, widgets=None, pistes=None, lifts=None):
     out["forfaits"]["columns"] = _widget(cfg, "forfaits", "columns", [])
     out["meteo"] = {"enabled": bool(_widget(cfg, "meteo", "enabled", False)), "iframe_url": _widget(cfg, "meteo", "iframeUrl")}
     out["snow"] = {"enabled": bool(_widget(cfg, "snow", "enabled", False)), "iframe_url": _widget(cfg, "snow", "iframeUrl"), "opening_date": _widget(cfg, "snow", "openingDate"), "closing_date": _widget(cfg, "snow", "closingDate")}
+    # This widget is independent from Resort.description_html and must not be
+    # collapsed into it during a round trip.
+    out["description"] = {
+        "enabled": bool(_widget(cfg, "description", "enabled", False)),
+        "html": _widget(cfg, "description", "html"),
+        "meta_title": _widget(cfg, "description", "metaTitle"),
+        "meta_description": _widget(cfg, "description", "metaDescription"),
+    }
+    out["forfaits_avances"] = {"seasons": _advanced_passes(resort)}
+    out["domaines_skiables"] = {"items": _ski_areas(resort)}
     return out
 
 
@@ -234,6 +277,8 @@ def validate_document(document, bulk=False):
             for field in set(data) - BLOCK_FIELDS[block]: errors.append({"path": prefix + block + "." + field, "message": "unknown field"})
             for field in {"items", "columns"} & set(data):
                 if not isinstance(data[field], list): errors.append({"path": prefix + block + "." + field, "message": "must be an array"})
+            if block == "forfaits_avances" and "seasons" in data and not isinstance(data["seasons"], list):
+                errors.append({"path": prefix + block + ".seasons", "message": "must be an array"})
             if "enabled" in data and type(data["enabled"]) is not bool: errors.append({"path": prefix + block + ".enabled", "message": "must be a boolean"})
             for field, value in data.items():
                 path = prefix + block + "." + field
@@ -243,6 +288,50 @@ def validate_document(document, bulk=False):
                     except (TypeError, ValueError): errors.append({"path": path, "message": "must use YYYY-MM-DD"})
                 if field in {"green", "blue", "red", "black", "tire_fesses", "telesieges", "telepheriques", "count"} and value is not None and (type(value) is not int or value < 0): errors.append({"path": path, "message": "must be a non-negative integer"})
             if block == "snowpark" and isinstance(data.get("description_html"), str): clean[block] = dict(data); clean[block]["description_html"] = sanitize_html(data["description_html"])
+            if block == "description" and isinstance(data.get("html"), str):
+                clean[block] = dict(data); clean[block]["html"] = sanitize_html(data["html"])
+            if block == "forfaits_avances" and isinstance(data.get("seasons"), list):
+                seen = set()
+                for season_index, season in enumerate(data["seasons"]):
+                    season_path = f"{prefix}forfaits_avances.seasons.{season_index}"
+                    if not isinstance(season, dict):
+                        errors.append({"path": season_path, "message": "must be an object"}); continue
+                    unknown = set(season) - {"season", "is_active", "currency", "source_url", "periods", "passes"}
+                    errors.extend({"path": season_path + "." + key, "message": "unknown field"} for key in sorted(unknown))
+                    for period_index, period in enumerate(season.get("periods", []) if isinstance(season.get("periods"), list) else []):
+                        if isinstance(period, dict):
+                            for key in set(period) - {"id", "name", "start_date", "end_date", "sort_order"}:
+                                errors.append({"path": f"{season_path}.periods.{period_index}.{key}", "message": "unknown field"})
+                    for pass_index, product in enumerate(season.get("passes", []) if isinstance(season.get("passes"), list) else []):
+                        if not isinstance(product, dict): continue
+                        for key in set(product) - {"id", "name", "duration_days", "duration_label", "sort_order", "prices"}:
+                            errors.append({"path": f"{season_path}.passes.{pass_index}.{key}", "message": "unknown field"})
+                        for price_index, price in enumerate(product.get("prices", []) if isinstance(product.get("prices"), list) else []):
+                            if isinstance(price, dict):
+                                allowed_price = {"period_id", "category", "category_label", "price_type", "price", "price_min", "price_max", "dynamic_label", "note", "sort_order"}
+                                for key in set(price) - allowed_price:
+                                    errors.append({"path": f"{season_path}.passes.{pass_index}.prices.{price_index}.{key}", "message": "unknown field"})
+                    if season.get("season") in seen: errors.append({"path": season_path + ".season", "message": "duplicate season"})
+                    seen.add(season.get("season"))
+                    payload = {**season, "station_slug": station.get("slug")}
+                    _, grid_errors = validate_grid(payload, resort_lookup=lambda _: object())
+                    errors.extend({"path": season_path + "." + error["path"], "message": error["message"]} for error in grid_errors)
+                    if "is_active" in season and type(season["is_active"]) is not bool:
+                        errors.append({"path": season_path + ".is_active", "message": "must be a boolean"})
+            if block == "domaines_skiables" and isinstance(data.get("items"), list):
+                refs = set()
+                for area_index, area in enumerate(data["items"]):
+                    area_path = f"{prefix}domaines_skiables.items.{area_index}"
+                    if not isinstance(area, dict): errors.append({"path": area_path, "message": "must be an object"}); continue
+                    for key in set(area) - {"id", "slug"}: errors.append({"path": area_path + "." + key, "message": "unknown field"})
+                    if area.get("id") is None and not area.get("slug"): errors.append({"path": area_path, "message": "id or slug is required"})
+                    if area.get("id") is not None and (isinstance(area.get("id"), bool) or not isinstance(area.get("id"), int)):
+                        errors.append({"path": area_path + ".id", "message": "must be an integer"})
+                    if area.get("slug") is not None and not isinstance(area.get("slug"), str):
+                        errors.append({"path": area_path + ".slug", "message": "must be a string"})
+                    ref = (area.get("id"), area.get("slug"))
+                    if ref in refs: errors.append({"path": area_path, "message": "duplicate ski area reference"})
+                    refs.add(ref)
         normalized.append(clean)
     if errors: raise ValidationProblem(errors)
     return normalized
@@ -287,7 +376,7 @@ def apply_record(resort, record):
         if widget_row:
             widget_row.station_slug = resort.slug
             widget_row.save()
-    mappings = {"small_map_url": "smallMapUrl", "large_map_url": "largeMapUrl", "iframe_url": "iframeUrl", "map_url": "mapUrl", "image_url": "imageUrl", "logo_url": "logoUrl", "description_html": "descriptionHtml", "opening_date": "openingDate", "closing_date": "closingDate"}
+    mappings = {"small_map_url": "smallMapUrl", "large_map_url": "largeMapUrl", "official_map_url": "officialMapUrl", "iframe_url": "iframeUrl", "map_url": "mapUrl", "image_url": "imageUrl", "logo_url": "logoUrl", "description_html": "descriptionHtml", "opening_date": "openingDate", "closing_date": "closingDate"}
     for block in BLOCKS & set(record):
         data = record[block]; widget = dict(cfg.get(block, {})) if isinstance(cfg.get(block), dict) else {}
         for key, value in data.items():
@@ -298,14 +387,59 @@ def apply_record(resort, record):
             if block == "pistes" and key == "items": _replace_pistes(resort, value); relation_updates.append("pistes.items"); continue
             if block == "remontees" and key == "items": _replace_lifts(resort, value); relation_updates.append("remontees.items"); continue
             if block in {"pistes", "remontees"}: continue
+            if block == "description" and key in {"html", "meta_title", "meta_description"}:
+                widget[{"meta_title": "metaTitle", "meta_description": "metaDescription"}.get(key, key)] = value
+                relation_updates.append(f"description.{key}"); continue
+            if block in {"forfaits_avances", "domaines_skiables"}: continue
             widget[mappings.get(key, key)] = value; relation_updates.append(f"{block}.{key}")
-        if block not in {"remontees"}: cfg[block] = widget
+        if block not in {"remontees", "forfaits_avances", "domaines_skiables"}: cfg[block] = widget
+    if "forfaits_avances" in record:
+        _replace_advanced_passes(resort, record["forfaits_avances"].get("seasons", []))
+        relation_updates.append("forfaits_avances.seasons")
+    if "domaines_skiables" in record:
+        _replace_ski_areas(resort, record["domaines_skiables"].get("items", []))
+        relation_updates.append("domaines_skiables.items")
     row = StationWidgets.get_or_none(StationWidgets.station_slug == resort.slug)
     if row: row.config = StationWidgets.to_json(cfg); row.save()
     elif cfg: StationWidgets.create(station_slug=resort.slug, config=StationWidgets.to_json(cfg))
     elif relation_updates:
         Resort.update(updated_at=utcnow()).where(Resort.id == resort.id).execute()
     return updated, relation_updates
+
+
+def validate_references(record, prefix=""):
+    """Resolve stable ski-area references before entering the write phase."""
+    errors = []
+    for index, ref in enumerate(record.get("domaines_skiables", {}).get("items", [])):
+        by_id = SkiArea.get_or_none(SkiArea.id == ref.get("id")) if ref.get("id") is not None else None
+        by_slug = SkiArea.get_or_none(SkiArea.slug == ref.get("slug")) if ref.get("slug") else None
+        path = f"{prefix}domaines_skiables.items.{index}"
+        if ref.get("id") is not None and ref.get("slug") and (not by_id or not by_slug or by_id.id != by_slug.id):
+            errors.append({"path": path, "message": "ski area id/slug conflict"})
+        elif not (by_id or by_slug):
+            errors.append({"path": path, "message": "ski area reference not found"})
+    return errors
+
+
+def _replace_ski_areas(resort, refs):
+    rows = []
+    for ref in refs:
+        row = (SkiArea.get_or_none(SkiArea.id == ref.get("id")) if ref.get("id") is not None else None) or SkiArea.get(SkiArea.slug == ref.get("slug"))
+        rows.append(row)
+    SkiAreaResort.delete().where(SkiAreaResort.resort == resort.id).execute()
+    for row in rows: SkiAreaResort.create(ski_area=row, resort=resort)
+
+
+def _replace_advanced_passes(resort, seasons):
+    names = {season["season"] for season in seasons}
+    SkiPassSeason.delete().where((SkiPassSeason.resort == resort.id) & ~(SkiPassSeason.season.in_(names))).execute() if names else SkiPassSeason.delete().where(SkiPassSeason.resort == resort.id).execute()
+    for value in seasons:
+        payload = {**value, "station_slug": resort.slug}
+        active = bool(value.get("is_active", False))
+        row, errors = replace_grid(payload)
+        if errors: raise ValidationProblem(errors)
+        if bool(row.is_active) != active:
+            row.is_active = active; row.save(only=[SkiPassSeason.is_active])
 
 
 def _replace_pistes(resort, items):
