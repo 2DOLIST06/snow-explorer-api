@@ -16,6 +16,7 @@ from app.services.public_cache import invalidate_station, purge_all
 from app.services.resort_json import (SCHEMA_VERSION, ValidationProblem, apply_record,
     checksum, differences, export_document, parse_upload, preview_token,
     serialize_station, STATION_CREATE_FIELDS, validate_document, verify_token)
+from app.services.resort_json import validate_references
 
 bp_resort_json = Blueprint("admin_resort_json", __name__, url_prefix="/api/admin/resorts")
 
@@ -89,6 +90,8 @@ def preview_one(identifier):
     except (OverflowError, ValueError, ValidationProblem) as exc: return _error(exc)
     identity_error = _target_identity_error(resort, record["station"])
     if identity_error: return jsonify({"valid": False, "errors": [identity_error]}), 422
+    reference_errors = validate_references(record)
+    if reference_errors: return jsonify({"valid": False, "errors": reference_errors}), 422
     changes, unchanged = differences(resort, record); options = {"type": "single", "target": str(resort.id)}
     return jsonify({"valid": True, "schema_version": SCHEMA_VERSION, "target": {"id": str(resort.id), "slug": resort.slug, "name": resort.name}, "changes": changes, "unchanged_fields": unchanged, "warnings": [], "errors": [], "checksum": checksum(document), "preview_token": preview_token(document, options)})
 
@@ -103,6 +106,8 @@ def confirm_one(identifier):
     except (OverflowError, ValueError, ValidationProblem) as exc: return _error(exc)
     identity_error = _target_identity_error(resort, record["station"])
     if identity_error: return jsonify({"error": "identity_conflict", "errors": [identity_error]}), 422
+    reference_errors = validate_references(record)
+    if reference_errors: return jsonify({"error": "invalid_reference", "errors": reference_errors}), 422
     options = {"type": "single", "target": str(resort.id)}
     if not verify_token(document, options, token): return jsonify({"error": "invalid_preview_token"}), 409
     changes, _ = differences(resort, record)
@@ -173,7 +178,12 @@ def confirm_bulk():
             hist = _history(filename, document, "bulk", status, None, len(records), updated, created, ignored, failed, all_changes, errors)
     except Exception as exc: return jsonify({"error": "import_failed", "details": str(exc)}), 422
     purge_all()
-    return jsonify({"success": True, "stations_updated": updated, "stations_created": created, "stations_ignored": ignored, "stations_failed": failed, "history_id": hist.id})
+    return jsonify({
+        "success": True, "status": status,
+        "stations_updated": updated, "stations_created": created,
+        "stations_ignored": ignored, "stations_failed": failed,
+        "stations": classified, "errors": errors, "history_id": hist.id,
+    })
 
 
 def _resolve(record):
@@ -202,7 +212,11 @@ def _classify(records, create):
     result = []; counts = {"existing": 0, "missing": 0, "unchanged": 0}; errors = []
     for i, record in enumerate(records):
         found = _resolve(record); identity = record["station"]
+        reference_errors = validate_references(record, f"stations.{i}.")
         if found == "conflict": status = "conflict"; errors.append({"path": f"stations.{i}.station", "message": "id/slug conflict"})
+        elif reference_errors: status = "invalid"; errors.extend(reference_errors)
+        elif not found and create and not identity.get("name"):
+            status = "invalid"; errors.append({"path": f"stations.{i}.station.name", "message": "name is required when creating a station"})
         elif not found: status = "create" if create else "missing"; counts["missing"] += 1
         else:
             changes, _ = differences(found, record); status = "update" if changes else "unchanged"; counts["existing"] += 1; counts["unchanged"] += not bool(changes)

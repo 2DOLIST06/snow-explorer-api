@@ -52,6 +52,15 @@ def _optional_text(value, path, errors):
     return value.strip() or None
 
 
+def _sort_order(value, default, path, errors):
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        errors.append({"path": path, "message": "entier positif ou nul attendu"})
+        return default
+    return value
+
+
 def validate_grid(payload, resort_lookup=None):
     errors = []
     if not isinstance(payload, dict):
@@ -64,7 +73,7 @@ def validate_grid(payload, resort_lookup=None):
     else:
         currency = currency.strip().upper()
     source_url = payload.get("source_url")
-    if source_url is not None and (not isinstance(source_url, str) or urlparse(source_url).scheme not in ("http", "https")):
+    if source_url is not None and (not isinstance(source_url, str) or (source_url and urlparse(source_url).scheme not in ("http", "https"))):
         errors.append({"path": "source_url", "message": "URL HTTP(S) invalide"})
 
     resort_lookup = resort_lookup or (lambda value: Resort.get_or_none(Resort.slug == value))
@@ -92,7 +101,7 @@ def validate_grid(payload, resort_lookup=None):
         if external_id in period_ids: errors.append({"path": f"{path}.id", "message": "identifiant de période dupliqué"})
         if external_id: period_ids.add(external_id)
         if start and end and start > end: errors.append({"path": path, "message": "start_date doit précéder end_date"})
-        periods.append({"external_id": external_id, "name": name, "start_date": start, "end_date": end, "sort_order": i})
+        periods.append({"external_id": external_id, "name": name, "start_date": start, "end_date": end, "sort_order": _sort_order(raw.get("sort_order"), i, f"{path}.sort_order", errors)})
 
     products, keys, price_count, product_ids = [], set(), 0, set()
     for i, raw in enumerate(raw_passes):
@@ -129,9 +138,9 @@ def validate_grid(payload, resort_lookup=None):
                 if value.get("price") is not None: errors.append({"path": ppath, "message": "un tarif dynamique ne contient pas price"})
                 if low is not None and high is not None and low > high: errors.append({"path": ppath, "message": "price_min doit être inférieur ou égal à price_max"})
             else: errors.append({"path": f"{ppath}.price_type", "message": "fixed ou dynamic attendu"})
-            prices.append({"period_external_id": period_id, "category": category, "category_label": category_label, "price_type": kind, "price": price, "price_min": low, "price_max": high, "dynamic_label": value.get("dynamic_label"), "note": note, "sort_order": j})
+            prices.append({"period_external_id": period_id, "category": category, "category_label": category_label, "price_type": kind, "price": price, "price_min": low, "price_max": high, "dynamic_label": value.get("dynamic_label"), "note": note, "sort_order": _sort_order(value.get("sort_order"), j, f"{ppath}.sort_order", errors)})
             price_count += 1
-        products.append({"external_id": external_id, "name": name, "duration_days": duration, "duration_label": label, "sort_order": i, "prices": prices})
+        products.append({"external_id": external_id, "name": name, "duration_days": duration, "duration_label": label, "sort_order": _sort_order(raw.get("sort_order"), i, f"{path}.sort_order", errors), "prices": prices})
     if isinstance(raw_passes, list) and price_count == 0:
         errors.append({"path": "passes", "message": "au moins un tarif est obligatoire"})
     normalized = {"resort": resort, "station_slug": slug, "season": season_name, "currency": currency, "source_url": source_url, "periods": periods, "products": products, "prices_count": price_count}

@@ -9,7 +9,7 @@ from flask import Flask
 
 from app.routes.admin_resort_import import bp_resort_json
 from app.services.resort_json import (SCHEMA_VERSION, ValidationProblem,
-    apply_record, differences, sanitize_html, validate_document, valid_url)
+    apply_record, differences, sanitize_html, serialize_station, validate_document, valid_url)
 
 
 class ResortJsonValidationTests(unittest.TestCase):
@@ -155,6 +155,47 @@ class ResortJsonValidationTests(unittest.TestCase):
     def test_present_empty_relation_is_preserved_as_instruction(self):
         doc = self.document(); doc["pistes"] = {"items": []}
         self.assertEqual(validate_document(doc)[0]["pistes"]["items"], [])
+    def test_new_blocks_and_official_map_are_validated(self):
+        doc = self.document()
+        doc.update({
+            "pistes": {"official_map_url": "https://example.test/plan"},
+            "description": {"enabled": False, "html": "<p>Distinct</p>"},
+            "forfaits_avances": {"seasons": []},
+            "domaines_skiables": {"items": []},
+        })
+        record = validate_document(doc)[0]
+        self.assertFalse(record["description"]["enabled"])
+        self.assertEqual(record["pistes"]["official_map_url"], "https://example.test/plan")
+
+    def test_advanced_tariff_validation_reports_nested_path(self):
+        doc = self.document()
+        doc["forfaits_avances"] = {"seasons": [{
+            "season": "2026-2027", "is_active": True, "currency": "EUR",
+            "periods": [], "passes": [],
+        }]}
+        with self.assertRaises(ValidationProblem) as raised:
+            validate_document(doc)
+        self.assertTrue(any(error["path"].startswith("forfaits_avances.seasons.0.")
+                            for error in raised.exception.errors))
+
+    @patch("app.services.resort_json._ski_areas", return_value=[])
+    @patch("app.services.resort_json._advanced_passes", return_value=[])
+    def test_widget_description_is_distinct_from_station_html(self, _passes, _areas):
+        resort = SimpleNamespace(**{field: None for field in __import__(
+            "app.services.resort_json", fromlist=["STATION_FIELDS"]).STATION_FIELDS})
+        resort.id = "id-1"; resort.slug = "station-test"; resort.description_html = "<p>Main</p>"
+        resort.pistes_small_map_url = resort.pistes_large_map_url = resort.pistes_caption = None
+        resort.snowpark_map_url = resort.snowpark_caption = None
+        result = serialize_station(resort, widgets={
+            "description": {"enabled": True, "html": "<p>Widget</p>"},
+            "pistes": {"officialMapUrl": "https://example.test/official"},
+        }, pistes=[], lifts=[])
+        self.assertEqual(result["station"]["description_html"], "<p>Main</p>")
+        self.assertEqual(result["description"], {
+            "enabled": True, "html": "<p>Widget</p>",
+            "meta_title": None, "meta_description": None,
+        })
+        self.assertEqual(result["pistes"]["official_map_url"], "https://example.test/official")
     def test_html_sanitization(self):
         clean = sanitize_html('<p onclick="x">Sûr<script>alert(1)</script><a href="javascript:x">lien</a></p>')
         self.assertEqual(clean, "<p>Sûr<a>lien</a></p>")

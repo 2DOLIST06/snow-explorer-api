@@ -118,3 +118,60 @@ n'ont pas été modifiés depuis. L'historique permet un rétablissement audité
 Export: `{"schema_version":"1.0","exported_at":"2026-08-01T19:00:00+00:00","station":{"id":"example-id","slug":"example-slug","name":"Example station"},"pistes":{"enabled":false,"items":[]}}`.
 
 Preview: `{"valid":true,"target":{"id":"...","slug":"auron","name":"Auron"},"changes":[{"path":"station.meta_title","old_value":"Avant","new_value":null,"action":"clear"}],"preview_token":"..."}`.
+
+## Couverture auditée (ajouts compatibles 1.0)
+
+La version reste `1.0` : les quatre blocs ajoutés sont facultatifs, donc les fichiers 1.0
+antérieurs restent valides et leur absence ne modifie aucune donnée existante.
+
+| Champ/bloc | Source enregistrée | Chemin JSON | Export/import unitaire et multiple |
+|---|---|---|---|
+| identité, publication, localisation, coordonnées, altitudes, totaux, saison, médias, descriptions principale et SEO | colonnes éditables de `Resort` | `station.*` | oui/oui |
+| détail et compteurs pistes | `Piste`; compteurs calculés | `pistes.items`, `pistes.green|blue|red|black` | oui; les compteurs sont informatifs, `items` est modifiable |
+| plan, activation et secours officiel | colonnes `Resort.pistes_*`; `StationWidgets.config.pistes` | `pistes.small_map_url|large_map_url|caption|enabled|official_map_url` | oui/oui |
+| remontées et compteurs | `Lift`; compteurs calculés | `remontees.items`, `remontees.tire_fesses|telesieges|telepheriques` | oui; compteurs informatifs |
+| description indépendante | `StationWidgets.config.description` | `description.enabled`, `description.html` | oui/oui; distinct de `station.description_html` |
+| snowpark visuel | colonnes `Resort.snowpark_*`; widget `snowpark` | `snowpark.*` | oui/oui |
+| forfaits historiques | widget `forfaits` | `forfaits.enabled|columns|items` | oui/oui, forme existante conservée |
+| forfaits avancés | `SkiPassSeason`, `SkiPassPeriod`, `SkiPassProduct`, `SkiPassPrice` | `forfaits_avances.seasons[]` | oui/oui; contrat normalisé existant `periods`/`passes`/`prices` |
+| domaines | `SkiAreaResort` vers `SkiArea` | `domaines_skiables.items[].id|slug` | oui/oui; aucune caractéristique de domaine dupliquée |
+| webcams, météo, enneigement | widgets homonymes | `webcams`, `meteo`, `snow` | oui/oui |
+
+Les exemples exhaustifs de démonstration sont
+[`station-export-1.0.json`](examples/station-export-1.0.json) et
+[`stations-export-1.0.json`](examples/stations-export-1.0.json). L'objet métier
+dans `stations[]` est exactement produit par le même sérialiseur que l'export unitaire.
+
+### Sémantique des nouveaux blocs
+
+* bloc absent : conservation intégrale ; `null` : effacement de la propriété nullable
+  explicitement fournie ; `false` et `0` sont conservés comme valeurs ;
+* `forfaits_avances.seasons: []` supprime toutes les saisons avancées. Un tableau
+  présent remplace l'ensemble, saison par saison, dans la transaction d'import ;
+* `domaines_skiables.items: []` retire tous les rattachements. Un tableau présent
+  remplace l'ensemble sans créer de domaine. Chaque référence est résolue avant écriture ;
+* une référence de domaine inconnue ou un couple `id`/`slug` contradictoire est une
+  erreur localisée. Les relations sont recréées sans doublon ;
+* `pistes.items: []` et `remontees.items: []` vident leur relation ; les tableaux
+  historiques de widgets présents et vides sont des suppressions explicites.
+
+La création requiert `slug` et `name`; un `id` absent ou `null` est généré en UUID.
+Pour une mise à jour, la résolution tente `id` et `slug`. S'ils désignent deux lignes,
+ou si un slug existant est accompagné d'un autre identifiant, l'import est refusé.
+La répétition du même fichier retrouve donc la même station et remplace les relations,
+sans duplication.
+
+La confirmation multiple utilise une transaction de fichier unique. Avec
+`all_or_nothing=true` (défaut), toute erreur empêche toute écriture. Avec `false`, les
+stations invalides sont ignorées mais toutes les écritures acceptées et l'historique
+restent dans une même transaction. Les réponses de preview donnent les erreurs avec
+leur chemin `stations.<index>...`; la confirmation donne les compteurs créés, mis à
+jour, ignorés et échoués.
+
+## Frontend
+
+Ce dépôt ne contient pas le frontend Snow Explorer. Les quatre routes nécessaires sont
+exposées sous les deux préfixes `/api/admin/resorts` et `/api/admin/stations`. Le front
+doit transmettre le document sans reconstruire/filtrer ses blocs, afficher `errors[].path`
+et `errors[].message`, puis renvoyer le même document et `preview_token` à la confirmation.
+Il doit proposer `create_missing` sur la liste et respecter le résultat transactionnel.
