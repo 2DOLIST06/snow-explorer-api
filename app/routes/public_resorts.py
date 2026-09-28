@@ -24,6 +24,7 @@ bp_public_stations = Blueprint(
 )
 
 MAX_LIMIT = 200
+SEARCH_LIMIT = 20
 
 
 def _get_field(model, candidates):
@@ -164,6 +165,31 @@ def station_map():
     response.headers["Cache-Control"] = "public, max-age=300, s-maxage=3600"
     response.headers["X-Public-Resorts-Version"] = str(get_public_resorts_version())
     return response, 200
+
+
+@bp_public_stations.get("/search")
+def search_stations():
+    """Small active-station projection for autocomplete clients."""
+    query_text = (request.args.get("q") or "").strip()
+    if len(query_text) < 2 or len(query_text) > 100:
+        return jsonify({"error": "q must contain between 2 and 100 characters"}), 400
+    try:
+        rows = (
+            Resort.select(Resort.id, Resort.name, Resort.slug)
+            .where(
+                (Resort.is_active == True)
+                & Resort.slug.is_null(False)
+                & (fn.TRIM(Resort.slug) != "")
+                & ((Resort.name ** f"%{query_text}%") | (Resort.slug ** f"%{query_text}%"))
+            )
+            .order_by(Resort.name.asc(), Resort.id.asc())
+            .limit(SEARCH_LIMIT)
+            .dicts()
+        )
+        return jsonify(list(rows)), 200
+    except Exception:
+        current_app.logger.exception("Unable to search public stations")
+        return jsonify({"error": "Unable to search stations"}), 500
 
 
 @bp_public.get("/")
