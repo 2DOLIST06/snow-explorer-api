@@ -19,6 +19,10 @@ from app.models.anmsm_station_mapping import AnmsmStationMapping
 from app.models.station_logo_candidate import StationLogoCandidate
 from app.models.station_piste_map_candidate import StationPisteMapCandidate
 from app.models.anmsm_station_snapshot import AnmsmStationSnapshot
+from app.models.newsletter import (
+    NewsletterStationPreference, NewsletterSubscriber,
+    NewsletterSubscriberStation, SnowAlert, SnowNewsletterPreference,
+)
 from app.models.ski_area import (SkiArea, SkiAreaCatalogArea,
                                  SkiAreaCatalogImport, SkiAreaCatalogNotice,
                                  SkiAreaExpectedMembership,
@@ -40,6 +44,7 @@ from app.routes.admin_station_logos import bp_admin_station_logos
 from app.routes.admin_anmsm_mappings import bp_admin_anmsm_mappings
 from app.routes.admin_piste_maps import bp_admin_piste_maps
 from app.routes.admin_anmsm_coverage import bp_admin_anmsm_coverage
+from app.routes.newsletter import bp_newsletter
 from app.routes.ski_passes import (
     bp_admin_ski_passes, bp_admin_station_ski_passes, bp_public_station_ski_passes,
     bp_ski_passes,
@@ -183,6 +188,10 @@ def create_app(config=None):
         db.create_tables([SkiArea, SkiAreaResort, SkiAreaCatalogImport,
                           SkiAreaCatalogArea, SkiAreaExpectedStation,
                           SkiAreaExpectedMembership, SkiAreaCatalogNotice])
+        db.create_tables([
+            NewsletterSubscriber, SnowNewsletterPreference,
+            NewsletterSubscriberStation, NewsletterStationPreference, SnowAlert,
+        ])
         db.close()
         # ``close()`` normally returns the connection to the pool.  Startup may
         # happen in a Gunicorn master with --preload, so do not leave a socket
@@ -216,6 +225,7 @@ def create_app(config=None):
     app.register_blueprint(bp_admin_ski_areas)
     app.register_blueprint(bp_station_ski_areas)
     app.register_blueprint(bp_admin_ski_area_catalog)
+    app.register_blueprint(bp_newsletter)
     # Le front historique utilise ``/api/admin/stations`` tandis que les
     # routes d'import/export ont d'abord été publiées sous ``resorts``.
     # Enregistrer le même blueprint une seconde fois garde les deux contrats
