@@ -13,6 +13,7 @@ from app.models.newsletter import (
     SnowNewsletterPreference,
 )
 from app.models.resort import Resort
+from app.services.newsletter_email import send_welcome_email
 
 
 bp_newsletter = Blueprint("newsletter", __name__, url_prefix="/api/newsletter")
@@ -29,10 +30,7 @@ STATION_BOOLEAN_FIELDS = {
     "weather_enabled", "snow_conditions_enabled", "resort_updates_enabled",
 }
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-GENERIC_SUBSCRIBE_RESPONSE = {
-    "message": "If the address can be subscribed, confirmation instructions will be sent.",
-    "status": "confirmation_required",
-}
+GENERIC_SUBSCRIBE_RESPONSE = {"data": {"status": "active"}}
 
 
 def _json_object():
@@ -69,7 +67,7 @@ def _new_unique_token(field):
 
 
 def _subscriber_for_token(token):
-    if not token or len(token) > 128:
+    if not isinstance(token, str) or not token or len(token) > 128:
         return None
     return NewsletterSubscriber.get_or_none(
         NewsletterSubscriber.preferences_token == token
@@ -137,8 +135,10 @@ def subscribe():
     email = _normalize_email(data.get("email"))
     language = data.get("language")
     source = _bounded_text(data, "source", 100)
-    consent_version = _bounded_text(data, "consent_text_version", 50)
-    consent_source = _bounded_text(data, "consent_source", 100)
+    consent_version = _bounded_text(data, "consentTextVersion", 50)
+    if not consent_version:  # Backward-compatible spelling used by the first API version.
+        consent_version = _bounded_text(data, "consent_text_version", 50)
+    consent_source = _bounded_text(data, "consent_source", 100, required=False) or source
     if email is None:
         return jsonify({"error": "invalid_email"}), 400
     if language not in LANGUAGES:
@@ -153,6 +153,8 @@ def subscribe():
             return jsonify({"error": "station_not_found"}), 404
 
     now = utcnow()
+    send_welcome = False
+    subscriber = None
     try:
         with NewsletterSubscriber._meta.database.atomic():
             subscriber = NewsletterSubscriber.get_or_none(
@@ -161,34 +163,32 @@ def subscribe():
             if subscriber is None:
                 subscriber = NewsletterSubscriber.create(
                     email=email,
-                    status="pending",
+                    status="active",
                     language=language,
                     source=source,
                     consent_at=now,
                     consent_text_version=consent_version,
                     consent_source=consent_source,
-                    confirmation_token=_new_unique_token(NewsletterSubscriber.confirmation_token),
+                    confirmed_at=now,
+                    confirmation_token=None,
                     preferences_token=_new_unique_token(NewsletterSubscriber.preferences_token),
                 )
                 SnowNewsletterPreference.create(subscriber=subscriber)
+                send_welcome = True
             elif subscriber.status == "unsubscribed":
-                subscriber.status = "pending"
+                subscriber.status = "active"
                 subscriber.language = language
                 subscriber.source = source
                 subscriber.consent_at = now
                 subscriber.consent_text_version = consent_version
                 subscriber.consent_source = consent_source
-                subscriber.confirmation_token = _new_unique_token(
-                    NewsletterSubscriber.confirmation_token
-                )
-                subscriber.preferences_token = _new_unique_token(
-                    NewsletterSubscriber.preferences_token
-                )
-                subscriber.confirmed_at = None
+                subscriber.confirmation_token = None
+                subscriber.confirmed_at = now
                 subscriber.unsubscribed_at = None
                 subscriber.updated_at = now
                 subscriber.save()
                 SnowNewsletterPreference.get_or_create(subscriber=subscriber)
+                send_welcome = True
             elif subscriber.status in {"active", "pending"}:
                 SnowNewsletterPreference.get_or_create(subscriber=subscriber)
 
@@ -200,7 +200,9 @@ def subscribe():
     except Exception:
         current_app.logger.exception("Unable to register newsletter subscription")
         return jsonify({"error": "subscription_unavailable"}), 503
-    return jsonify(GENERIC_SUBSCRIBE_RESPONSE), 202
+    if send_welcome and subscriber is not None:
+        send_welcome_email(subscriber, station.name if station is not None else None)
+    return jsonify(GENERIC_SUBSCRIBE_RESPONSE), 201
 
 
 @bp_newsletter.post("/confirm")
@@ -222,8 +224,10 @@ def confirm():
     return jsonify({"status": "active", "confirmed_at": _iso(subscriber.confirmed_at)}), 200
 
 
+@bp_newsletter.get("/preferences")
 @bp_newsletter.get("/preferences/<token>")
-def get_preferences(token):
+def get_preferences(token=None):
+    token = token or request.args.get("token")
     subscriber = _subscriber_for_token(token)
     if subscriber is None:
         return jsonify({"error": "invalid_preferences_token"}), 404
@@ -242,26 +246,36 @@ def get_preferences(token):
         .order_by(Resort.name.asc(), Resort.id.asc())
     )
     for relation in followed:
+        station_preference = station_preferences.get(relation.station_id)
+        if station_preference is None:
+            station_preference, _ = NewsletterStationPreference.get_or_create(
+                subscriber=subscriber, station=relation.station
+            )
         station_data = _station_dict(relation.station)
         station_data["preferences"] = _station_preference_dict(
-            station_preferences[relation.station_id]
+            station_preference
         )
         stations.append(station_data)
     alerts = [
         _alert_dict(alert) for alert in
         SnowAlert.select().where(SnowAlert.subscriber == subscriber).order_by(SnowAlert.id)
     ]
-    return jsonify({
+    response_data = {
         "status": subscriber.status,
         "language": subscriber.language,
         "preferences": _general_dict(preference),
+        "newsletter_frequency": preference.newsletter_frequency,
         "stations": stations,
         "alerts": alerts,
-    }), 200
+        "unsubscribed": subscriber.status == "unsubscribed",
+    }
+    return jsonify({"data": response_data}), 200
 
 
+@bp_newsletter.put("/preferences")
 @bp_newsletter.put("/preferences/<token>")
-def update_preferences(token):
+def update_preferences(token=None):
+    token = token or request.args.get("token")
     subscriber = _subscriber_for_token(token)
     if subscriber is None:
         return jsonify({"error": "invalid_preferences_token"}), 404
@@ -279,7 +293,7 @@ def update_preferences(token):
         setattr(preference, field, value)
     preference.updated_at = utcnow()
     preference.save()
-    return jsonify({"preferences": _general_dict(preference)}), 200
+    return jsonify({"data": {"preferences": _general_dict(preference)}}), 200
 
 
 @bp_newsletter.post("/preferences/<token>/stations")
@@ -446,8 +460,12 @@ def delete_alert(token, alert_id):
     return "", 204
 
 
+@bp_newsletter.post("/unsubscribe")
 @bp_newsletter.post("/unsubscribe/<token>")
-def unsubscribe(token):
+def unsubscribe(token=None):
+    if token is None:
+        data = _json_object()
+        token = data.get("token") if data else None
     subscriber = _subscriber_for_token(token)
     if subscriber is None:
         return jsonify({"error": "invalid_preferences_token"}), 404
@@ -456,4 +474,6 @@ def unsubscribe(token):
         subscriber.unsubscribed_at = utcnow()
         subscriber.updated_at = subscriber.unsubscribed_at
         subscriber.save()
-    return jsonify({"status": "unsubscribed", "unsubscribed_at": _iso(subscriber.unsubscribed_at)}), 200
+    return jsonify({"data": {
+        "status": "unsubscribed", "unsubscribed_at": _iso(subscriber.unsubscribed_at)
+    }}), 200
