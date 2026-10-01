@@ -221,7 +221,7 @@ def check_structure(value, depth=0):
         for item in value.values(): check_structure(item, depth + 1)
 
 
-def validate_document(document, bulk=False):
+def validate_document(document, bulk=False, allow_empty_advanced=False):
     errors = []
     if not isinstance(document, dict): raise ValidationProblem("root must be an object")
     check_structure(document)
@@ -314,7 +314,16 @@ def validate_document(document, bulk=False):
                     if season.get("season") in seen: errors.append({"path": season_path + ".season", "message": "duplicate season"})
                     seen.add(season.get("season"))
                     payload = {**season, "station_slug": station.get("slug")}
-                    _, grid_errors = validate_grid(payload, resort_lookup=lambda _: object())
+                    empty_replacement = (
+                        allow_empty_advanced
+                        and season.get("periods") == []
+                        and season.get("passes") == []
+                    )
+                    _, grid_errors = validate_grid(
+                        payload,
+                        resort_lookup=lambda _: object(),
+                        allow_empty=empty_replacement,
+                    )
                     errors.extend({"path": season_path + "." + error["path"], "message": error["message"]} for error in grid_errors)
                     if "is_active" in season and type(season["is_active"]) is not bool:
                         errors.append({"path": season_path + ".is_active", "message": "must be a boolean"})
@@ -362,6 +371,10 @@ def apply_record(resort, record):
     updated, relation_updates = [], []
     old_slug = resort.slug
     cfg = _load_widgets(old_slug)
+    if isinstance(cfg.get("pistes"), dict):
+        cfg["pistes"] = dict(cfg["pistes"])
+        for key in ("smallMapUrl", "largeMapUrl", "small_map_url", "large_map_url"):
+            cfg["pistes"].pop(key, None)
     station = record.get("station", {})
     for field, value in station.items():
         if field not in STATION_MUTABLE_FIELDS: continue
@@ -438,6 +451,8 @@ def _replace_advanced_passes(resort, seasons):
         active = bool(value.get("is_active", False))
         row, errors = replace_grid(payload)
         if errors: raise ValidationProblem(errors)
+        if row is None:
+            continue
         if bool(row.is_active) != active:
             row.is_active = active; row.save(only=[SkiPassSeason.is_active])
 

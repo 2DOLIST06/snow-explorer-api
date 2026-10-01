@@ -94,6 +94,12 @@ def _normalize_widgets_config(cfg):
         items = []
     forfaits["items"] = [_normalize_forfait_item(item, i) for i, item in enumerate(items, start=1)]
     out["forfaits"] = forfaits
+    pistes = out.get("pistes")
+    if isinstance(pistes, dict):
+        pistes = dict(pistes)
+        for key in ("smallMapUrl", "largeMapUrl", "small_map_url", "large_map_url"):
+            pistes.pop(key, None)
+        out["pistes"] = pistes
     return out
 
 
@@ -338,12 +344,24 @@ def patch_resort_admin(slug):
             if f in payload:
                 if f == "is_active":
                     r.is_active = bool(payload["is_active"])
+                elif f in {"pistes_small_map_url", "pistes_large_map_url"}:
+                    value = payload[f]
+                    if isinstance(value, str):
+                        value = value.strip() or None
+                    setattr(r, f, value)
                 else:
                     setattr(r, f, payload[f])
         # le slug n’est pas modifié ici (stabilité des URLs)
         if payload_for_validation:
             r.updated_at = utcnow()
             r.save()
+
+        if {"pistes_small_map_url", "pistes_large_map_url"} & payload.keys():
+            widgets = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
+            if widgets:
+                cfg = _normalize_widgets_config(StationWidgets.from_json(widgets.config))
+                widgets.config = StationWidgets.to_json(cfg)
+                widgets.save()
 
     if payload_for_validation:
         # Ordinary station fields are projected by the station resource and

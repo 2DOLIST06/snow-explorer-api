@@ -61,7 +61,7 @@ def _sort_order(value, default, path, errors):
     return value
 
 
-def validate_grid(payload, resort_lookup=None):
+def validate_grid(payload, resort_lookup=None, allow_empty=False):
     errors = []
     if not isinstance(payload, dict):
         return None, [{"path": "$", "message": "objet JSON obligatoire"}]
@@ -85,11 +85,11 @@ def validate_grid(payload, resort_lookup=None):
     raw_passes = payload.get("passes")
     if not isinstance(raw_periods, list):
         errors.append({"path": "periods", "message": "tableau obligatoire"}); raw_periods = []
-    elif not raw_periods:
+    elif not raw_periods and not allow_empty:
         errors.append({"path": "periods", "message": "au moins une période est obligatoire"})
     if not isinstance(raw_passes, list):
         errors.append({"path": "passes", "message": "tableau obligatoire"}); raw_passes = []
-    elif not raw_passes:
+    elif not raw_passes and not allow_empty:
         errors.append({"path": "passes", "message": "au moins un forfait est obligatoire"})
     periods, period_ids = [], set()
     for i, raw in enumerate(raw_periods):
@@ -141,7 +141,7 @@ def validate_grid(payload, resort_lookup=None):
             prices.append({"period_external_id": period_id, "category": category, "category_label": category_label, "price_type": kind, "price": price, "price_min": low, "price_max": high, "dynamic_label": value.get("dynamic_label"), "note": note, "sort_order": _sort_order(value.get("sort_order"), j, f"{ppath}.sort_order", errors)})
             price_count += 1
         products.append({"external_id": external_id, "name": name, "duration_days": duration, "duration_label": label, "sort_order": _sort_order(raw.get("sort_order"), i, f"{path}.sort_order", errors), "prices": prices})
-    if isinstance(raw_passes, list) and price_count == 0:
+    if isinstance(raw_passes, list) and price_count == 0 and not allow_empty:
         errors.append({"path": "passes", "message": "au moins un tarif est obligatoire"})
     normalized = {"resort": resort, "station_slug": slug, "season": season_name, "currency": currency, "source_url": source_url, "periods": periods, "products": products, "prices_count": price_count}
     return normalized, errors
@@ -153,12 +153,29 @@ def preview(payload, resort_lookup=None):
 
 
 def replace_grid(payload, target_season=None):
-    grid, errors = validate_grid(payload)
+    empty_replacement = (
+        isinstance(payload, dict)
+        and payload.get("periods") == []
+        and payload.get("passes") == []
+    )
+    grid, errors = validate_grid(payload, allow_empty=empty_replacement)
     if errors: return None, errors
     with db.atomic():
         season = target_season
         if season is None:
+            if empty_replacement:
+                season = SkiPassSeason.get_or_none(
+                    (SkiPassSeason.resort == grid["resort"])
+                    & (SkiPassSeason.season == grid["season"])
+                )
+                if season is None:
+                    return None, [{"path": "season", "message": "saison existante obligatoire pour supprimer une grille vide"}]
+                season.delete_instance()
+                return None, []
             season, _ = SkiPassSeason.get_or_create(resort=grid["resort"], season=grid["season"], defaults={"currency": grid["currency"], "source_url": grid["source_url"]})
+        elif empty_replacement:
+            season.delete_instance()
+            return None, []
         season.season, season.currency = grid["season"], grid["currency"]
         season.source_url, season.updated_at = grid["source_url"], utcnow()
         season.save()

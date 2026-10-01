@@ -40,15 +40,15 @@ class OfficialMapUrlTests(unittest.TestCase):
                 json={"pistes": {"officialMapUrl": value}},
             )
 
-    def test_admin_patch_persists_absolute_https_url_without_changing_map_urls(self):
+    def test_admin_patch_persists_absolute_https_url_and_removes_legacy_map_urls(self):
         row = DummyWidgets({"pistes": {"smallMapUrl": "small", "largeMapUrl": "large"}})
         response = self.patch_widgets(row, "https://station.example/plan-des-pistes")
 
         self.assertEqual(response.status_code, 200)
         pistes = StationWidgets.from_json(row.config)["pistes"]
         self.assertEqual(pistes["officialMapUrl"], "https://station.example/plan-des-pistes")
-        self.assertEqual(pistes["smallMapUrl"], "small")
-        self.assertEqual(pistes["largeMapUrl"], "large")
+        self.assertNotIn("smallMapUrl", pistes)
+        self.assertNotIn("largeMapUrl", pistes)
 
     def test_admin_patch_normalizes_empty_string_to_null(self):
         row = DummyWidgets({"pistes": {"enabled": True}})
