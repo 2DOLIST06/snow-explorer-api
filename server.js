@@ -90,6 +90,14 @@ function normalizeForfaitItem(item, index) {
 
 function normalizeWidgetsConfig(widgets) {
   const safeWidgets = widgets && typeof widgets === 'object' ? { ...widgets } : {};
+  if (safeWidgets.pistes && typeof safeWidgets.pistes === 'object') {
+    const pistes = { ...safeWidgets.pistes };
+    delete pistes.smallMapUrl;
+    delete pistes.largeMapUrl;
+    delete pistes.small_map_url;
+    delete pistes.large_map_url;
+    safeWidgets.pistes = pistes;
+  }
   const forfaits = safeWidgets.forfaits && typeof safeWidgets.forfaits === 'object'
     ? { ...safeWidgets.forfaits }
     : {};
@@ -129,6 +137,8 @@ async function loadResortBySlug(slug) {
        ski_area_km,
        lifts_count,
        pistes_count,
+       pistes_small_map_url,
+       pistes_large_map_url,
        to_char(season_open_date,'YYYY-MM-DD')  as season_open_date,
        to_char(season_close_date,'YYYY-MM-DD') as season_close_date
      from resort

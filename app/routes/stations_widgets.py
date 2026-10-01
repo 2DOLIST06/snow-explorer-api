@@ -81,6 +81,8 @@ def _normalize_widgets_config(cfg):
     out["forfaits"] = forfaits
     pistes = out.get("pistes")
     pistes = dict(pistes) if isinstance(pistes, dict) else {"enabled": False}
+    for key in ("smallMapUrl", "largeMapUrl", "small_map_url", "large_map_url"):
+        pistes.pop(key, None)
     pistes.setdefault("officialMapUrl", None)
     out["pistes"] = pistes
     return out

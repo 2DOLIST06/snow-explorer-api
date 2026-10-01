@@ -53,6 +53,15 @@ def _persist(payload, target_season=None):
         season, errors = replace_grid(payload, target_season=target_season)
         if errors:
             return jsonify({"success": False, "errors": errors}), 422
+        if season is None:
+            slug = payload.get("station_slug")
+            invalidate_ski_passes(slug)
+            return jsonify({
+                "success": True,
+                "deleted": True,
+                "station_slug": slug,
+                "season": payload.get("season"),
+            }), 200
         result = import_result(season)
         if not result["periods_count"] or not result["passes_count"] or not result["prices_count"]:
             return jsonify({

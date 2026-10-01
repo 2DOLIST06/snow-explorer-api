@@ -4,11 +4,14 @@ import unittest
 from unittest.mock import patch
 
 from flask import Flask
+from peewee import SqliteDatabase
 
 sys.modules.setdefault("boto3", types.SimpleNamespace())
 
 from app import create_app
 from app.routes.admin_stations import bp_admin_st
+from app.models.resort import Resort
+from app.models.station_widgets import StationWidgets
 
 
 class DummyResort:
@@ -21,6 +24,8 @@ class DummyResort:
         self.website_url = "https://station.example.test"
         self.region_name = "Alpes"
         self.is_active = False
+        self.pistes_small_map_url = "https://cdn.example.test/small.jpg"
+        self.pistes_large_map_url = "https://cdn.example.test/large.jpg"
         self.save_count = 0
 
     def save(self):
@@ -50,7 +55,8 @@ class AdminStationPatchTests(unittest.TestCase):
         with patch(
             "app.routes.admin_stations.Resort.get_or_none",
             return_value=self.resort,
-        ), patch("app.routes.admin_stations.db.atomic"):
+        ), patch("app.routes.admin_stations.StationWidgets.get_or_none", return_value=None), \
+             patch("app.routes.admin_stations.db.atomic"):
             return self.client.patch(
                 "/api/admin/stations/station-test",
                 json=payload,
@@ -114,6 +120,23 @@ class AdminStationPatchTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.resort.to_dict(), original)
 
+    def test_map_url_null_and_blank_clear_the_canonical_columns(self):
+        response = self.patch_station({"pistes_small_map_url": None})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(self.resort.pistes_small_map_url)
+
+        response = self.patch_station({"pistes_large_map_url": "   "})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(self.resort.pistes_large_map_url)
+
+    def test_absent_map_url_keys_leave_canonical_columns_unchanged(self):
+        small = self.resort.pistes_small_map_url
+        large = self.resort.pistes_large_map_url
+        response = self.patch_station({"name": "Nouveau nom"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.resort.pistes_small_map_url, small)
+        self.assertEqual(self.resort.pistes_large_map_url, large)
+
     def test_unknown_field_is_rejected_without_saving(self):
         response = self.patch_station({"unknown_field": "value"})
 
@@ -142,6 +165,67 @@ class AdminStationPatchTests(unittest.TestCase):
         )
 
         self.assertEqual(endpoint, "admin_stations.patch_resort_admin")
+
+
+class AdminStationMapPersistenceTests(unittest.TestCase):
+    def setUp(self):
+        self.database = SqliteDatabase(":memory:")
+        self.database.bind([Resort, StationWidgets])
+        self.database.connect()
+        self.database.create_tables([Resort, StationWidgets])
+        self.resort = Resort.create(
+            id="station-id", slug="station-test", name="Station Test",
+            pistes_small_map_url="https://cdn.example.test/small.jpg",
+            pistes_large_map_url="https://cdn.example.test/large.jpg",
+        )
+        StationWidgets.create(
+            station_slug=self.resort.slug,
+            config=StationWidgets.to_json({"pistes": {
+                "enabled": True,
+                "smallMapUrl": "https://legacy.example.test/small.jpg",
+                "large_map_url": "https://legacy.example.test/large.jpg",
+                "caption": "Conservée",
+            }}),
+        )
+        app = Flask(__name__)
+        app.register_blueprint(bp_admin_st)
+        self.client = app.test_client()
+
+    def tearDown(self):
+        self.database.drop_tables([StationWidgets, Resort])
+        self.database.close()
+
+    def test_sql_null_blank_absent_and_round_trip_do_not_restore_legacy_urls(self):
+        self.assertEqual(self.client.patch(
+            "/api/admin/stations/station-test", json={"pistes_small_map_url": None},
+        ).status_code, 200)
+        self.assertEqual(self.client.patch(
+            "/api/admin/stations/station-test", json={"pistes_large_map_url": "  "},
+        ).status_code, 200)
+        stored = Resort.get_by_id(self.resort.id)
+        self.assertIsNone(stored.pistes_small_map_url)
+        self.assertIsNone(stored.pistes_large_map_url)
+
+        response = self.client.get("/api/admin/stations/station-test")
+        self.assertIsNone(response.get_json()["resort"]["pistes_small_map_url"])
+        self.assertIsNone(response.get_json()["resort"]["pistes_large_map_url"])
+        pistes = response.get_json()["widgets"]["pistes"]
+        self.assertNotIn("smallMapUrl", pistes)
+        self.assertNotIn("large_map_url", pistes)
+        self.assertEqual(pistes["caption"], "Conservée")
+
+        self.assertEqual(self.client.patch(
+            "/api/admin/stations/station-test", json={"name": "Station Test"},
+        ).status_code, 200)
+        stored = Resort.get_by_id(self.resort.id)
+        self.assertIsNone(stored.pistes_small_map_url)
+        self.assertIsNone(stored.pistes_large_map_url)
+
+    def test_absent_map_keys_preserve_existing_sql_values(self):
+        self.client.patch("/api/admin/stations/station-test", json={"name": "Nouveau nom"})
+        stored = Resort.get_by_id(self.resort.id)
+        self.assertEqual(stored.pistes_small_map_url, "https://cdn.example.test/small.jpg")
+        self.assertEqual(stored.pistes_large_map_url, "https://cdn.example.test/large.jpg")
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ from app.routes.ski_passes import (
     bp_ski_passes,
 )
 from app.services.ski_passes import preview, replace_grid, serialize_season, validate_grid
+from app.services.resort_json import _replace_advanced_passes, serialize_station
 
 
 def grid():
@@ -131,6 +132,83 @@ class SkiPassPersistenceTests(unittest.TestCase):
             price_create.call_args_list[0].kwargs["note"],
             "Des tarifs réduits sont proposés…",
         )
+
+
+class SkiPassReplacementIntegrationTests(unittest.TestCase):
+    models = [Resort, StationWidgets, SkiPassSeason, SkiPassPeriod, SkiPassProduct, SkiPassPrice]
+
+    def setUp(self):
+        self.database = SqliteDatabase(":memory:", pragmas={"foreign_keys": 1})
+        self.database.bind(self.models)
+        self.database.connect()
+        self.database.create_tables(self.models)
+        self.resort = Resort.create(id="resort-1", name="Chamonix", slug="chamonix")
+        self.widgets = StationWidgets.create(
+            station_slug="chamonix",
+            config=StationWidgets.to_json({"forfaits": {"enabled": True, "items": [{"id": "legacy"}]}}),
+        )
+
+    def tearDown(self):
+        self.database.drop_tables(self.models)
+        self.database.close()
+
+    def test_existing_grid_can_be_replaced_then_deleted_without_touching_legacy(self):
+        initial = grid()
+        initial["passes"][0]["prices"].append({
+            "period_id": "low", "category": "senior", "category_label": "Senior",
+            "price_type": "fixed", "price": 40,
+        })
+        season, errors = replace_grid(initial)
+        self.assertEqual(errors, [])
+        self.assertEqual(SkiPassPrice.select().where(SkiPassPrice.product.in_(
+            SkiPassProduct.select(SkiPassProduct.id).where(SkiPassProduct.season == season)
+        )).count(), 4)
+
+        replacement = grid()
+        replacement["passes"][0]["prices"] = replacement["passes"][0]["prices"][:2]
+        replacement["passes"] = replacement["passes"][:1]
+        replaced, errors = replace_grid(replacement, target_season=season)
+        self.assertEqual(errors, [])
+        self.assertEqual(SkiPassPrice.select().where(SkiPassPrice.product.in_(
+            SkiPassProduct.select(SkiPassProduct.id).where(SkiPassProduct.season == replaced)
+        )).count(), 2)
+
+        deleted, errors = replace_grid({
+            "station_slug": "chamonix", "season": "2026-2027", "currency": "EUR",
+            "periods": [], "passes": [],
+        }, target_season=replaced)
+        self.assertEqual((deleted, errors), (None, []))
+        self.assertEqual(SkiPassSeason.select().count(), 0)
+        self.assertEqual(SkiPassPeriod.select().count(), 0)
+        self.assertEqual(SkiPassProduct.select().count(), 0)
+        self.assertEqual(SkiPassPrice.select().count(), 0)
+
+        with patch("app.services.resort_json._ski_areas", return_value=[]):
+            exported = serialize_station(
+                self.resort,
+                widgets=StationWidgets.from_json(self.widgets.config),
+                pistes=[], lifts=[],
+            )
+        self.assertEqual(exported["forfaits_avances"]["seasons"], [])
+        self.assertEqual(exported["forfaits"]["items"], [{"id": "legacy"}])
+        self.assertEqual(
+            StationWidgets.from_json(StationWidgets.get_by_id(self.widgets.station_slug).config)["forfaits"]["items"],
+            [{"id": "legacy"}],
+        )
+
+    def test_empty_grid_does_not_create_a_new_season_and_empty_full_import_deletes_all(self):
+        deleted, errors = replace_grid({
+            "station_slug": "chamonix", "season": "missing", "currency": "EUR",
+            "periods": [], "passes": [],
+        })
+        self.assertIsNone(deleted)
+        self.assertTrue(errors)
+
+        replace_grid(grid())
+        other = grid(); other["season"] = "2027-2028"
+        replace_grid(other)
+        _replace_advanced_passes(self.resort, [])
+        self.assertEqual(SkiPassSeason.select().count(), 0)
 
 
 class PublicSerializationTests(unittest.TestCase):

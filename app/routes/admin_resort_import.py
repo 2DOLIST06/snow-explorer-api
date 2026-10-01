@@ -86,7 +86,7 @@ def preview_one(identifier):
     resort = _find(identifier)
     if not resort: return jsonify({"error": "not_found"}), 404
     try:
-        document, filename = parse_upload(request); record = validate_document(document)[0]
+        document, filename = parse_upload(request); record = validate_document(document, allow_empty_advanced=True)[0]
     except (OverflowError, ValueError, ValidationProblem) as exc: return _error(exc)
     identity_error = _target_identity_error(resort, record["station"])
     if identity_error: return jsonify({"valid": False, "errors": [identity_error]}), 422
@@ -102,7 +102,7 @@ def confirm_one(identifier):
     resort = _find(identifier)
     if not resort: return jsonify({"error": "not_found"}), 404
     token = _submitted_preview_token()
-    try: document, filename = parse_upload(request); record = validate_document(document)[0]
+    try: document, filename = parse_upload(request); record = validate_document(document, allow_empty_advanced=True)[0]
     except (OverflowError, ValueError, ValidationProblem) as exc: return _error(exc)
     identity_error = _target_identity_error(resort, record["station"])
     if identity_error: return jsonify({"error": "identity_conflict", "errors": [identity_error]}), 422
