@@ -1,5 +1,6 @@
 from peewee import (
-    Model, CharField, TextField, IntegerField, FloatField, BooleanField, DateField
+    Model, CharField, TextField, IntegerField, FloatField, BooleanField, DateField,
+    Check,
 )
 from app.models.base import db
 from app.datetime_utils import UTCDateTimeField, utcnow
@@ -75,6 +76,15 @@ class Resort(Model):
     meta_title       = TextField(null=True)
     meta_description = TextField(null=True)
 
+    # Fiche éditoriale V2. L'activation reste indépendante du remplissage des
+    # contenus afin que la préparation puisse se faire station par station.
+    page_layout_version = CharField(max_length=16, null=False, default="legacy")
+    v2_overview_html = TextField(null=True)
+    v2_weather_snow_html = TextField(null=True)
+    v2_ski_pass_html = TextField(null=True)
+    v2_piste_map_html = TextField(null=True)
+    v2_webcam_html = TextField(null=True)
+
     # Plan des pistes
     pistes_small_map_url = TextField(null=True)
     pistes_large_map_url = TextField(null=True)
@@ -94,6 +104,9 @@ class Resort(Model):
     class Meta:
         database = db
         table_name = "resort"
+        constraints = [
+            Check("page_layout_version IN ('legacy', 'v2')"),
+        ]
 
     def to_dict(self):
         alt_min = self.altitude_min_m
@@ -137,6 +150,13 @@ class Resort(Model):
             "description_html": _as_str(self.description_html),
             "meta_title": _as_str(self.meta_title),
             "meta_description": _as_str(self.meta_description),
+
+            "page_layout_version": self.page_layout_version,
+            "v2_overview_html": _as_str(self.v2_overview_html),
+            "v2_weather_snow_html": _as_str(self.v2_weather_snow_html),
+            "v2_ski_pass_html": _as_str(self.v2_ski_pass_html),
+            "v2_piste_map_html": _as_str(self.v2_piste_map_html),
+            "v2_webcam_html": _as_str(self.v2_webcam_html),
 
             "pistes_small_map_url": _as_str(self.pistes_small_map_url),
             "pistes_large_map_url": _as_str(self.pistes_large_map_url),
