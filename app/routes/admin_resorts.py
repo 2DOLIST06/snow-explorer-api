@@ -4,6 +4,8 @@ from datetime import date
 from app.models.resort import Resort
 from app.datetime_utils import utcnow
 from app.services.public_cache import invalidate_station
+from app.services.station_v2 import station_v2_state
+from app.models.station_widgets import StationWidgets
 
 bp_admin = Blueprint("admin_resorts", __name__, url_prefix="/api/admin/resorts")
 
@@ -32,6 +34,8 @@ ALLOWED = {
     "ski_area_km", "lifts_count", "pistes_count",
     "amenities",
     "is_active",
+    "page_layout_version", "v2_overview_html", "v2_weather_snow_html",
+    "v2_ski_pass_html", "v2_piste_map_html", "v2_webcam_html",
 }
 INTS  = {"altitude_base_m", "altitude_top_m", "altitude_min_m", "altitude_max_m", "ski_area_km", "lifts_count", "pistes_count"}
 FLTS  = {"latitude", "longitude"}
@@ -65,7 +69,11 @@ def get_admin_resort(slug: str):
     r = _find_by_slug(slug)
     if not r:
         return jsonify({"error": "not_found"}), 404
-    return jsonify(r.to_dict()), 200
+    data = r.to_dict()
+    widget = StationWidgets.get_or_none(StationWidgets.station_slug == r.slug)
+    cfg = StationWidgets.from_json(widget.config) if widget else {}
+    data["v2_readiness"] = station_v2_state(r, cfg)["readiness"]
+    return jsonify(data), 200
 
 @bp_admin.patch("/<slug>")
 def patch_admin_resort(slug: str):
@@ -76,6 +84,8 @@ def patch_admin_resort(slug: str):
     payload = request.get_json(silent=True) or {}
     if "is_active" in payload and not isinstance(payload.get("is_active"), bool):
         return jsonify({"error": "is_active_must_be_boolean"}), 400
+    if payload.get("page_layout_version", r.page_layout_version) not in {"legacy", "v2"}:
+        return jsonify({"error": "invalid_page_layout_version"}), 400
     activation_changed = (
         "is_active" in payload
         and bool(payload["is_active"]) != bool(r.is_active)

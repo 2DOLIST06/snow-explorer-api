@@ -14,6 +14,7 @@ from app.models.ski_pass import (
 )
 from app.models.station_widgets import StationWidgets
 from app.services.ski_passes import serialize_season
+from app.services.station_v2 import v2_public_fields
 
 
 PUBLIC_CFG_KEYS = (
@@ -101,7 +102,7 @@ def get_public_resort(slug):
     widget_row = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
     raw_cfg = StationWidgets.from_json(widget_row.config) if widget_row else {}
 
-    return {
+    data = {
         "id": str(resort.id),
         "name": resort.name,
         "slug": resort.slug,
@@ -131,3 +132,5 @@ def get_public_resort(slug):
         "cfg": public_cfg(raw_cfg),
         "ski_pass": _active_ski_pass(resort),
     }
+    data.update(v2_public_fields(resort, raw_cfg))
+    return data

@@ -17,6 +17,7 @@ from app.models.ski_pass import (
     SkiPassSeason,
 )
 from app.services.ski_passes import decimal_json
+from app.services.station_v2 import v2_public_fields
 
 bp_public = Blueprint("public_resorts", __name__, url_prefix="/api/resorts")
 bp_public_stations = Blueprint(
@@ -365,6 +366,9 @@ def _get_station_response(slug: str):
 
         data = _resort_public_dict(resort, _station_snowparks_count(slug))
         data["ski_pass"] = _station_active_ski_pass(resort.id)
+        widget = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
+        cfg = StationWidgets.from_json(widget.config) if widget else {}
+        data.update(v2_public_fields(resort, cfg))
         # Additive field: legacy station keys and routes remain unchanged.
         from app.routes.ski_areas import public_station_domains
         data["ski_areas"] = public_station_domains(resort)

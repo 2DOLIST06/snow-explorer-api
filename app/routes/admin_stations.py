@@ -7,6 +7,7 @@ from app.models.station_widgets import StationWidgets
 from app.services.public_cache import (bump_public_resorts_version,
                                        invalidate_station, invalidate_widgets)
 from app.datetime_utils import utcnow
+from app.services.station_v2 import station_v2_state
 import json
 import re
 import uuid
@@ -139,6 +140,14 @@ def _with_official_map_url(cfg):
     return out
 
 
+def _v2_admin_state(resort, cfg):
+    state = station_v2_state(resort, cfg)
+    return {
+        "page_layout_version": getattr(resort, "page_layout_version", "legacy"),
+        "sections": state["readiness"],
+    }
+
+
 # ============ LIST ============
 @bp_admin_st.get("/")
 def list_resorts():
@@ -174,6 +183,8 @@ def create_resort():
     slug = (payload.get("slug") or _slugify(name))
     if Resort.get_or_none(Resort.slug == slug):
         abort(409, "slug déjà existant")
+    if payload.get("page_layout_version", "legacy") not in {"legacy", "v2"}:
+        abort(400, "page_layout_version doit être legacy ou v2")
 
     expected = None
     if payload.get("station_ref"):
@@ -219,15 +230,22 @@ def create_resort():
             pistes_count=payload.get("pistes_count"),
             ski_area_km=payload.get("ski_area_km"),
 
-                    # Contenu / SEO
-        website_url=payload.get("website_url"),
-        cover_image_url=payload.get("cover_image_url"),
-        logo_url=payload.get("logo_url"),   # ⬅️ AJOUT
-        amenities=payload.get("amenities"),
-        description_md=payload.get("description_md"),
-        description_html=payload.get("description_html"),
-        meta_title=payload.get("meta_title"),
-        meta_description=payload.get("meta_description"),
+            # Contenu / SEO
+            website_url=payload.get("website_url"),
+            cover_image_url=payload.get("cover_image_url"),
+            logo_url=payload.get("logo_url"),
+            amenities=payload.get("amenities"),
+            description_md=payload.get("description_md"),
+            description_html=payload.get("description_html"),
+            meta_title=payload.get("meta_title"),
+            meta_description=payload.get("meta_description"),
+
+            page_layout_version=payload.get("page_layout_version", "legacy"),
+            v2_overview_html=payload.get("v2_overview_html"),
+            v2_weather_snow_html=payload.get("v2_weather_snow_html"),
+            v2_ski_pass_html=payload.get("v2_ski_pass_html"),
+            v2_piste_map_html=payload.get("v2_piste_map_html"),
+            v2_webcam_html=payload.get("v2_webcam_html"),
 
             # Plan des pistes
             pistes_small_map_url=payload.get("pistes_small_map_url"),
@@ -278,6 +296,7 @@ def get_resort_admin(slug):
 
     return jsonify({
         "resort": r.to_dict(),
+        "v2_readiness": _v2_admin_state(r, cfg),
         "widgets": cfg or {
             "pistes": {"enabled": False},
             "description": {"enabled": False},
@@ -305,6 +324,8 @@ def patch_resort_admin(slug):
         "name", "website_url", "cover_image_url", "logo_url", "amenities",
         "description_md", "description_html",
         "meta_title", "meta_description",
+        "page_layout_version", "v2_overview_html", "v2_weather_snow_html",
+        "v2_ski_pass_html", "v2_piste_map_html", "v2_webcam_html",
 
         # Localisation
         "region_id", "region_name", "country_code", "department",
@@ -336,6 +357,8 @@ def patch_resort_admin(slug):
 
     if "is_active" in payload and not isinstance(payload.get("is_active"), bool):
         abort(400, "is_active doit être un booléen")
+    if payload.get("page_layout_version", getattr(r, "page_layout_version", "legacy")) not in {"legacy", "v2"}:
+        abort(400, "page_layout_version doit être legacy ou v2")
 
     is_active_changed = "is_active" in payload and bool(payload.get("is_active")) != bool(r.is_active)
 
@@ -375,7 +398,13 @@ def patch_resort_admin(slug):
     if is_active_changed:
         bump_public_resorts_version()
 
-    return jsonify({"ok": True, "resort": r.to_dict()})
+    widgets = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
+    cfg = StationWidgets.from_json(widgets.config) if widgets else {}
+    return jsonify({
+        "ok": True,
+        "resort": r.to_dict(),
+        "v2_readiness": _v2_admin_state(r, cfg),
+    })
 
 
 @bp_admin_st.patch("/bulk-activation")

@@ -56,7 +56,10 @@ class AdminStationPatchTests(unittest.TestCase):
             "app.routes.admin_stations.Resort.get_or_none",
             return_value=self.resort,
         ), patch("app.routes.admin_stations.StationWidgets.get_or_none", return_value=None), \
-             patch("app.routes.admin_stations.db.atomic"):
+             patch("app.routes.admin_stations.db.atomic"), \
+             patch("app.routes.admin_stations.station_v2_state", return_value={
+                 "readiness": {}, "available": {},
+             }):
             return self.client.patch(
                 "/api/admin/stations/station-test",
                 json=payload,
