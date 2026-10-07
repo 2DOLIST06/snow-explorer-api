@@ -1,4 +1,4 @@
-# Snow Explorer Station Ops — SCAN
+# Snow Explorer Station Ops — SCAN et COMPARE
 
 Cette couche backend extrait et examine les données existantes. Elle ne possède
 aucune fonction d'écriture, de correction, de fusion ou d'APPLY.
@@ -15,7 +15,7 @@ Node historique possède un token statique, pas un JWT non plus. Le Dockerfile
 démarre Flask/Gunicorn ; cette extension concerne cette application.
 
 Station Ops reprend tous les contrôles existants. Seule la mise à jour
-`last_seen_at` est omise sur ce endpoint, également pour ses méthodes refusées.
+`last_seen_at` est omise sur les endpoints SCAN et COMPARE, également pour leurs méthodes refusées.
 Les autres routes gardent leur comportement. OPTIONS ne retourne pas de données
 et reste accessible pour CORS. HEAD exige la même authentification que GET.
 La réponse porte `Cache-Control: no-store`.
@@ -394,3 +394,319 @@ Les écritures de préparation des tests restent limitées aux fixtures SQLite
 éphémères. Aucune requête de production, migration ou modification PostgreSQL
 n'est nécessaire pour cette correction. La publication est limitée à une branche
 de PR ; aucune fusion ni aucun déploiement n'est effectué.
+
+## COMPARE — contrat 1.0
+
+`POST /api/admin/station-ops/compare` reçoit des candidats sans télécharger ni
+appeler le snapshot SCAN. Aucune recherche internet et aucune opération APPLY.
+Cookie admin existant et header `X-CSRF-Token` obligatoires, comme sur les autres
+POST admin. L'authentification conserve les contrôles d'expiration, révocation,
+rôle et changement de mot de passe ; elle ne met pas à jour `last_seen_at`.
+La réponse réussie est HTTP 200 avec `Cache-Control: no-store`, y compris si
+certains candidats sont invalides. OPTIONS reste un préflight sans données.
+Les autres méthodes sont refusées avec 405.
+
+### Payload
+
+L'enveloppe contient uniquement `candidates`. L'ordre des résultats correspond
+à l'ordre d'entrée. Chaque candidat contient un `client_ref` non vide de 256
+caractères maximum et un objet `data`. `client_ref` est renvoyé exactement, sans
+trim ni déduplication ; sa valeur n'est jamais utilisée pour identifier une
+station. `clear_fields` et `field_sources` sont facultatifs.
+
+```json
+{
+  "candidates": [
+    {
+      "client_ref": "external-001",
+      "data": {
+        "id": "a",
+        "altitude_max_m": 2550,
+        "ski_areas": [{"id": 12}, {"slug": "other-area"}]
+      },
+      "clear_fields": ["website_url"],
+      "field_sources": {
+        "altitude_max_m": [
+          {
+            "url": "https://official.example/station",
+            "source_type": "official",
+            "observed_at": "2026-10-07T12:00:00Z"
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+La définition canonique est interne à `candidates.py`. Aucun endpoint schema
+supplémentaire n'est nécessaire à cette étape. Les champs scalaires autorisés
+sont les suivants ; les champs et clés inconnus sont rejetés explicitement.
+
+| Groupe | Champs |
+|---|---|
+| Identité et état | `id`, `slug`, `name`, `is_active`, `page_layout_version` |
+| Géographie brute Resort | `region_id`, `region_name`, `country_code`, `department`, `latitude`, `longitude` |
+| Statistiques | `altitude_base_m`, `altitude_top_m`, `altitude_min_m`, `altitude_max_m`, `lifts_count`, `pistes_count`, `ski_area_km` |
+| Médias et contenus | `website_url`, `cover_image_url`, `logo_url`, `amenities`, `description_md`, `description_html`, `meta_title`, `meta_description` |
+| Éditorial V2 | `v2_overview_html`, `v2_weather_snow_html`, `v2_ski_pass_html`, `v2_piste_map_html`, `v2_webcam_html` |
+| Plans | `pistes_small_map_url`, `pistes_large_map_url`, `pistes_caption`, `snowpark_map_url`, `snowpark_caption` |
+| Dates | `season_open_date`, `season_close_date` |
+
+Les collections autorisées sont `ski_areas`, `pistes`, `lifts`, `maps`, `webcams`,
+`ski_pass_seasons`, `ski_pass_periods`, `ski_pass_products`, `ski_pass_prices`
+(listes d'objets) et `widgets` (objet). `updated_at` n'est pas une proposition
+métier et n'est pas accepté. Aucun contenu de Region n'est candidat : ses données
+legacy restent distinguées des valeurs propres à Resort.
+
+### Absence, null et clear_fields
+
+- Champ ou collection absent : aucune nouvelle information, aucun diff ou vidage.
+- Valeur `null` : ignorée, avec `null_ignored` dans `validation.info` ; elle
+  ne représente jamais une suppression implicite.
+- Chaîne vide ou composée d'espaces dans un champ scalaire nullable : ignorée
+  avec `blank_ignored`. Un ID, slug ou nom explicitement vide est invalide.
+- `clear_fields` : liste des champs scalaires nullable à vider explicitement.
+  Les cinq champs `id`, `name`, `slug`, `is_active`, `page_layout_version` et les
+  collections sont exclus. La liste est dédupliquée. Une valeur non-null fournie
+  simultanément pour un champ à vider rend le candidat invalide.
+- Un clear d'une valeur déjà absente ne génère aucun changement. Aucune intention
+  n'est appliquée, même si le résultat contient `cleared` ou une relation removed.
+
+### Matching conservateur
+
+Le moteur construit une fois par batch des index d'identité et de géographie,
+avec des buckets spatiaux en coordonnées 3D, compatibles avec les pôles et
+l'antiméridien. Les raisons sont factuelles et aucun score numérique de confiance
+n'est retourné.
+
+1. Un ID exact, littéral, existant est prioritaire. Des différences géographiques
+   restent comparables comme modifications. Si le slug fourni désigne une autre
+   station existante, `conflicting_station_identifiers` impose une revue.
+2. Sans ID connu, les slugs exacts après trim sont examinés en priorité. Un slug
+   unique est sûr si le pays concorde ou si des coordonnées proches le confirment,
+   sans contradiction de pays/région/département ou coordonnées très éloignées.
+3. Sinon, le nom normalisé (casse, accents, ponctuation, espaces) est rapproché
+   avec la géographie. Un nom unique est sûr avec coordonnées proches, ou avec
+   même pays et même région ou département. Les homonymes avec contexte
+   géographique explicitement incompatible sont écartés, sauf confirmation de
+   proximité, auquel cas la contradiction exige une revue.
+4. Plusieurs stations plausibles au niveau retenu donnent `multiple_station_matches`
+   et `multiple_matches`, jamais un choix arbitraire. Un rapprochement unique
+   sans preuves suffisantes donne `insufficient_matching_evidence`.
+5. Les coordonnées seules ne suffisent jamais : une proximité sans identité
+   concordante donne `coordinates_only_match`. Aucune preuve plausible donne `new`.
+6. Un ID fourni mais inconnu, alors qu'un autre rapprochement existe, exige une
+   revue `candidate_id_not_found` pour éviter de substituer un identifiant.
+
+Les 150 m de SCAN sont réutilisés comme confirmation positive, pas comme seuil
+universel de rejet. Nom + pays + région peuvent encore identifier une station
+à plusieurs kilomètres. Au-delà de 20 km entre deux points fournis, le matching
+sans ID exact exige une revue `geographic_context_conflict`, avec
+`coordinates_far_apart`. Ce seuil de prudence est documenté dans `matching.py` ;
+il ne modifie aucune coordonnée ni relation.
+
+### Normalisation et validation
+
+Les valeurs d'entrée et la base restent inchangées. Le nom comparé par champ
+ignore casse et espaces triviaux, mais conserve les accents : le matching peut
+identifier une graphie sans accent tout en exposant son changement éditorial.
+Les IDs sont littéraux, slugs et autres chaînes sont trimés, `country_code` est
+comparé en majuscules. Région/département restent des identifiants textuels ;
+aucun catalogue Region n'est nécessaire au matching des valeurs Resort.
+
+Les nombres sont comparés avec Decimal, sans arrondi. Les nombres normalisés
+sont sérialisés en chaînes décimales dans le diff. Les compteurs/altitudes
+doivent être entiers ; kilomètres et coordonnées peuvent être fractionnaires.
+Booléens acceptés : bool JSON, 0/1 entiers ou chaînes true/false/0/1 sans distinction
+de casse. Dates : formats interprétables par `date.fromisoformat`, normalisés
+en `YYYY-MM-DD`. URLs HTTP(S) absolues sans identifiants : schéma et hostname
+en minuscules, domaine IDNA, port par défaut retiré, chemin racine normalisé.
+Chemin, query, fragment et slash final non racine sont préservés. Aucun accès
+réseau ne vérifie la cible. Les images inline `data:image/...` restent opaques.
+
+Les types incompatibles, identité absente, coordonnées hors limites, dates/URLs
+inexploitables, champs inconnus et provenance mal formée rendent le candidat
+`invalid`. Un champ optionnel absent ne le rend pas invalide. Les incohérences
+métier comparables (nombre négatif, altitudes inversées, saison inversée) restent
+des warnings, avec réutilisation des vérifications objectives SCAN. Une coordonnée
+isolée valide donne `partial_coordinates`, sans fabriquer l'autre valeur.
+Les nombres doivent être finis avec exposant Decimal entre -308 et 308 ; cette
+borne évite les représentations numériques démesurées dans la réponse.
+
+### Statuts et réponse
+
+Chaque candidat a exactement un statut. L'ordre de priorité après validation
+est : `invalid`, puis `review_required` dès qu'une limitation/ambiguïté existe,
+puis `new` sans match, ou `changes_detected` / `unchanged` pour un match sûr.
+Pour `new`, les scalaires comparables fournis sont présentés comme added ; cela
+ne constitue pas une autorisation ou une création de station.
+
+```json
+{
+  "schema_version": "1.0",
+  "compare_version": "1.0",
+  "generated_at": "2026-10-07T12:00:00+00:00",
+  "summary": {
+    "total_candidates": 1,
+    "new": 0,
+    "unchanged": 0,
+    "changes_detected": 1,
+    "review_required": 0,
+    "invalid": 0
+  },
+  "results": [
+    {
+      "client_ref": "external-001",
+      "status": "changes_detected",
+      "matched_station": {"id": "a", "slug": "alpha", "name": "Alpha"},
+      "match_reasons": ["exact_id"],
+      "changes": [
+        {
+          "field": "altitude_max_m",
+          "existing": 2500,
+          "candidate": 2550,
+          "normalized_existing": "2500",
+          "normalized_candidate": "2550",
+          "change": "modified"
+        }
+      ],
+      "validation": {"errors": [], "warnings": [], "info": []},
+      "review_items": [],
+      "field_sources": {}
+    }
+  ],
+  "schema_findings": [],
+  "catalog_findings": []
+}
+```
+
+`changes` décrit `added`, `modified` ou `cleared`. Aucun diff pour une valeur
+équivalente après normalisation. Les contenus éditoriaux complets ne sont ni
+chargés ni renvoyés : LENGTH et MD5 sont sélectionnés uniquement pour les champs
+fournis et les stations identifiées ; la valeur candidate est représentée par
+`{"length": ..., "md5": ...}`. Le hash compare exactement le texte UTF-8 (sauf
+les chaînes entièrement blanches ignorées). Ce mécanisme ne mesure pas une
+équivalence sémantique HTML et une collision MD5 reste une limitation théorique.
+Les images inline sont représentées dans le diff par longueur/SHA256.
+
+`matched_station` est null pour new ou pour une identité ambiguë. Si l'identité
+est sûre mais une collection demande revue, il reste renseigné et des diffs
+scalaires sûrs peuvent être retournés, avec statut global `review_required`.
+`match_distance_m` est facultatif pour un match avec deux points disponibles.
+Chaque option de rapprochement en revue contient ID/slug/nom, raisons,
+`conflicting_fields` et éventuellement `distance_m`.
+
+Exemple de revue sans sélection arbitraire :
+
+```json
+{
+  "code": "multiple_station_matches",
+  "candidates": [
+    {"id": "a", "slug": "alpha", "name": "Alpha", "match_reasons": ["exact_normalized_name", "same_country"], "conflicting_fields": []},
+    {"id": "b", "slug": "other-alpha", "name": "Alpha", "match_reasons": ["exact_normalized_name", "same_country"], "conflicting_fields": []}
+  ]
+}
+```
+
+### Domaines et autres collections
+
+`data.ski_areas` est une liste de références `{id}`, `{slug}` ou `{name}`, avec
+combinaisons possibles. ID bigint positif ou slug exact unique permettent une
+résolution sûre. Un ID/slug contradictoire ou inconnu et un nom seul donnent
+`ski_area_reference_unresolved`, même si le nom n'a qu'une correspondance.
+Les options de domaine connues sont renvoyées pour revue. Aucun domaine n'est
+créé et aucun attribut de domaine n'est édité ; le nom est une aide à la revue.
+
+Une liste fournie représente explicitement l'ensemble des relations proposées,
+pas un ajout partiel. L'ordre et les doublons sont sans effet. Si toutes les
+références et relations existantes sont résolues, le diff de `ski_areas` contient
+les IDs existants/proposés et :
+
+```json
+{"relations": {"added": [3], "removed": [2], "unchanged": [1]}}
+```
+
+La liste vide représente une intention de retirer toutes les relations, sans
+écriture ; une liste absente ou null ne retire rien. Une relation existante vers
+un domaine introuvable impose `existing_ski_area_relation_unresolved`.
+
+Les autres collections fournies (même vides) donnent un diagnostic
+`collection_comparison_not_supported` avec le nom du champ et statut
+`review_required`. Aucun diff potentiellement destructif n'est calculé, aucune
+lecture de pistes/remontées/maps/widgets/forfaits n'est nécessaire. Leurs
+structures internes attendront un contrat métier versionné ; seule la forme
+liste d'objets / objet widgets est validée à cette étape.
+
+### Provenance
+
+`field_sources` mappe un champ canonique ou un chemin sous une collection à une
+liste d'objets ayant `url` obligatoire, `source_type` textuel et `observed_at`
+ISO datetime avec fuseau facultatifs. Les clés supplémentaires d'une source
+ne sont pas acceptées. Les sources valides sont conservées telles que reçues,
+y compris pour un champ inchangé. Aucune vérification internet ni persistance.
+
+### Batch, schéma physique et lecture seule
+
+Maximum : 1 000 candidats et 16 MiB de corps JSON. Cela autorise des lots de
+catalogues nationaux avec des scalaires et sources tout en bornant mémoire,
+CPU et taille de réponse ; les catalogues plus grands se découpent en lots.
+Au-delà, HTTP 413 `invalid_compare_payload`. Enveloppe/JSON mal formé, JSON avec
+clés dupliquées ou nombres non finis : HTTP 400. Content-Type non JSON : 415.
+Une erreur propre à un candidat reste un résultat `invalid` dans un batch 200.
+Les autres candidats continuent normalement.
+
+Toutes les lectures métier sont faites sous REPEATABLE READ + SET TRANSACTION
+READ ONLY PostgreSQL, avec le même garde-fou SQLite que SCAN dans les tests.
+COMPARE ne contient aucun appel d'écriture. L'authentification conserve sa lecture
+de session habituelle, sans touch. Un batch entièrement invalide ne lit pas les
+données métier ; ses diagnostics globaux sont alors vides, sans affirmation
+qu'un inventaire a été réalisé.
+
+Un inventaire physique partagé des douze tables conserve `schema_findings`,
+les colonnes supplémentaires et le type réel fractionnaire de ski_area_km. La
+table regions vide produit `catalog_findings` exactement comme SCAN. Region
+n'est lu que pour sa présence : pas de sélection de description_html absent,
+pas de mapping de seo_text vers un champ modèle. Si son ID est indisponible,
+`region_catalog_unavailable` indique la limitation globale.
+
+Un champ candidat physiquement absent impose une revue
+`field_unavailable_in_database`, sans supposer null ni produire un faux diff.
+Si une colonne nécessaire à un rapprochement est indisponible et aucun ID
+n'est résolu, `matching_columns_unavailable` empêche de conclure new. Un ID de
+Resort indisponible empêche toute comparaison : HTTP 503
+`station_ops_schema_incompatible` avec diagnostics. L'absence de colonnes
+optionnelles de tables non utilisées n'interrompt pas les comparaisons scalaires.
+Les domaines identifiés par ID restent comparables même sans colonne slug.
+
+Lectures mutualisées, sans N+1 : un inventaire, un index limité aux huit champs
+d'identité/géographie, une vérification du catalogue Region, au plus une lecture
+des champs scalaires nécessaires pour les stations identifiées, et deux lectures
+domaines/relations si ceux-ci sont fournis. Aucun snapshot complet ni gros
+contenu global. Le maximum PostgreSQL est de 7 SELECT avec l'authentification,
+indépendamment du nombre de candidats. L'index d'identité minimal lit le catalogue
+Resort entier pour permettre les noms normalisés ; sa mémoire dépend du catalogue,
+pas des contenus éditoriaux. Les cas très ambigus peuvent produire de grandes
+listes d'options : aucune option plausible n'est arbitrairement supprimée.
+
+### Vérification locale de COMPARE
+
+- 79 tests Station Ops réussis : 35 SCAN conservés et 44 COMPARE, dont tous les
+  statuts, absence/null/clear, provenance, domaines multiples, collections,
+  schema drift, SQL read-only et non-écriture incluant l'authentification.
+- Batchs de 500 et 1 000 candidats sur une fixture de 121 stations : 6 SELECT
+  SQLite (auth incluse), plus 12 PRAGMA d'inventaire, comme pour un candidat.
+  PostgreSQL ajoute le SELECT d'inventaire : maximum 7. Ce dernier chiffre est
+  issu de la structure du moteur, pas d'une mesure live en production.
+- 11 tests du cycle de vie des connexions et 9 tests du cache public réussis.
+- 13 tests d'authentification réussis avec un harness SQLite isolant le hook de
+  connexion de l'application. Exécution standard : 12 réussis et une erreur
+  du test historique CORS/OPTIONS, qui essaie d'ouvrir PostgreSQL malgré
+  SKIP_DATABASE_INIT. Aucun test historique n'a été modifié pour cette tâche.
+- Transaction PostgreSQL vérifiée par mock : SET TRANSACTION READ ONLY exécuté
+  avant le moteur, isolation REPEATABLE READ. Pas de validation live de COMPARE.
+
+Aucune donnée, relation, migration ou structure PostgreSQL modifiée. Les
+écritures de préparation des tests se limitent aux fixtures SQLite éphémères.
+Aucun frontend ou endpoint public modifié. La publication est limitée à une
+branche de PR, sans fusion ni déploiement. APPLY n'est pas développé.
