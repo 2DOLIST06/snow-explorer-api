@@ -170,6 +170,11 @@ def _scan(filters):
     slugs = base.select(Resort.slug)
     stations = [_row_json(row, CONTENT_FIELDS) for row in
                 schema.projection(Resort, CONTENT_FIELDS).where(Resort.id.in_(ids)).order_by(Resort.id)]
+    # Check the whole optional catalogue, not just regions matching the filters.
+    region_catalog_populated = Region.select(Region.id).exists()
+    catalog_findings = [] if region_catalog_populated else [
+        {"code": "region_catalog_empty", "severity": "info", "table": "regions"}
+    ]
     regions = [_row_json(row, ("description_html", "seo_text")) for row in
                schema.projection(Region, ("description_html",), extra_fields=("slug", "created_at"),
                                  extra_content_fields=("seo_text",)).where(
@@ -223,7 +228,7 @@ def _scan(filters):
         station["has_legacy_forfait_items"] = bool(forfaits.get("items")) if isinstance(forfaits, dict) else False
         station["has_forfait_data"] = station["has_ski_pass_data"] or station["has_legacy_forfait_items"]
         station["findings"] = validate_station(station)
-        if station["region_id"] and station["region"] is None:
+        if region_catalog_populated and station["region_id"] and station["region"] is None:
             station["findings"].append(finding("region_not_found", "warning", "region_id"))
         for area in station["ski_areas"]:
             station["findings"].extend({**item, "field": f"ski_areas.{area['id']}.{item['field']}"}
@@ -238,7 +243,8 @@ def _scan(filters):
     return {"schema_version": SCHEMA_VERSION, "generated_at": utcnow().isoformat(),
             "scope": {"filters": filters, "summary": "filtered_stations", "duplicates": "within_filtered_stations"},
             "summary": summary, "stations": stations, "ski_areas": areas,
-            "potential_duplicates": duplicates, "schema_findings": schema.findings}
+            "potential_duplicates": duplicates, "schema_findings": schema.findings,
+            "catalog_findings": catalog_findings}
 
 
 def _counts(rows, key):

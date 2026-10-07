@@ -124,11 +124,65 @@ class StationOpsTests(unittest.TestCase):
         self.assertEqual(row["findings"], [])
         self.assertEqual(body["summary"]["total_stations"], 1)
         self.assertEqual(body["schema_findings"], [])
+        self.assertEqual(body["catalog_findings"], [])
+        self.assertEqual(body["summary"]["stations_with_warnings"], 0)
         self.assertNotIn("description_html", row)
         self.assertEqual(row["content"]["description_html"]["md5"], hashlib.md5(b"<p>Actual fixture</p>").hexdigest())
         self.assertTrue(row["content"]["description_html"]["present"])
         self.assertEqual(row["content"]["description_html"]["length"], 21)
         self.assertNotIn("<p>Widget HTML</p>", json.dumps(row))
+
+    def test_empty_region_catalog_preserves_raw_data_and_never_writes(self):
+        # Only fixture preparation writes; every statement during SCAN is read-only.
+        Region.delete().execute()
+        Resort.create(**{**self.station.__data__, "id": "b", "name": "Beta", "slug": "beta",
+                         "region_id": "another-region", "region_name": "Other stored label"})
+        before = {model: list(model.select().dicts()) for model in MODELS}
+        original = self.database.execute_sql
+        def observe(sql, params=None, *args, **kwargs):
+            self.assertIn(sql.split()[0].upper(), {"SELECT", "BEGIN", "PRAGMA"}, sql)
+            return original(sql, params, *args, **kwargs)
+        with patch.object(self.database, "execute_sql", side_effect=observe):
+            body = self.body()
+        self.assertEqual(before, {model: list(model.select().dicts()) for model in MODELS})
+        self.assertEqual(body["catalog_findings"], [
+            {"code": "region_catalog_empty", "severity": "info", "table": "regions"}])
+        self.assertEqual(body["summary"]["stations_with_warnings"], 0)
+        for row in body["stations"]:
+            self.assertIsNone(row["region"])
+            self.assertNotIn("region_not_found", [f["code"] for f in row["findings"]])
+            expected = before[Resort][0 if row["id"] == "a" else 1]
+            for field in ("region_id", "region_name", "country_code"):
+                self.assertEqual(row[field], expected[field])
+        # Real unrelated warnings still count, without a hard-coded catalogue total.
+        Resort.update(latitude=None).where(Resort.id == "b").execute()
+        body = self.body()
+        self.assertEqual(body["summary"]["stations_with_warnings"], 1)
+        self.assertEqual([f["code"] for f in body["stations"][1]["findings"]
+                          if f["severity"] == "warning"], ["missing_coordinates"])
+
+    def test_unknown_region_in_populated_catalog_warns_even_with_station_filter(self):
+        Resort.update(region_id="unknown").where(Resort.id == "a").execute()
+        for query in ("", "?id=a", "?region_id=unknown"):
+            with self.subTest(query=query):
+                body = self.body(query)
+                row = body["stations"][0]
+                self.assertIsNone(row["region"])
+                self.assertEqual(row["region_id"], "unknown")
+                self.assertEqual(row["region_name"], "Stored region label")
+                self.assertIn({"code": "region_not_found", "severity": "warning", "field": "region_id"},
+                              row["findings"])
+                self.assertEqual(body["catalog_findings"], [])
+                self.assertEqual(body["summary"]["stations_with_warnings"], 1)
+
+    def test_catalog_diagnostic_is_global_even_when_no_stations_match(self):
+        self.assertEqual(self.body("?id=absent")["catalog_findings"], [])
+        Region.delete().execute()
+        body = self.body("?id=absent")
+        self.assertEqual(body["stations"], [])
+        self.assertEqual(body["summary"]["stations_with_warnings"], 0)
+        self.assertEqual(body["catalog_findings"], [
+            {"code": "region_catalog_empty", "severity": "info", "table": "regions"}])
 
     def test_inactive_and_missing_data_remain_in_snapshot(self):
         Resort.create(id="b", name="", slug="", is_active=False)
@@ -379,6 +433,27 @@ class LegacyRegionStationOpsTests(unittest.TestCase):
     real_km_fixture = True
     setUp = StationOpsTests.setUp
     body = StationOpsTests.body
+
+    def test_empty_legacy_region_catalog_retains_schema_diagnostics_and_never_writes(self):
+        self.database.execute_sql('DELETE FROM regions')
+        before = self._physical_rows()
+        original = self.database.execute_sql
+        def observe(sql, params=None, *args, **kwargs):
+            self.assertIn(sql.split()[0].upper(), {"SELECT", "BEGIN", "PRAGMA"}, sql)
+            return original(sql, params, *args, **kwargs)
+        with patch.object(self.database, "execute_sql", side_effect=observe):
+            body = self.body()
+        self.assertEqual(before, self._physical_rows())
+        self.assertIsNone(body["stations"][0]["region"])
+        self.assertEqual(body["stations"][0]["region_id"], "region-a")
+        self.assertEqual(body["stations"][0]["region_name"], "Stored region label")
+        self.assertEqual(body["stations"][0]["country_code"], "FR")
+        self.assertEqual(body["summary"]["stations_with_warnings"], 0)
+        self.assertEqual(body["catalog_findings"], [
+            {"code": "region_catalog_empty", "severity": "info", "table": "regions"}])
+        self.assertIn({"table": "regions", "field": "description_html", "column": "description_html",
+                       "code": "model_column_missing_in_database", "severity": "warning"},
+                      body["schema_findings"])
 
     def test_legacy_regions_snapshot_preserves_physical_data_and_never_writes(self):
         legacy_text = "<p>Contenu SEO legacy réel de fixture</p>"

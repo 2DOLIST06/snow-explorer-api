@@ -55,6 +55,10 @@ Les champs `scope.summary` et `scope.duplicates` déclarent ce périmètre.
 - `schema_findings` : écarts constatés entre modèles et colonnes physiques,
   séparés des constats de qualité des données des stations et de leurs compteurs
   `stations_with_errors` / `stations_with_warnings`.
+- `catalog_findings` : diagnostics globaux non bloquants sur les catalogues de
+  données, séparés des findings station et des écarts de schéma. Une table
+  `regions` vide produit une seule entrée
+  `{"code": "region_catalog_empty", "severity": "info", "table": "regions"}`.
 
 Les `null`, chaînes vides, espaces, zéro et statuts sont préservés. Le slug n'est
 jamais recalculé. Les quatre altitudes sont retournées indépendamment. Les
@@ -189,6 +193,22 @@ et des relations multiples. SkiArea a bien les compteurs par couleur et snowpark
 
 ## Validation sans correction
 
+`region_id`, `region_name` et `country_code` restent les valeurs brutes propres
+à Resort. La table `regions` enrichit le snapshot lorsqu'un ID correspond à une
+région disponible ; `region_name` n'est jamais utilisé pour fabriquer une relation.
+Si le catalogue est globalement vide, `region` reste `null` et aucun warning
+`region_not_found` n'est ajouté aux stations. Le diagnostic global
+`region_catalog_empty` apparaît une seule fois dans `catalog_findings`, sans
+compter dans `stations_with_warnings`.
+
+Si le catalogue contient au moins une région, une station dont le `region_id`
+est renseigné mais ne correspond à aucun enregistrement conserve le warning
+`region_not_found`. Une région trouvée est exposée normalement. Un `region_id`
+non renseigné ne déclenche pas ce contrôle. La présence du catalogue est vérifiée
+dans son ensemble, indépendamment des filtres station, même si aucune station
+ne correspond. Les autres findings continuent de déterminer normalement le
+compteur `stations_with_warnings`.
+
 Chaque finding contient `code`, `severity`, `field`.
 
 - error : `missing_name`, `missing_slug`, `coordinates_invalid`,
@@ -231,7 +251,10 @@ Le contexte SQLite des tests utilise `PRAGMA query_only=ON`, restauré en sortie
 Aucun service Station Ops n'appelle save/create/update/delete ni n'exécute de DDL.
 
 Le nombre de SELECT PostgreSQL est fixe : douze lectures de données dans SCAN,
-un inventaire du catalogue, plus celui de l'authentification (quatorze au total).
+un inventaire du schéma, une vérification de présence du catalogue `regions`
+par SELECT limité à une ligne, plus celui de l'authentification (quinze au total).
+Cette vérification ne sélectionne aucun champ optionnel du modèle et reste dans
+la même transaction READ ONLY ; elle fonctionne aussi sans `description_html`.
 Les requêtes liées utilisent des sous-requêtes, sans liste géante de paramètres
 ni chargement N+1. Le snapshot complet n'est pas paginé : à mesurer sur un grand
 catalogue avant une future stratégie d'export ou pagination versionnée.
@@ -353,3 +376,21 @@ sont autorisées sur la production pour cette correction. Les tests écrivent
 exclusivement dans leurs fixtures SQLite éphémères. Aucune migration, aucun DDL
 ou DML en production, aucune modification de structure PostgreSQL. La correction est publiée uniquement sur une branche de PR, sans
 fusion ni déploiement.
+
+## Correction du bruit lié au catalogue de régions vide
+
+La suite Station Ops passe à 35 tests réussis, avec quatre tests supplémentaires
+sur le catalogue global vide, le catalogue non vide avec ID inconnu, les filtres
+sans résultat, et le schéma legacy vide sans `description_html`. Le cas région
+résolue vérifie également l'absence de diagnostic global et de warning.
+Les fixtures vérifient `stations_with_warnings = 0` pour deux stations complètes
+sans catalogue, puis `1` après ajout d'un vrai manque de coordonnées. Le cas ID
+inconnu avec catalogue renseigné compte `1` station avec warning.
+
+Les observations SQL pendant le scan et les comparaisons des données avant/après
+confirment l'absence d'écriture, y compris sur la table legacy. Les 11 tests du
+cycle de vie des connexions et les 9 tests de cache public réussissent aussi.
+Les écritures de préparation des tests restent limitées aux fixtures SQLite
+éphémères. Aucune requête de production, migration ou modification PostgreSQL
+n'est nécessaire pour cette correction. La publication est limitée à une branche
+de PR ; aucune fusion ni aucun déploiement n'est effectué.
