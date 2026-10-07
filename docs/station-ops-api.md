@@ -52,6 +52,9 @@ Les champs `scope.summary` et `scope.duplicates` déclarent ce périmètre.
   compris les drafts, avec leurs valeurs propres et findings.
 - `potential_duplicates` : paires d'IDs, classification, raisons et, le cas
   échéant, distance en mètres.
+- `schema_findings` : écarts constatés entre modèles et colonnes physiques,
+  séparés des constats de qualité des données des stations et de leurs compteurs
+  `stations_with_errors` / `stations_with_warnings`.
 
 Les `null`, chaînes vides, espaces, zéro et statuts sont préservés. Le slug n'est
 jamais recalculé. Les quatre altitudes sont retournées indépendamment. Les
@@ -80,11 +83,68 @@ Les clés de FK des dictionnaires Peewee (`resort`, `ski_area`, `season`, `produ
 | SkiPassProduct | `ski_pass_products` | produits tarifaires |
 | SkiPassPrice | `ski_pass_prices` | prix fixes/dynamiques et notes |
 
-Le snapshot garde tous les champs de Resort sauf le corps des sept contenus
+Le snapshot garde les champs de Resort effectivement présents en base, sauf le corps des sept contenus
 éditoriaux, remplacé par `content.<champ>.{present,length,md5}`. LENGTH et MD5
 sont calculés par PostgreSQL : ces corps ne sont pas transférés vers Python.
 Les descriptions des régions et domaines suivent le même principe. MD5 sert
 à une comparaison de contenu, jamais à une fonction de sécurité.
+
+### Compatibilité avec le schéma physique
+
+Au début de chaque transaction de scan, Station Ops inventorie les colonnes des
+douze tables utilisées. PostgreSQL utilise un seul SELECT dans `pg_catalog`,
+avec résolution des noms de relations par `to_regclass` et respect du search_path
+ou du schema explicite du modèle. SQLite utilise les PRAGMA de lecture de Peewee.
+L'inventaire n'est pas mis en cache entre scans et ne modifie jamais les modèles.
+
+Les projections de toutes les tables sélectionnent uniquement les colonnes
+physiquement disponibles. Les champs de contenu absents ne sont pas utilisés dans
+LENGTH/MD5 et ne sont pas fabriqués dans `content`. Un champ optionnel absent du
+schéma est omis, sans être assimilé à une valeur NULL stockée. Son absence donne
+un diagnostic, par exemple :
+
+```json
+{
+  "table": "regions",
+  "field": "description_html",
+  "column": "description_html",
+  "code": "model_column_missing_in_database",
+  "severity": "warning"
+}
+```
+
+Les colonnes physiques absentes des modèles sont signalées par
+`database_column_not_in_model` (info). Elles ne sont pas toutes exposées
+automatiquement : cela évite de modifier le contrat des stations ou de diffuser
+des colonnes inconnues. Pour les régions legacy, les colonnes vérifiées `slug`
+et `created_at` sont exposées sous leur vrai nom, et `seo_text` est résumé sous
+`region.content.seo_text` (présence, longueur, MD5). Aucun mapping n'affirme que
+`seo_text` équivaut à `description_html`. Si les deux existent, ils sont distincts.
+
+Une colonne d'identité ou de relation indispensable, une table indisponible, ou
+la colonne d'un filtre demandé absente empêche une lecture sans ambiguïté.
+Dans ce cas, l'endpoint retourne 503 `station_ops_schema_incompatible`, avec
+`schema_findings` et un message explicite, avant les SELECT de données. Il
+n'ignore pas le filtre et ne fabrique pas un snapshot complet avec des zéros.
+
+Un entier Peewee stocké physiquement comme réel/numeric est lu sans conversion
+en entier et signalé par `model_column_type_mismatch` (warning), pour ne pas
+tronquer les kilomètres skiables. Un timestamp legacy sans fuseau correspondant
+à UTCDateTimeField est signalé par le même code (info) et la convention explicite
+`legacy_naive_assumed_utc` ; la normalisation UTC existante est conservée.
+
+L'inventaire Render en lecture seule du 7 octobre 2026 a confirmé :
+
+- `regions.description_html` absent ; `slug`, `seo_text`, `created_at` présents
+  mais non déclarés par Region ; `updated_at` sans fuseau en base.
+- `resort.ski_area_km` de type `real` pour un modèle entier ; les colonnes
+  supplémentaires `openskimap_area_name` et `openskimap_enabled` sont signalées
+  sans modifier le contrat des stations.
+- Toutes les douze tables attendues sont présentes. Aucun autre champ déclaré
+  par les modèles SCAN n'est absent des dix autres tables.
+
+Cet inventaire décrit les noms de colonnes et les écarts de type traités ici ;
+il ne remplace pas un audit exhaustif des contraintes, index ou conversions.
 
 Les champs directs comprennent `id`, `name`, `slug`, `is_active`, `country_code`,
 `region_id`, `region_name`, `department`, `latitude`, `longitude`,
@@ -170,7 +230,8 @@ cette garantie. Toute erreur interrompt le scan sans réponse partielle.
 Le contexte SQLite des tests utilise `PRAGMA query_only=ON`, restauré en sortie.
 Aucun service Station Ops n'appelle save/create/update/delete ni n'exécute de DDL.
 
-Le nombre de SELECT est fixe : douze dans SCAN plus celui de l'authentification.
+Le nombre de SELECT PostgreSQL est fixe : douze lectures de données dans SCAN,
+un inventaire du catalogue, plus celui de l'authentification (quatorze au total).
 Les requêtes liées utilisent des sous-requêtes, sans liste géante de paramètres
 ni chargement N+1. Le snapshot complet n'est pas paginé : à mesurer sur un grand
 catalogue avant une future stratégie d'export ou pagination versionnée.
@@ -201,7 +262,7 @@ session existant ou faire l'objet d'un chantier distinct d'authentification mach
 Le démarrage historique create_app crée des tables par défaut ; il n'a pas été
 exécuté sur une vraie base pendant cette tâche et n'est pas modifié ici.
 
-## Bilan de livraison
+## Bilan de livraison initiale
 
 Fichiers créés :
 
@@ -265,3 +326,30 @@ INSERT/UPDATE/DELETE sur une base existante, aucune migration ni modification de
 schéma n'a été effectué. Les seules créations/modifications de données concernent
 les fixtures SQLite éphémères explicitement isolées. Aucun modèle, frontend,
 statut de station ou relation existante n'a été modifié. Aucun déploiement effectué.
+
+## Correction du drift de schéma après le premier scan de production
+
+La projection initiale se fiait aux champs Peewee et calculait LENGTH/MD5 sur
+`Region.description_html` sans vérifier la table physique. Les fixtures modernes
+créées avec le modèle masquaient cet écart legacy. La correction est locale à
+Station Ops : nouveau helper `schema.py`, adaptation de `scan.py`, diagnostic
+structuré dans `admin_station_ops.py`, tests et documentation. Aucun modèle,
+endpoint public, frontend ou comportement métier existant n'est modifié.
+
+La suite Station Ops comprend désormais 31 tests réussis, dont les 24 existants.
+Les nouveaux tests utilisent une vraie table SQLite `regions` legacy avec les
+neuf colonnes de production et sans `description_html`. Ils vérifient les données
+legacy, le diagnostic, l'absence d'écriture et d'altération des modèles, la
+préservation des kilomètres fractionnaires, l'inventaire à chaque scan, les
+projections des autres tables, et le refus explicite de relations/filtres dont
+une colonne essentielle est absente. Le SELECT PostgreSQL du catalogue est aussi
+vérifié par mock et a été exécuté en lecture seule via le connecteur Render.
+Les douze projections compilées ont également été validées sur PostgreSQL par
+des SELECT avec LIMIT 0, sans lecture de lignes métier. Les 11 tests de cycle de
+vie des connexions et les 9 tests de cache public réussissent aussi.
+
+Seules des lectures de métadonnées et des requêtes de validation sans données
+sont autorisées sur la production pour cette correction. Les tests écrivent
+exclusivement dans leurs fixtures SQLite éphémères. Aucune migration, aucun DDL
+ou DML en production, aucune modification de structure PostgreSQL. La correction est publiée uniquement sur une branche de PR, sans
+fusion ni déploiement.

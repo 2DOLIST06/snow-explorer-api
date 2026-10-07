@@ -2,6 +2,7 @@
 from flask import Blueprint, current_app, jsonify, request
 
 from app.services.station_ops.scan import scan_stations
+from app.services.station_ops.schema import SchemaCompatibilityError
 
 bp_admin_station_ops = Blueprint("admin_station_ops", __name__, url_prefix="/api/admin/station-ops")
 
@@ -12,6 +13,9 @@ def snapshot():
         result = scan_stations(request.args)
     except ValueError as exc:
         return jsonify({"error": "invalid_filters", "message": str(exc)}), 400
+    except SchemaCompatibilityError as exc:
+        return jsonify({"error": "station_ops_schema_incompatible", "message": str(exc),
+                        "schema_findings": exc.findings}), 503
     except Exception:
         current_app.logger.exception("Unable to scan Station Ops snapshot")
         return jsonify({"error": "station_ops_scan_failed"}), 500
