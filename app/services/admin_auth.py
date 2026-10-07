@@ -137,7 +137,7 @@ def change_admin_password(user, new_password):
         return revoke_all_sessions(user.id)
 
 
-def _load_session():
+def _load_session(*, touch_session=True):
     raw = request.cookies.get(current_app.config["ADMIN_SESSION_COOKIE_NAME"])
     if not raw:
         return None
@@ -160,7 +160,7 @@ def _load_session():
         return None
     interval = current_app.config["ADMIN_SESSION_TOUCH_INTERVAL_SECONDS"]
     last_seen_at = ensure_utc(session.last_seen_at)
-    if last_seen_at is None or last_seen_at + timedelta(seconds=interval) <= now:
+    if touch_session and (last_seen_at is None or last_seen_at + timedelta(seconds=interval) <= now):
         AdminSession.update(last_seen_at=now).where(AdminSession.id == session.id).execute()
         session.last_seen_at = now
     g.admin_session = session
@@ -177,10 +177,10 @@ def _csrf_is_valid(session):
     return hmac.compare_digest(session.csrf_token_hash, expected)
 
 
-def authenticate_admin_request():
+def authenticate_admin_request(*, touch_session=True):
     if request.method == "OPTIONS":
         return None
-    session = _load_session()
+    session = _load_session(touch_session=touch_session)
     if session is None:
         logger.warning("admin access refused ip=%s path=%s", _client_ip(), request.path)
         if request.path == "/api/admin/auth/session":
@@ -192,14 +192,21 @@ def authenticate_admin_request():
     return None
 
 
-def protect_admin_routes(app):
+def protect_admin_routes(app, *, read_only_endpoints=()):
+    read_only_endpoints = frozenset(read_only_endpoints)
     @app.before_request
     def require_admin_authentication():
         if not (request.path == "/api/admin" or request.path.startswith("/api/admin/")):
             return None
         if request.method == "OPTIONS" or (request.path == "/api/admin/auth/login" and request.method == "POST"):
             return None
-        return authenticate_admin_request()
+        # Unsupported methods have no request.endpoint. Exact read-only paths
+        # must still avoid touching the session before Flask returns its 405.
+        read_only = request.endpoint in read_only_endpoints or (request.endpoint is None and any(
+            rule.endpoint in read_only_endpoints and rule.rule == request.path
+            for rule in app.url_map.iter_rules()
+        ))
+        return authenticate_admin_request(touch_session=not read_only)
 
 
 def admin_required(view):

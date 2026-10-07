@@ -53,6 +53,7 @@ from app.services.public_cache import configure_cache_logging, log_cache_startup
 from app.routes.ski_areas import (bp_admin_ski_areas, bp_public_ski_areas,
                                   bp_station_ski_areas)
 from app.routes.admin_ski_area_catalog import bp_admin_ski_area_catalog
+from app.routes.admin_station_ops import bp_admin_station_ops
 from app.cli import register_admin_commands
 
 
@@ -158,7 +159,7 @@ def create_app(config=None):
 
     # La protection est centralisée afin qu'aucune route d'administration,
     # présente ou ajoutée plus tard, ne puisse être oubliée.
-    protect_admin_routes(app)
+    protect_admin_routes(app, read_only_endpoints={"admin_station_ops.snapshot"})
 
     # CORS pour le front Next.js
     CORS(app, resources={
@@ -229,6 +230,7 @@ def create_app(config=None):
     app.register_blueprint(bp_admin_ski_areas)
     app.register_blueprint(bp_station_ski_areas)
     app.register_blueprint(bp_admin_ski_area_catalog)
+    app.register_blueprint(bp_admin_station_ops)
     app.register_blueprint(bp_newsletter)
     # Le front historique utilise ``/api/admin/stations`` tandis que les
     # routes d'import/export ont d'abord été publiées sous ``resorts``.
