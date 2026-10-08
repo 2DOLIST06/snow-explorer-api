@@ -1,7 +1,9 @@
-# Snow Explorer Station Ops — SCAN, COMPARE, REVIEW et APPLY
+# Snow Explorer Station Ops — RESEARCH, SCAN, COMPARE, REVIEW et APPLY
 
-Cette couche backend suit le pipeline `SCAN → COMPARE → REVIEW → APPLY`.
-SCAN, COMPARE et REVIEW restent strictement en lecture seule. APPLY dry_run
+Le pipeline de propositions est `RESEARCH → COMPARE → REVIEW → APPLY`.
+SCAN fournit en amont le catalogue physique à auditer ; RESEARCH est une collecte
+externe par ChatGPT ou un orchestrateur, sans accès web depuis ce backend.
+SCAN, COMPARE, REVIEW et la validation RESEARCH restent strictement en lecture seule. APPLY dry_run
 ne modifie aucune donnée métier ; seul APPLY commit explicitement confirmé écrit.
 APPLY conserve le comportement normal de la session admin, y compris en dry_run.
 
@@ -17,7 +19,7 @@ Node historique possède un token statique, pas un JWT non plus. Le Dockerfile
 démarre Flask/Gunicorn ; cette extension concerne cette application.
 
 Station Ops reprend tous les contrôles existants. Seule la mise à jour
-`last_seen_at` est omise sur les endpoints SCAN, COMPARE et REVIEW, également pour leurs méthodes refusées.
+`last_seen_at` est omise sur les endpoints SCAN, COMPARE, REVIEW et RESEARCH validation, également pour leurs méthodes refusées.
 Les autres routes gardent leur comportement. OPTIONS ne retourne pas de données
 et reste accessible pour CORS. HEAD exige la même authentification que GET.
 La réponse porte `Cache-Control: no-store`.
@@ -1337,3 +1339,245 @@ driver simulé et des fixtures SQLite, y compris rollback réel après corruptio
 du timestamp ou d'un autre champ. La simulation de 1 000 stations utilise quatre
 UPDATE/RETURNING groupés, aucun SELECT par opération. Aucun test de trigger sur
 un serveur PostgreSQL réel ni nouvelle vérification en production n'est revendiqué.
+
+
+## RESEARCH 1.0 : contrat de collecte externe
+
+**RESEARCH et `/research/validate` ne modifient aucune donnée en base.**
+Aucune recherche web, aucun scraping, aucune consultation des URLs et aucune
+persistance des candidats ou de leurs sources ne sont effectués. Le service
+Python `validate_research(payload)` est pur : zéro requête SQL. L'endpoint ne lit
+que l'authentification admin existante ; il ne consulte pas le catalogue métier,
+ne démarre pas de transaction métier et n'actualise pas `last_seen_at`.
+
+Rôles du pipeline :
+
+- SCAN fournit les stations existantes et leurs identifiants réels à l'orchestrateur.
+- RESEARCH collecte les propositions et leur provenance hors du backend.
+- COMPARE recalcule les correspondances et différences sur la base courante.
+- REVIEW recalcule COMPARE et applique les approbations explicites au plan.
+- APPLY dry_run vérifie ce plan ; APPLY commit effectue les écritures contrôlées,
+  avec kill switch, confirmation explicite, préconditions et rollback atomique.
+
+### Schéma et exemple canonique
+
+Le JSON Schema Draft 2020-12 est publié dans
+[`schemas/station-research.schema.json`](schemas/station-research.schema.json).
+La définition `$defs.station_research_candidate` porte le contrat par station.
+Le catalogue des champs est généré depuis celui de COMPARE, sans nouveaux noms
+métier. Le fichier et le générateur sont comparés par un test pour éviter le drift.
+
+```json
+{
+  "research_version": "1.0",
+  "scope": {"type": "country", "country_code": "FR"},
+  "batch": {"index": 1, "total": 3},
+  "candidates": [
+    {
+      "client_ref": "external-001",
+      "identity": {"kind": "existing", "status": "resolved"},
+      "research_level": "core",
+      "target_fields": ["slug", "country_code", "altitude_max_m", "website_url", "department"],
+      "data": {"slug": "les-contamines", "country_code": "FR", "altitude_max_m": 2600},
+      "field_statuses": {
+        "slug": "found",
+        "country_code": "found",
+        "altitude_max_m": "found",
+        "website_url": "not_found"
+      },
+      "field_sources": {
+        "altitude_max_m": [
+          {
+            "url": "https://example.org/station",
+            "source_type": "official",
+            "publisher": "Exploitant de la station",
+            "observed_at": "2026-10-08T12:00:00Z",
+            "value_observed": 2600
+          }
+        ]
+      },
+      "notes": ["Exemple de format ; aucune collecte réelle effectuée."]
+    }
+  ]
+}
+```
+
+`scope.type` vaut `station`, `region` ou `country`. `country_code` est obligatoire,
+avec deux lettres majuscules. Un scope station exige au moins `id`, `slug` ou
+`name` ; un scope région exige `region_id` ou `region_name`. Ces identifiants et
+libellés sont des chaînes. Le scope organise les lots : il ne certifie ni la
+couverture exhaustive du pays ni l'appartenance réelle à une région. Le pays
+candidat, lorsqu'il est proposé, doit correspondre au pays du scope.
+
+`batch` est facultatif, avec `1 <= index <= total`. L'orchestrateur gère la
+pagination et les références stables entre lots ; aucune orchestration de jobs
+ni agrégation globale ne sont ajoutées. `summary` est calculé par le validateur
+et n'est pas accepté dans l'entrée, afin de ne pas dupliquer des compteurs clients.
+
+Chaque candidat exige `client_ref`, `identity`, `research_level`, `target_fields`,
+`data` et `field_statuses`. `client_ref` est une chaîne non vide de 256 caractères
+maximum, unique dans le lot, conservée exactement, espaces compris.
+`identity.kind` vaut `existing` ou `discovered` ; `identity.status` vaut `resolved`,
+`ambiguous` ou `unresolved`. Une station découverte ne peut fournir de `data.id`.
+Un identifiant existant doit provenir de SCAN ou du catalogue interne, jamais être
+inventé par le moteur de recherche. Cette déclaration n'est pas vérifiée contre
+la base par le validateur : COMPARE reste responsable de la correspondance réelle.
+Aucune sélection automatique d'identité ambiguë n'est effectuée.
+
+`research_level` décrit la largeur de collecte (`identity`, `core`, `extended`),
+pas une confiance numérique. `target_fields` est la liste unique des champs visés.
+Tous les champs de `data` et `field_statuses` doivent y appartenir. Une station
+est « complete » uniquement par rapport à cette liste déclarée.
+
+### Valeurs proposées, absences et conflits
+
+| État de champ | Sens | Export dans `data` COMPARE |
+| --- | --- | --- |
+| `not_researched` | Non recherché ; valeur par défaut si état omis | Aucun |
+| `not_found` | Recherché mais non trouvé | Aucun |
+| `found` | Valeur réellement proposée | Obligatoire |
+| `conflicting` | Observations contradictoires non résolues | Aucun |
+| `ambiguous` | Ambiguïté non résolue | Aucun |
+
+Une valeur proposée doit être non-null et du type canonique : nombres JSON pour
+les mesures, entiers pour altitudes et compteurs, booléen pour `is_active`, chaînes
+non blanches pour les champs texte/identifiants/dates, tableaux pour les collections,
+objet pour `widgets`. Les validations COMPARE existantes s'appliquent aussi : URLs,
+dates, coordonnées, références de domaines et layout `legacy`/`v2`. Les valeurs ne
+sont pas réécrites lors de l'export. `updated_at` et les champs inconnus sont refusés.
+Les incohérences métier déjà traitées comme warnings par COMPARE restent des warnings.
+
+`clear_fields` est interdit dans le contrat RESEARCH et n'est jamais généré.
+Une absence ne devient ni `null`, ni chaîne vide, ni suppression. Les demandes de
+suppression restent une étape séparée et explicite, soumise au contrat REVIEW.
+
+Les contradictions sont représentées par `field_statuses[field] = "conflicting"`,
+les différentes observations dans `field_sources[field]` et, si utile, `notes`.
+Aucune source ne remporte automatiquement un conflit. Lorsque plusieurs
+`value_observed` scalaires normalisables diffèrent après la normalisation COMPARE,
+le validateur exige l'état `conflicting` et l'absence de proposition pour ce champ.
+Par exemple, `2600` et `"2600"` sont équivalents ; `2600` et `2700` sont contradictoires.
+Les observations brutes non normalisables sont conservées avec warning ; ce test
+ne remplace pas une analyse externe des citations et de leur contexte.
+Les autres champs résolus d'une identité résolue peuvent être exportés, même si
+l'audit signale un conflit ailleurs. Les champs non résolus restent exclus.
+
+### Provenance
+
+`field_sources` est facultatif. Chaque source exige `url` HTTP(S) sans identifiants
+et `source_type` parmi `official`, `government`, `ski_area_official`,
+`tourism_official`, `map_reference`, `reputable_reference`, `secondary`.
+`publisher` est facultatif, chaîne non blanche de 256 caractères maximum ;
+`observed_at` est facultatif, date-heure ISO avec fuseau ; `value_observed` est
+facultatif, toute valeur JSON finie. Les chemins de provenance suivent COMPARE :
+champ exact, ou chemin pointé pour `ski_areas` et collections. Les sources de
+champs non proposés, notamment conflictuels, peuvent être conservées dans le payload.
+
+Plusieurs sources sont conservées dans leur ordre, sans déduplication ni consultation.
+Une proposition sans source reçoit un warning `source_absent`, sans devenir invalide.
+Aucun score ou classement artificiel n'est ajouté. COMPARE accepte désormais
+`publisher` et `value_observed` de façon additive ; ses anciens `source_type`
+restent acceptés. REVIEW conserve ces métadonnées dans les opérations ; APPLY
+ne persiste pas cette provenance dans la base métier.
+
+### Nouvelles stations, domaines et collections
+
+Une station `discovered` conserve les seules valeurs trouvées. Aucune génération
+de slug, ID ou valeur manquante n'est effectuée. Sans `name` et `slug`, l'audit
+est `insufficient` ; une identité néanmoins résolue et comparable peut être
+exportée pour le diagnostic COMPARE. REVIEW revérifie les contraintes physiques
+réelles de création et bloque les données insuffisantes. Le validateur RESEARCH
+ne promet jamais une création possible sans cette vérification.
+
+`ski_areas` utilise les références existantes `id` entier positif, `slug` ou `name`.
+Une liste proposée doit être non vide et accompagnée de
+`"relation_coverage": {"ski_areas": "complete"}` : COMPARE considère cette liste
+comme l'ensemble souhaité des relations, donc une relation actuelle omise peut
+entraîner une proposition de retrait. Un warning explicite le signale. Une liste
+partielle doit rester ambiguë, sans `data.ski_areas`, avec observations dans les
+sources. Une liste vide ne peut servir à supprimer implicitement tous les domaines.
+Les suppressions de relations exigent toujours la décision explicite par opération
+prévue par REVIEW. COMPARE identifie les domaines ; aucun domaine n'est créé ici.
+
+`pistes`, `lifts`, `maps`, `webcams`, `widgets`, `ski_pass_seasons`,
+`ski_pass_periods`, `ski_pass_products`, `ski_pass_prices` peuvent être représentés.
+Le validateur avertit `collection_comparison_not_supported` et les conserve :
+COMPARE reste `review_required`, REVIEW reste `blocked`, sans opération arbitraire.
+
+### Audit et réponse de validation
+
+`POST /api/admin/station-ops/research/validate` exige le cookie admin et
+`X-CSRF-Token` existants, avec corps JSON. Réponse `Cache-Control: no-store` :
+
+```json
+{
+  "research_version": "1.0",
+  "valid": true,
+  "errors": [],
+  "warnings": [],
+  "summary": {
+    "total_candidates": 1,
+    "partial": 1,
+    "compare_candidates": 1,
+    "excluded_candidates": 0
+  },
+  "results": [
+    {
+      "client_ref": "external-001",
+      "compare_eligible": true,
+      "audit": {
+        "research_status": "partial",
+        "research_level": "core",
+        "fields_checked": ["altitude_max_m", "country_code", "slug", "website_url"],
+        "fields_found": ["altitude_max_m", "country_code", "slug"],
+        "fields_not_found": ["website_url"],
+        "fields_conflicting": [],
+        "fields_ambiguous": [],
+        "fields_not_researched": ["department"],
+        "notes": []
+      }
+    }
+  ],
+  "excluded_candidates": [],
+  "compare_payload": {
+    "candidates": [
+      {
+        "client_ref": "external-001",
+        "data": {"slug": "les-contamines", "country_code": "FR", "altitude_max_m": 2600},
+        "field_sources": {}
+      }
+    ]
+  }
+}
+```
+
+Cet exemple abrège les sources, notes et warnings : en réponse réelle ils sont
+conservés, et les champs trouvés sans source produisent des warnings.
+`compare_payload` contient exactement `candidates`, puis `client_ref`, `data`,
+`field_sources` par candidat. Il ne contient aucun état de recherche ni clear.
+C'est le corps prêt à envoyer à COMPARE ; aucune comparaison DB n'a encore été faite.
+
+Priorité des statuts d'audit : `identity_ambiguous`, puis `insufficient`
+(identité non résolue/non comparable ou découverte sans name/slug), puis `conflict`
+(champ conflicting/ambiguous), puis `complete` (tous les champs visés trouvés),
+sinon `partial`. Les listes sont triées pour un audit stable. La synthèse compte
+les statuts présents ; les compteurs de statut à zéro sont omis.
+
+Les identités ambiguës/non résolues sont explicitement exclues, avec leur
+`client_ref` et la raison `identity_unresolved`. Si aucun candidat n'est exportable,
+`compare_payload` vaut `null`, sans batch vide invalide. Si une erreur quelconque
+invalide le lot, aucun payload n'est retourné, même pour ses autres candidats.
+Les warnings n'invalident pas le lot. Les diagnostics comportent `path`, `code`
+et `message` ; les warnings métier COMPARE conservent aussi leur champ et sévérité.
+
+Limites partagées : **1000 candidats par lot, 16 MiB de JSON maximum**.
+Le test d’un lot de 500 candidats observe exactement une requête SELECT
+d’authentification (jointure session/admin) et zéro requête métier ou écriture.
+Des milliers de stations se traitent en plusieurs lots ; ce contrat ne duplique
+pas les sources au niveau audit. Le validateur n'infère pas une couverture nationale
+exhaustive ni une identité certaine à partir du seul nombre de candidats.
+
+Erreurs HTTP : 400 contrat/JSON invalide (clés inconnues, types incompatibles,
+doublons JSON, références dupliquées, états incohérents ou conflits non déclarés),
+413 limite du corps/lot, 415 Content-Type non JSON, 401/403 authentification/CSRF
+selon le hook admin. Un lot valide, même exclu pour identité ambiguë, retourne 200.

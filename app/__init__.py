@@ -161,6 +161,7 @@ def create_app(config=None):
     # présente ou ajoutée plus tard, ne puisse être oubliée.
     protect_admin_routes(app, read_only_endpoints={
         "admin_station_ops.snapshot", "admin_station_ops.compare", "admin_station_ops.review",
+        "admin_station_ops.research_validate",
     })
 
     # CORS pour le front Next.js
