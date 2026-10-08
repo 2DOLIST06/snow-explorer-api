@@ -4,4 +4,4 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 ENV PORT=5001
-CMD ["gunicorn","-c","gunicorn.conf.py","-b","0.0.0.0:5001","app.main:app"]
+CMD ["gunicorn","-c","gunicorn.conf.py","-b","0.0.0.0:5001","-k","uvicorn_worker.UvicornWorker","app.mcp_main:app"]

@@ -11,3 +11,9 @@ requests==2.32.5
 Pillow==11.3.0
 CairoSVG==2.8.2
 pypdfium2==4.30.0
+
+# Official MCP Streamable HTTP and Flask/ASGI adapter
+mcp==1.30.0
+uvicorn==0.38.0
+uvicorn-worker==0.4.0
+a2wsgi==1.10.10

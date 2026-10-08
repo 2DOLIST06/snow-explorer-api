@@ -1581,3 +1581,11 @@ Erreurs HTTP : 400 contrat/JSON invalide (clés inconnues, types incompatibles,
 doublons JSON, références dupliquées, états incohérents ou conflits non déclarés),
 413 limite du corps/lot, 415 Content-Type non JSON, 401/403 authentification/CSRF
 selon le hook admin. Un lot valide, même exclu pour identité ambiguë, retourne 200.
+
+
+## Façade MCP privée
+
+Le connecteur machine et les sept outils MCP sont documentés dans
+[station-ops-mcp.md](station-ops-mcp.md). Ils délèguent aux services ci-dessus,
+sans modifier les contrats admin cookie/CSRF ni les protections APPLY.
+RESEARCH reste une collecte externe.
