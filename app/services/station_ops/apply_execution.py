@@ -47,7 +47,9 @@ def insert_rows(database, model, rows):
 
 
 def update_stations(database, changes, now):
-    marker = '%s' if isinstance(database, PostgresqlDatabase) else '?'
+    postgresql = isinstance(database, PostgresqlDatabase)
+    marker = '%s' if postgresql else '?'
+    timestamps = {}
     groups = defaultdict(list)
     for identity, values in sorted(changes.items()):
         groups[tuple(sorted(values))].append((identity, values))
@@ -61,13 +63,31 @@ def update_stations(database, changes, now):
                                    ' '.join('WHEN ' + marker + ' THEN ' + marker for _ in batch) +
                                    ' ELSE ' + _column(Resort, field) + ' END')
                 params.extend(value for identity, values in batch for value in (identity, values[field]))
-            assignments.append('"updated_at" = ' + marker)
-            params.append(now)
+            # PostgreSQL owns this timestamp, including BEFORE UPDATE triggers.
+            # SQLite fixtures have no such trigger and use the deterministic
+            # application timestamp. Both paths still verify the stored value.
+            assignments.append('"updated_at" = NOW()' if postgresql else '"updated_at" = ' + marker)
+            if not postgresql:
+                params.append(now)
             params.extend(identity for identity, _ in batch)
             sql = ('UPDATE ' + quoted_table(Resort) + ' SET ' + ','.join(assignments) +
                    ' WHERE "id" IN (' + ','.join([marker] * len(batch)) + ')')
-            if database.execute_sql(sql, params).rowcount != len(batch):
+            if postgresql:
+                sql += ' RETURNING "id", "updated_at"'
+            cursor = database.execute_sql(sql, params)
+            if cursor.rowcount != len(batch):
                 raise ApplyError('stale_precondition', 'Station update affected an unexpected number of rows', 409)
+            if postgresql:
+                returned = cursor.fetchall()
+                if len(returned) != len(batch) or {identity for identity, _ in returned} != {identity for identity, _ in batch}:
+                    raise ApplyError('post_write_verification_failed', 'UPDATE returned unexpected station targets', 409)
+                for identity, timestamp in returned:
+                    if timestamp is None:
+                        raise ApplyError('post_write_verification_failed', 'UPDATE did not return a timestamp', 409, field='updated_at')
+                    timestamps[identity] = Resort.updated_at.python_value(timestamp)
+            else:
+                timestamps.update({identity: now for identity, _ in batch})
+    return timestamps
 
 
 def execute_plan(database, validated):
@@ -91,7 +111,8 @@ def execute_plan(database, validated):
     insert_rows(database, Resort, new_rows)
     # New rows already have this timestamp; avoid redundant updates for links.
     new_ids = {row['id'] for row in new_rows}
-    update_stations(database, {key: value for key, value in changes.items() if key not in new_ids}, now)
+    timestamps = {row['id']: now for row in new_rows}
+    timestamps.update(update_stations(database, {key: value for key, value in changes.items() if key not in new_ids}, now))
     marker = '%s' if isinstance(database, PostgresqlDatabase) else '?'
     for batch in _chunks(sorted(remove), 400):
         sql = ('DELETE FROM ' + quoted_table(SkiAreaResort) + ' WHERE ' +
@@ -102,7 +123,8 @@ def execute_plan(database, validated):
               **({'created_at': now} if validated['schema'].has(SkiAreaResort, 'created_at') else {})}
              for station, area in sorted(add)]
     insert_rows(database, SkiAreaResort, links)
-    return {'targets': targets, 'new_rows': new_rows, 'changes': dict(changes), 'add': add, 'remove': remove, 'timestamp': now}
+    return {'targets': targets, 'new_rows': new_rows, 'changes': dict(changes), 'add': add, 'remove': remove,
+            'timestamp': now, 'updated_at': timestamps}
 
 
 def verify_written(validated, execution):
@@ -114,7 +136,9 @@ def verify_written(validated, execution):
     expected = {row['id']: dict(row) for row in execution['new_rows']}
     for identity, changes in execution['changes'].items():
         expected.setdefault(identity, {}).update(changes)
-        expected[identity]['updated_at'] = execution['timestamp']
+        if identity not in execution['updated_at']:
+            raise ApplyError('post_write_verification_failed', 'Missing authoritative station timestamp', 409, field='updated_at')
+        expected[identity]['updated_at'] = execution['updated_at'][identity]
     for identity, values in expected.items():
         actual = rows.get(identity)
         if actual is None:
