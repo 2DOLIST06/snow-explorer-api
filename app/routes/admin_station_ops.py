@@ -1,4 +1,4 @@
-"""Admin-only read-only SCAN/COMPARE; authentication uses the application hook."""
+"""Admin-only read-only SCAN/COMPARE/REVIEW; uses the application auth hook."""
 import json
 import math
 
@@ -7,6 +7,7 @@ from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
 from app.services.station_ops.candidates import ComparePayloadError, MAX_BODY_BYTES
 from app.services.station_ops.compare import compare_candidates
+from app.services.station_ops.review import ReviewDecisionError, review_candidates
 from app.services.station_ops.scan import scan_stations
 from app.services.station_ops.schema import SchemaCompatibilityError
 
@@ -46,17 +47,17 @@ def _finite_json_float(value):
     return result
 
 
-def _compare_payload():
+def _compare_payload(operation="COMPARE"):
     if request.content_length is not None and request.content_length > MAX_BODY_BYTES:
-        raise ComparePayloadError("COMPARE body exceeds 16 MiB", 413)
+        raise ComparePayloadError(f"{operation} body exceeds 16 MiB", 413)
     try:
         body = request.stream.read(MAX_BODY_BYTES + 1)
     except RequestEntityTooLarge as exc:
-        raise ComparePayloadError("COMPARE body exceeds the request limit", 413) from exc
+        raise ComparePayloadError(f"{operation} body exceeds the request limit", 413) from exc
     except BadRequest as exc:
         raise ComparePayloadError("Malformed or truncated request body") from exc
     if len(body) > MAX_BODY_BYTES:
-        raise ComparePayloadError("COMPARE body exceeds 16 MiB", 413)
+        raise ComparePayloadError(f"{operation} body exceeds 16 MiB", 413)
     try:
         return json.loads(body, object_pairs_hook=_unique_json_object, parse_float=_finite_json_float,
                           parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Non-finite JSON number")))
@@ -78,6 +79,27 @@ def compare():
     except Exception:
         current_app.logger.exception("Unable to compare Station Ops candidates")
         return jsonify({"error": "station_ops_compare_failed"}), 500
+    response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@bp_admin_station_ops.post("/review")
+def review():
+    if not request.is_json:
+        return jsonify({"error": "json_content_type_required"}), 415
+    try:
+        result = review_candidates(_compare_payload("REVIEW"))
+    except ComparePayloadError as exc:
+        return jsonify({"error": "invalid_review_payload", "message": str(exc)}), exc.status
+    except ReviewDecisionError as exc:
+        return jsonify({"error": "invalid_review_decisions", "issues": exc.issues}), 409
+    except SchemaCompatibilityError as exc:
+        return jsonify({"error": "station_ops_schema_incompatible", "message": str(exc),
+                        "schema_findings": exc.findings}), 503
+    except Exception:
+        current_app.logger.exception("Unable to review Station Ops candidates")
+        return jsonify({"error": "station_ops_review_failed"}), 500
     response = jsonify(result)
     response.headers["Cache-Control"] = "no-store"
     return response

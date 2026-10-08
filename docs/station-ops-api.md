@@ -1,4 +1,4 @@
-# Snow Explorer Station Ops — SCAN et COMPARE
+# Snow Explorer Station Ops — SCAN, COMPARE et REVIEW
 
 Cette couche backend extrait et examine les données existantes. Elle ne possède
 aucune fonction d'écriture, de correction, de fusion ou d'APPLY.
@@ -15,7 +15,7 @@ Node historique possède un token statique, pas un JWT non plus. Le Dockerfile
 démarre Flask/Gunicorn ; cette extension concerne cette application.
 
 Station Ops reprend tous les contrôles existants. Seule la mise à jour
-`last_seen_at` est omise sur les endpoints SCAN et COMPARE, également pour leurs méthodes refusées.
+`last_seen_at` est omise sur les endpoints SCAN, COMPARE et REVIEW, également pour leurs méthodes refusées.
 Les autres routes gardent leur comportement. OPTIONS ne retourne pas de données
 et reste accessible pour CORS. HEAD exige la même authentification que GET.
 La réponse porte `Cache-Control: no-store`.
@@ -710,3 +710,290 @@ Aucune donnée, relation, migration ou structure PostgreSQL modifiée. Les
 écritures de préparation des tests se limitent aux fixtures SQLite éphémères.
 Aucun frontend ou endpoint public modifié. La publication est limitée à une
 branche de PR, sans fusion ni déploiement. APPLY n'est pas développé.
+
+## REVIEW — contrat 1.0, sans écriture
+
+Le lifecycle est `SCAN → COMPARE → REVIEW → APPLY ultérieurement`. SCAN décrit
+la base, COMPARE identifie et compare les candidats, REVIEW transforme les
+propositions en opérations et décisions en mémoire. **REVIEW NE MODIFIE PAS LA
+BASE.** Il ne sauvegarde ni plan, ni décision, ni source, ni session admin.
+APPLY n'est pas implémenté et devra revalider le plan et ses préconditions.
+
+### Endpoint et recomputation
+
+`POST /api/admin/station-ops/review`, cookie admin et `X-CSRF-Token` existants.
+Même protection de session, rôle, expiration, révocation et mot de passe que
+COMPARE ; aucun touch de `last_seen_at`, y compris pour les méthodes refusées.
+POST uniquement ; OPTIONS sans données, autres méthodes 405. Réponse réussie
+HTTP 200 et `Cache-Control: no-store`.
+
+REVIEW accepte les candidats originaux, jamais un résultat COMPARE client. Il
+appelle le service Python COMPARE exactement une fois par batch, sans HTTP, et
+construit le plan **dans la même transaction REPEATABLE READ / READ ONLY**. Les
+lectures supplémentaires de contraintes de création partagent ce snapshot.
+L'extension interne `result_builder` de COMPARE ne change pas sa réponse API.
+
+### Payload et décisions
+
+```json
+{
+  "candidates": [
+    {
+      "client_ref": "external-001",
+      "data": {"id": "a", "altitude_max_m": 2600},
+      "field_sources": {},
+      "clear_fields": []
+    }
+  ],
+  "decisions": [
+    {
+      "client_ref": "external-001",
+      "operations": {
+        "8110bb5ffec8526f0add1b978b9c3a4643e104e40f1ce8a47a79a692fbc74bb5": "approved"
+      }
+    }
+  ]
+}
+```
+
+Premier appel : omettre `decisions` pour obtenir les propositions pending.
+Second appel : renvoyer les candidats et les décisions par operation_id.
+Chaque client_ref doit être une chaîne non blanche d'au plus 256 caractères,
+unique dans le batch REVIEW et conservée littéralement. Les autres règles de
+candidat sont celles de COMPARE ; les candidats inexploitables deviennent invalid.
+Seules les clés d'enveloppe `candidates` et `decisions` sont acceptées.
+
+`decisions` est une liste facultative ; chaque entrée contient exclusivement
+`client_ref` et `operations`. Valeurs autorisées : approved / rejected. Une
+opération sans décision reste pending. Plusieurs entrées d'un même client_ref
+peuvent cibler des opérations distinctes ; répéter une décision identique est
+idempotent, des décisions contradictoires sont refusées. Aucun approve_all,
+aucune sélection automatique ou résolution selected_station_id à cette étape.
+
+### Statuts et résumé
+
+| Statut REVIEW | Règle |
+|---|---|
+| no_action | COMPARE unchanged ; aucune opération |
+| pending_review | Opérations proposées, aucune approuvée et au moins une pending ; inclut rejected + pending |
+| partially_approved | Au moins une approved et au moins une rejected ou pending |
+| approved | Toutes les opérations approuvées explicitement |
+| rejected | Toutes les opérations refusées explicitement |
+| blocked | COMPARE review_required, création insuffisante/contrainte inconnue, ou propositions incompatibles dans le batch |
+| invalid | COMPARE invalid |
+
+`summary` contient total_candidates, les sept compteurs de statuts et les nombres
+d'approved_operations / pending_operations / rejected_operations. Les opérations
+retirées d'un candidat bloqué ne comptent pas ; aucune opération bloquée n'entre
+dans le plan. Les review_items et validations COMPARE sont conservés. Le statut
+COMPARE original est exposé comme `compare_status`.
+
+### Opérations et sources
+
+Exemple réel de fixture : remplacer 2200 par 2600, avec approbation explicite.
+L'ID ci-dessous et le fingerprint de plan sont reproductibles avec cette fixture.
+
+```json
+{
+  "operation_id": "8110bb5ffec8526f0add1b978b9c3a4643e104e40f1ce8a47a79a692fbc74bb5",
+  "client_ref": "external-001",
+  "target_type": "station",
+  "target_id": "a",
+  "target_client_ref": null,
+  "operation": "replace",
+  "field": "altitude_max_m",
+  "existing": 2200,
+  "candidate": 2600,
+  "normalized_existing": "2200",
+  "normalized_candidate": "2600",
+  "decision": "approved",
+  "requires_explicit_approval": true,
+  "sensitive": false,
+  "sources": [],
+  "source_count": 0,
+  "preconditions": {
+    "station_id": "a",
+    "station_exists": true,
+    "field": "altitude_max_m",
+    "comparison": "serialized_stored_value",
+    "expected_existing": 2200
+  }
+}
+```
+
+Opérations scalaires : set (valeur ajoutée), replace (modification), clear
+(clear_fields explicite). Tous les types exigent une approbation par operation_id.
+Clear et remove_ski_area_relation portent en plus `sensitive: true`. Un null ou
+un champ/collection absent ne produit jamais de clear ou suppression implicite.
+
+Les sources scalaires viennent du field_sources du champ. Pour les relations,
+les sources du champ ski_areas sont utilisées, plus les chemins de la référence
+ajoutée (ex. ski_areas.0.id). Pour une création, les sources des scalaires fournis
+sont conservées dans sources et field_sources ; les sources des domaines restent
+sur leurs opérations de relation. Les objets source ne sont pas modifiés et aucune
+URL n'est consultée. source_count compte les entrées, sans score ni déduplication
+arbitraire ; zéro source est autorisé.
+
+Les gros contenus existants restent des empreintes LENGTH/MD5, les images inline
+existantes longueur/SHA256. Pour une proposition éditoriale ou image inline, un
+champ `candidate_input` conserve la valeur originale nécessaire au futur APPLY,
+en plus du résumé candidate hérité de COMPARE. Cette donnée ne devient pas une
+écriture. Les réponses approuvées peuvent donc être plus volumineuses que COMPARE.
+
+### operation_id exact
+
+`operation_id` est le SHA-256 hexadécimal du JSON canonique de l'objet suivant :
+
+```text
+{
+  review_version,
+  client_ref,
+  target_type,
+  target_id,
+  target_client_ref,
+  operation,
+  field,
+  related_id,
+  normalized_candidate,
+  preconditions,
+  creation_policy,
+  depends_on
+}
+```
+
+Tous ces noms sont présents dans l'objet hashé ; les propriétés absentes de
+l'opération valent null. review_version vaut "1.0". Canonicalisation exacte :
+`json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+allow_nan=False)` encodé UTF-8, puis hashlib.sha256(...).hexdigest(). Les tableaux
+conservent leur ordre. Aucun UUID, date generated_at, décision ou source n'entre
+dans cet identifiant. Pour une création, normalized_candidate représente les
+valeurs canoniques de création, avec la graphie du nom préservée.
+
+Les préconditions entrent dans le hash : même cible/proposition et même état
+revu donnent le même ID ; une valeur existante ou une contrainte de création
+changée donne un autre ID. Une ancienne décision est alors refusée, jamais
+transférée. Un appel sans décisions montre la nouvelle opération pending. Les
+sources et valeurs brutes restent incluses dans le fingerprint du plan approuvé.
+
+### Créations et domaines multiples
+
+Un candidat COMPARE new produit create_station uniquement s'il fournit name et
+slug exploitables. REVIEW n'invente ni nom, ni slug. Cette règle tient compte de
+la route admin existante : nom obligatoire, slug unique, ID primaire ; REVIEW
+exige le slug fourni même si l'ancienne route peut le fabriquer depuis le nom.
+L'ID peut être fourni ou rester à attribuer par UUID technique au futur APPLY.
+Les politiques existantes de valeurs par défaut sont décrites dans creation_policy :
+is_active=true, page_layout_version=legacy, updated_at=utcnow à APPLY, uniquement
+pour les champs non fournis. Aucun ID ni timestamp métier n'est généré maintenant.
+Une création doit être approuvée explicitement, sans INSERT.
+
+Les colonnes physiques NOT NULL, defaults et limites de longueur sont lues une
+fois par batch ayant des créations. Une colonne obligatoire sans default exploitable
+ni politique connue, ou un champ trop long, bloque la création. Les CHECK non
+reconnus bloquent également, au lieu d'inventer une règle de validation. Le CHECK
+page_layout_version legacy/v2 existant est reconnu. Les defaults serveur NULL
+ne satisfont pas une contrainte NOT NULL.
+
+Une relation de domaine devient add_ski_area_relation ou remove_ski_area_relation,
+avec related_id identifiant un domaine existant certain. Chaque retrait nécessite
+son propre approved explicite. Les tableaux added/removed de COMPARE ne sont
+jamais réduits à un domaine unique. Aucun domaine n'est créé.
+
+Pour une nouvelle station, les relations sont des opérations distinctes et
+portent depends_on=[operation_id de création], avec target_client_ref pour la
+future résolution de l'ID. Leur approbation sans approbation de création est
+refusée. create_station ne contient pas de ski_areas à appliquer implicitement.
+Les dépendances imposent un ordre d'exécution futur, distinct du tri du plan.
+
+Des créations proposant le même ID/slug, ou des valeurs incompatibles pour le
+même champ de la même station dans un batch, bloquent les candidats concernés
+avec batch_target_conflict. Les collections non comparables et domaines ambigus
+restent blocked sans opérations approuvables.
+
+### Préconditions et données stale
+
+- Scalaire : station_id, station_exists=true, field, comparison et expected_existing
+  sérialisé depuis la base ; comparaison brute, ou length_md5 / length_sha256
+  pour les valeurs résumées.
+- Relation existante : station_id, ski_area_id, ski_area_exists=true et
+  expected_relation_exists true pour un retrait / false pour un ajout.
+- Relation d'une station à créer : station_exists=false avant le plan,
+  station_client_ref et depends_on pour la présence après création.
+- Création : ID fourni et slug doivent rester absents, no_matching_station=true,
+  match_input et compare_version pour refaire le rapprochement, puis
+  revalidate_physical_constraints=true et required_columns.
+  creation_constraints_fingerprint est le SHA-256 canonique des métadonnées
+  lues : `{columns: {nom: {required, default, type}}, unknown_checks: [...]}`.
+
+Le futur APPLY devra recharger les candidats, recalculer la revue, revalider
+l'existence des cibles/domaines, les contraintes physiques et **toutes** les
+préconditions avant toute mutation, dans sa propre transaction, puis ordonner
+les opérations selon depends_on. Une différence ou un match nouveau doit faire
+refuser le plan stale. REVIEW ne garantit pas qu'une proposition restera valide
+après la fin de sa transaction et n'implémente aucun verrou persistant.
+
+### apply_plan et plan_fingerprint
+
+apply_plan.operations contient uniquement les opérations explicitement approved
+et non bloquées, avec sources, valeurs et préconditions complètes. Pending et
+rejected sont exclus ; aucun approved d'un candidat blocked/invalid n'est accepté.
+La liste est triée par operation_id, indépendamment de l'ordre du batch.
+
+Algorithme exact du plan_fingerprint : même canonicalisation que ci-dessus,
+SHA-256 hexadécimal de `{"review_version":"1.0","operations": <liste approuvée triée>}`.
+Il inclut toutes les propriétés des opérations, y compris sources, candidate_input,
+décision approved et préconditions ; il exclut generated_at et les opérations
+non approuvées. Pour la seule opération de fixture ci-dessus :
+`daae3a76a4f7c5c5de7113c551a1abf4ffce8150abb7efcad32303b4d7ceb969`.
+Pour le plan vide :
+`91b408cab644061de05303c7a9b9216ce4c5f0a9f4a15c69eb5c5d32e3c3b920`.
+
+Ce fingerprint identifie un plan et détecte des altérations accidentelles ;
+**ce n'est pas une signature de sécurité** et ne remplace ni l'authentification
+ni la recomputation et les préconditions du futur APPLY.
+
+### Réponse et erreurs
+
+La réponse contient schema_version, compare_version, review_version="1.0",
+generated_at, summary, results, apply_plan, schema_findings et catalog_findings.
+Chaque résultat contient client_ref, compare_status, status, matched_station,
+match_reasons, validation, review_items et operations. Les diagnostics de drift
+et catalogue sont repris sans modification, y compris regions vide, description_html
+absent, seo_text distinct et ski_area_km fractionnaire.
+
+| HTTP | Erreur |
+|---|---|
+| 400 | invalid_review_payload : enveloppe/JSON, refs dupliquées, décisions mal formées/contradictoires, candidat de décision inexistant |
+| 409 | invalid_review_decisions avec issues : unknown_or_stale_operation, approval_on_blocked_candidate, operation_dependency_not_approved |
+| 413 | invalid_review_payload : batch ou corps trop grand |
+| 415 | json_content_type_required |
+| 401 / 403 | Auth admin / CSRF existants |
+| 503 | station_ops_schema_incompatible avec schema_findings |
+| 500 | station_ops_review_failed : erreur interne, sans plan partiel |
+
+Une décision incohérente fait refuser tout le résultat, sans plan partiellement
+approuvé. Une issue stale indique les available_operation_ids actuels ; rappeler
+REVIEW sans décisions pour obtenir un plan pending. Un résultat client COMPARE
+falsifié, une décision globale ou un selected_station_id non pris en charge
+ne sont jamais utilisés comme vérité opérationnelle.
+
+### Batch et validation locale REVIEW
+
+Limites partagées avec COMPARE : 1 000 candidats, 16 MiB de corps JSON. Aucun N+1.
+Batchs de 500 et 1 000 candidats sur 121 stations : 6 SELECT SQLite, auth comprise,
+plus 12 PRAGMA d'inventaire et les gardes de transaction. Batch de 500 créations :
+4 SELECT et 13 PRAGMA d'inventaire, comme pour une création unique. Les métadonnées
+de création sont mutualisées. Maximum PostgreSQL prévu : 7 SELECT sans création,
+8 avec création ; ce sont des comptes structurels, pas une mesure live.
+
+La suite comporte 124 tests Station Ops : 35 SCAN, 44 COMPARE et 45 REVIEW.
+Les tests REVIEW couvrent tous les statuts, IDs et plans stables, décisions stale,
+clears sensibles, domaines/dependencies, créations et contraintes physiques,
+provenance, limites, auth/CSRF et non-écriture avec session ancienne. Ils vérifient
+également REPEATABLE READ et READ ONLY PostgreSQL par mock, et le blocage d'une
+écriture accidentelle par le garde SQLite. Les 11 tests de connexion, 9 de cache
+public et 13 d'authentification avec harness SQLite isolé sont conservés.
+
+Aucune donnée ni structure PostgreSQL modifiée. Les écritures de préparation
+concernent uniquement les fixtures SQLite éphémères. Aucun modèle métier,
+frontend, migration, APPLY, push, PR ou déploiement dans cette étape.
