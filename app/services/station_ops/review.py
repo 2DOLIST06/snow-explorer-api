@@ -3,7 +3,7 @@ from copy import deepcopy
 from collections import defaultdict
 
 from .candidates import ComparePayloadError, MAX_CANDIDATES
-from .compare import compare_candidates
+from .compare import compare_candidates, compare_in_transaction
 from .creation import creation_constraints, create_operation
 from .operations import REVIEW_VERSION, apply_plan, canonical_json, relation_operations, scalar_operation
 
@@ -62,8 +62,19 @@ def review_candidates(payload):
     return compare_candidates({'candidates': candidates}, result_builder=builder)
 
 
+def review_in_transaction(payload, *, result_builder):
+    """Recompute REVIEW within APPLY's transaction, without a nested wrapper."""
+    candidates, decisions = _parse_review(payload)
+    def builder(compared, prepared, database, context):
+        reviewed = _build_review(compared, prepared, database, context, decisions)
+        return result_builder(reviewed, prepared, database, context)
+    return compare_in_transaction({'candidates': candidates}, result_builder=builder)
+
+
 def _build_review(compared, prepared, database, context, decisions):
     constraints = creation_constraints(database) if any(row['status'] == 'new' for row in compared['results']) else None
+    if context is not None:
+        context['creation_constraints'] = constraints
     results = []
     for compared_row, original in zip(compared['results'], prepared):
         row = {key: deepcopy(compared_row[key]) for key in ('client_ref', 'matched_station', 'match_reasons', 'validation', 'review_items')}

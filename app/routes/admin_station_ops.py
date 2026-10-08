@@ -2,10 +2,12 @@
 import json
 import math
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
 from app.services.station_ops.candidates import ComparePayloadError, MAX_BODY_BYTES
+from app.services.station_ops.apply import apply_candidates
+from app.services.station_ops.apply_contract import ApplyError
 from app.services.station_ops.compare import compare_candidates
 from app.services.station_ops.review import ReviewDecisionError, review_candidates
 from app.services.station_ops.scan import scan_stations
@@ -101,5 +103,38 @@ def review():
         current_app.logger.exception("Unable to review Station Ops candidates")
         return jsonify({"error": "station_ops_review_failed"}), 500
     response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@bp_admin_station_ops.post("/apply")
+def apply():
+    # Deliberately absent from the read-only auth/session exemptions.
+    if not request.is_json:
+        return jsonify({"error": "json_content_type_required"}), 415
+    try:
+        result = apply_candidates(_compare_payload("APPLY"), actor_id=g.admin_user.id)
+    except ApplyError as exc:
+        result = {"error": exc.code, "message": str(exc), "execution_id": exc.execution_id, **exc.details}
+        if exc.code == "station_ops_apply_commit_disabled":
+            result.pop("execution_id", None)
+        response = jsonify(result)
+        response.status_code = exc.status
+    except ComparePayloadError as exc:
+        response = jsonify({"error": "invalid_apply_payload", "message": str(exc)})
+        response.status_code = exc.status
+    except SchemaCompatibilityError as exc:
+        response = jsonify({"error": "station_ops_schema_incompatible", "message": str(exc),
+                            "schema_findings": exc.findings, "execution_id": getattr(exc, "execution_id", None)})
+        response.status_code = 503
+    except Exception as exc:
+        # SQL exception strings/tracebacks can include editorial values. Keep
+        # logs diagnostic without dumping SQL parameters or client content.
+        current_app.logger.error("Station Ops APPLY failed type=%s execution_id=%s", type(exc).__name__,
+                                 getattr(exc, "execution_id", None))
+        response = jsonify({"error": "station_ops_apply_failed", "execution_id": getattr(exc, "execution_id", None)})
+        response.status_code = 500
+    else:
+        response = jsonify(result)
     response.headers["Cache-Control"] = "no-store"
     return response
