@@ -618,6 +618,104 @@ class LegacyApplyTests(unittest.TestCase):
         self.assertEqual(self.database.execute_sql('SELECT ski_area_km FROM resort WHERE id=?', (identity,)).fetchone()[0], 45.75)
 
 
+class ApplyTimestampTests(unittest.TestCase):
+    legacy_regions = False
+    real_km_fixture = False
+    setUp = apply_fixture_setup
+    plan = ApplyTests.plan
+    apply = ApplyTests.apply
+    business_state = ApplyTests.business_state
+
+    def pg_update_bridge(self, database_time):
+        """Exercise PostgreSQL UPDATE/RETURNING against isolated SQLite state.
+
+        NOW() simulates the authoritative timestamp from a BEFORE UPDATE
+        trigger. Only the driver is adapted; no PostgreSQL connection or
+        production trigger is created/modified.
+        """
+        self.database.register_function(lambda: database_time.isoformat(), 'NOW', 0)
+        pg = PostgresqlDatabase('never-connected')
+        def execute(sql, params):
+            cursor = self.database.execute_sql(sql.replace('%s', '?'), params)
+            returned = cursor.fetchall()
+            result = MagicMock(); result.rowcount = len(returned); result.fetchall.return_value = returned
+            return result
+        pg.execute_sql = MagicMock(side_effect=execute)
+        original = execution_service.update_stations
+        def update(database, changes, python_time):
+            self.assertNotEqual(database_time, python_time)
+            return original(pg, changes, python_time)
+        return pg, update
+
+    def test_pg_database_timestamp_replaces_python_time_and_verifies(self):
+        payload = self.plan()
+        db_time = utcnow() - timedelta(seconds=2)
+        pg, update = self.pg_update_bridge(db_time)
+        original_verify = apply_service.verify_written
+        def verify(validated, execution):
+            self.assertEqual(execution['updated_at']['a'], db_time)
+            self.assertNotEqual(execution['timestamp'], db_time)
+            return original_verify(validated, execution)
+        with patch.object(execution_service, 'update_stations', side_effect=update), \
+                patch.object(apply_service, 'verify_written', side_effect=verify):
+            body = self.apply(payload, commit=True)
+        self.assertTrue(body['applied'])
+        self.assertEqual(Resort.get_by_id('a').updated_at, db_time)
+        sql, params = pg.execute_sql.call_args.args
+        self.assertIn('"updated_at" = NOW()', sql)
+        self.assertTrue(sql.endswith(' RETURNING "id", "updated_at"'))
+        self.assertFalse(any(isinstance(value, type(db_time)) for value in params))
+
+    def test_pg_timestamp_correct_other_field_wrong_rolls_back(self):
+        payload = self.plan(); before = self.business_state()
+        _, update = self.pg_update_bridge(utcnow() - timedelta(seconds=2))
+        original_verify = apply_service.verify_written
+        def corrupt(validated, execution):
+            Resort.update(altitude_max_m=999).where(Resort.id == 'a').execute()
+            return original_verify(validated, execution)
+        with patch.object(execution_service, 'update_stations', side_effect=update), \
+                patch.object(apply_service, 'verify_written', side_effect=corrupt):
+            body = self.apply(payload, commit=True, expected=409)
+        self.assertEqual(body['error'], 'post_write_verification_failed')
+        self.assertEqual(body['field'], 'altitude_max_m')
+        self.assertEqual(before, self.business_state())
+
+    def test_timestamp_changed_after_returning_still_rolls_back(self):
+        payload = self.plan(); before = self.business_state()
+        _, update = self.pg_update_bridge(utcnow() - timedelta(seconds=2))
+        original_verify = apply_service.verify_written
+        def corrupt(validated, execution):
+            Resort.update(updated_at=execution['updated_at']['a'] + timedelta(seconds=1)).execute()
+            return original_verify(validated, execution)
+        with patch.object(execution_service, 'update_stations', side_effect=update), \
+                patch.object(apply_service, 'verify_written', side_effect=corrupt):
+            body = self.apply(payload, commit=True, expected=409)
+        self.assertEqual(body['field'], 'updated_at')
+        self.assertEqual(before, self.business_state())
+
+    def test_dry_run_timestamp_unchanged(self):
+        before = Resort.get_by_id('a').updated_at
+        with patch.object(execution_service, 'update_stations') as updated:
+            self.assertTrue(self.apply(self.plan())['would_apply'])
+            updated.assert_not_called()
+        self.assertEqual(Resort.get_by_id('a').updated_at, before)
+
+    def test_creation_keeps_python_timestamp_without_existing_station_update(self):
+        payload = self.plan([candidate({'name': 'New', 'slug': 'new', 'ski_areas': [{'id': self.area.id}]})])
+        timestamp = utcnow()
+        with patch.object(execution_service, 'utcnow', return_value=timestamp), \
+                patch.object(execution_service, 'update_stations', wraps=execution_service.update_stations) as updated:
+            body = self.apply(payload, commit=True)
+        self.assertEqual(updated.call_args.args[1], {})
+        self.assertEqual(Resort.get_by_id(body['operations'][0]['target_id']).updated_at, timestamp)
+
+    def test_candidate_updated_at_remains_forbidden(self):
+        empty = fingerprint({'review_version': '1.0', 'operations': []})
+        body = self.apply({'candidates': [candidate({'id': 'a', 'updated_at': utcnow().isoformat()})],
+                           'plan_fingerprint': empty}, commit=True, expected=400)
+        self.assertEqual(body['error'], 'invalid_apply_candidates')
+
+
 class PureApplyTests(unittest.TestCase):
     def setUp(self):
         enabled = patch.dict(os.environ, {'STATION_OPS_APPLY_COMMIT_ENABLED': 'true'})
@@ -709,6 +807,43 @@ class PureApplyTests(unittest.TestCase):
                     apply_candidates(payload)
                 self.assertEqual(raised.exception.code, 'concurrent_conflict')
                 uuid.UUID(raised.exception.execution_id)
+
+    def test_pg_returning_remains_batched_and_normalizes_naive_timestamps(self):
+        pg = PostgresqlDatabase('never-connected')
+        python_time = utcnow()
+        db_time = (python_time - timedelta(seconds=1)).replace(tzinfo=None)
+        changes = {'station-' + str(i): {'altitude_max_m': 2600} for i in range(1000)}
+        def returned(sql, params):
+            self.assertIn('RETURNING "id", "updated_at"', sql)
+            count = len(params) // 3  # CASE id/value pairs + WHERE IDs, no Python timestamp.
+            cursor = MagicMock(); cursor.rowcount = count
+            cursor.fetchall.return_value = [(identity, db_time) for identity in reversed(params[-count:])]
+            return cursor
+        with patch.object(pg, 'execute_sql', side_effect=returned) as sql:
+            timestamps = execution_service.update_stations(pg, changes, python_time)
+        self.assertEqual(sql.call_count, 4)
+        self.assertEqual(set(timestamps), set(changes))
+        self.assertTrue(all(timestamp != python_time and timestamp.replace(tzinfo=None) == db_time
+                            and timestamp.utcoffset() == timedelta(0) for timestamp in timestamps.values()))
+        self.assertTrue(pg.is_closed())
+
+    def test_pg_relation_only_update_captures_database_timestamp(self):
+        pg = PostgresqlDatabase('never-connected'); timestamp = utcnow()
+        cursor = MagicMock(); cursor.rowcount = 1; cursor.fetchall.return_value = [('a', timestamp)]
+        with patch.object(pg, 'execute_sql', return_value=cursor) as sql:
+            result = execution_service.update_stations(pg, {'a': {}}, timestamp - timedelta(seconds=1))
+        self.assertEqual(result, {'a': timestamp})
+        self.assertIn('SET "updated_at" = NOW()', sql.call_args.args[0])
+        self.assertEqual(sql.call_args.args[1], ['a'])
+
+    def test_pg_returning_missing_null_or_wrong_target_is_refused(self):
+        pg = PostgresqlDatabase('never-connected'); timestamp = utcnow()
+        for returned in ([], [('other', timestamp)], [('a', None)]):
+            cursor = MagicMock(); cursor.rowcount = 1; cursor.fetchall.return_value = returned
+            with self.subTest(returned=returned), patch.object(pg, 'execute_sql', return_value=cursor):
+                with self.assertRaises(ApplyError) as raised:
+                    execution_service.update_stations(pg, {'a': {'altitude_max_m': 2600}}, timestamp)
+                self.assertEqual(raised.exception.code, 'post_write_verification_failed')
 
 
 if __name__ == '__main__':

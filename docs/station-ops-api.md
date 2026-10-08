@@ -1203,8 +1203,25 @@ admin historique et les modifications de plans ne synchronisent pas widgets :
 ce seraient des effets hors du plan approuvé. Les champs Resort et relations
 sont les seules données métier écrites.
 
-updated_at utilise UTC utcnow pour toute modification réelle, y compris une
-modification de relation. Les valeurs et relations affectées sont relues par
+Pour les UPDATE de stations existantes PostgreSQL, `updated_at` appartient à la
+base : APPLY utilise `updated_at = NOW()` et chaque UPDATE groupé retourne
+`RETURNING id, updated_at`. Cela respecte le trigger BEFORE UPDATE
+`resort_set_updated_at` / `set_public_page_updated_at()`, qui remplace updated_at
+par NOW(). Le timestamp UTC réellement retourné est conservé par station et
+comparé strictement à la relecture post-write, sans comparaison avec utcnow()
+Python. Aucun SELECT supplémentaire par station ; batching inchangé. Un retour
+incomplet, une mauvaise cible, un timestamp NULL ou une valeur relue différente
+provoque rollback ; le contrôle n'est pas supprimé.
+
+SQLite isolé, sans ce trigger PostgreSQL, conserve l'horodatage déterministe
+utcnow() Python et sa vérification stricte. Les créations gardent également
+utcnow() à INSERT : le trigger de production fourni est uniquement BEFORE UPDATE.
+Une nouvelle station suivie d'une relation n'est pas mise à jour une seconde fois.
+Les modifications de relations sur stations existantes suivent le même chemin
+UPDATE/RETURNING. updated_at reste interdit dans les candidats et inchangé en
+dry_run. Aucun trigger, fonction, schéma ou modèle métier n'est modifié.
+
+Les valeurs et relations affectées sont relues par
 batch avant COMMIT ; les contenus éditoriaux sont vérifiés par longueur/MD5,
 sans SELECT du texte complet. Un résultat incompatible provoque rollback avec
 `post_write_verification_failed`. Après commit, les mécanismes existants
@@ -1309,9 +1326,14 @@ créations/defaults, domaines/dépendances, rollback, relecture, audit, caches,
 auth/CSRF/session normale, limites et batchs significatifs. Aucun push, PR,
 déploiement ou migration n'est effectué pour cette étape.
 
-Résultats locaux : **192 tests Station Ops réussis** (35 SCAN, 44 COMPARE,
-45 REVIEW, 68 APPLY, dont 7 tests du kill switch), 11 tests de cycle de connexion, 9 tests de cache public et
+Résultats locaux : **201 tests Station Ops réussis** (35 SCAN, 44 COMPARE,
+45 REVIEW, 77 APPLY, dont 7 tests du kill switch et 9 tests de timestamps), 11 tests de cycle de connexion, 9 tests de cache public et
 13 tests d'authentification admin sous harnais SQLite isolé réussis. Syntaxe
 Python et whitespace vérifiés. Les fixtures interdisent explicitement les
 connexions PostgreSQL de production ; seules les bases SQLite éphémères sont
 écrites par les tests. Aucun test de concurrence PostgreSQL réel n'est revendiqué.
+Les tests de timestamps exercent le chemin PostgreSQL UPDATE/RETURNING avec un
+driver simulé et des fixtures SQLite, y compris rollback réel après corruption
+du timestamp ou d'un autre champ. La simulation de 1 000 stations utilise quatre
+UPDATE/RETURNING groupés, aucun SELECT par opération. Aucun test de trigger sur
+un serveur PostgreSQL réel ni nouvelle vérification en production n'est revendiqué.
