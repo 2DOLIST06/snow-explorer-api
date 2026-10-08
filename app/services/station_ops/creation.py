@@ -18,9 +18,9 @@ def _known_layout_check(check):
                     "checkpage_layout_version=anyarray['legacy','v2']"}
 
 
-def creation_constraints(database):
+def creation_constraints(database, model=Resort):
     """One PG metadata SELECT, or one SQLite PRAGMA + one schema SELECT per batch."""
-    table, schema = Resort._meta.table_name, Resort._meta.schema
+    table, schema = model._meta.table_name, model._meta.schema
     if isinstance(database, PostgresqlDatabase):
         parts = [schema, table] if schema else [table]
         relation = '.'.join('"' + part.replace('"', '""') + '"' for part in parts)

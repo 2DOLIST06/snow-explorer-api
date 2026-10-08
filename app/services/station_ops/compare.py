@@ -24,24 +24,35 @@ def _summary(results):
 
 
 def compare_candidates(payload, *, result_builder=None):
-    """Optionally build a REVIEW response inside this same read-only snapshot."""
+    """Public read-only wrapper; internal callers never weaken this guard."""
     prepared = parse_batch(payload)
     database = Resort._meta.database
-    def response(schema_findings, catalog_findings, context):
-        results = [item["result"] for item in prepared]
-        compared = {"schema_version": "1.0", "compare_version": COMPARE_VERSION,
-                    "generated_at": utcnow().isoformat(), "summary": _summary(results),
-                    "results": results, "schema_findings": schema_findings, "catalog_findings": catalog_findings}
-        return result_builder(compared, prepared, database, context) if result_builder else compared
     if any(item["valid"] for item in prepared):
         with read_only_scan(database):
-            context = {} if result_builder else None
-            schema_findings, catalog_findings = (_compare(prepared, database, context=context)
-                                                if result_builder else _compare(prepared, database))
-            return response(schema_findings, catalog_findings, context)
+            return _compare_response(prepared, database, result_builder)
+    return _compare_response(prepared, database, result_builder)
+
+
+def compare_in_transaction(payload, *, result_builder=None):
+    """Internal APPLY entry point: caller owns a fresh, protected transaction."""
+    database = Resort._meta.database
+    if not database.in_transaction():
+        raise RuntimeError("COMPARE internal calculation requires an active transaction")
+    return _compare_response(parse_batch(payload), database, result_builder)
+
+
+def _compare_response(prepared, database, result_builder):
+    context = {} if result_builder else None
+    if any(item["valid"] for item in prepared):
+        schema_findings, catalog_findings = (_compare(prepared, database, context=context)
+                                            if result_builder else _compare(prepared, database))
     else:
-        # No business reads needed for a wholly unusable batch.
-        return response([], [], None)
+        schema_findings, catalog_findings = [], []
+    results = [item["result"] for item in prepared]
+    compared = {"schema_version": "1.0", "compare_version": COMPARE_VERSION,
+                "generated_at": utcnow().isoformat(), "summary": _summary(results),
+                "results": results, "schema_findings": schema_findings, "catalog_findings": catalog_findings}
+    return result_builder(compared, prepared, database, context) if result_builder else compared
 
 
 def _select(schema, model, names):

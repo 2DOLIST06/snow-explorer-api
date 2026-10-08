@@ -1,7 +1,9 @@
-# Snow Explorer Station Ops — SCAN, COMPARE et REVIEW
+# Snow Explorer Station Ops — SCAN, COMPARE, REVIEW et APPLY
 
-Cette couche backend extrait et examine les données existantes. Elle ne possède
-aucune fonction d'écriture, de correction, de fusion ou d'APPLY.
+Cette couche backend suit le pipeline `SCAN → COMPARE → REVIEW → APPLY`.
+SCAN, COMPARE et REVIEW restent strictement en lecture seule. APPLY dry_run
+ne modifie aucune donnée métier ; seul APPLY commit explicitement confirmé écrit.
+APPLY conserve le comportement normal de la session admin, y compris en dry_run.
 
 ## Endpoint et authentification
 
@@ -709,15 +711,15 @@ listes d'options : aucune option plausible n'est arbitrairement supprimée.
 Aucune donnée, relation, migration ou structure PostgreSQL modifiée. Les
 écritures de préparation des tests se limitent aux fixtures SQLite éphémères.
 Aucun frontend ou endpoint public modifié. La publication est limitée à une
-branche de PR, sans fusion ni déploiement. APPLY n'est pas développé.
+branche de PR, sans fusion ni déploiement. APPLY est documenté dans sa section dédiée ci-dessous.
 
 ## REVIEW — contrat 1.0, sans écriture
 
-Le lifecycle est `SCAN → COMPARE → REVIEW → APPLY ultérieurement`. SCAN décrit
+Le lifecycle est `SCAN → COMPARE → REVIEW → APPLY`. SCAN décrit
 la base, COMPARE identifie et compare les candidats, REVIEW transforme les
 propositions en opérations et décisions en mémoire. **REVIEW NE MODIFIE PAS LA
 BASE.** Il ne sauvegarde ni plan, ni décision, ni source, ni session admin.
-APPLY n'est pas implémenté et devra revalider le plan et ses préconditions.
+APPLY 1.0, documenté plus bas, revalide le plan et ses préconditions.
 
 ### Endpoint et recomputation
 
@@ -997,3 +999,319 @@ public et 13 d'authentification avec harness SQLite isolé sont conservés.
 Aucune donnée ni structure PostgreSQL modifiée. Les écritures de préparation
 concernent uniquement les fixtures SQLite éphémères. Aucun modèle métier,
 frontend, migration, APPLY, push, PR ou déploiement dans cette étape.
+
+## APPLY — contrat 1.0
+
+`POST /api/admin/station-ops/apply` utilise le cookie admin et `X-CSRF-Token`
+existants. **Seul le mode commit confirmé écrit dans les tables métier.** Aucun
+frontend, import de collection ou résolution automatique d'ambiguïté n'est ajouté.
+
+| Étape | Données métier | Session admin |
+|---|---|---|
+| SCAN / COMPARE / REVIEW | READ ONLY | aucun touch |
+| APPLY dry_run | REPEATABLE READ / READ ONLY | comportement normal des routes mutantes |
+| APPLY commit | transaction d'écriture SERIALIZABLE | comportement normal des routes mutantes |
+
+APPLY n'appartient pas aux exemptions READ ONLY du hook d'authentification. Un
+touch `admin_sessions.last_seen_at` peut donc se produire même en dry_run ou sur
+une demande refusée, comme pour les autres routes mutantes. Cette écriture
+d'authentification précède la transaction métier ; elle ne fait pas partie du
+rollback du plan. OPTIONS reste géré par le mécanisme CORS existant.
+
+### Payload exact et confirmation
+
+L'enveloppe accepte uniquement `candidates`, `decisions`, `plan_fingerprint`,
+`mode`, `confirm_apply`. `candidates` et `plan_fingerprint` sont obligatoires.
+Les candidats et décisions respectent exactement le contrat REVIEW. Le mode
+omis vaut `dry_run`. Les décisions peuvent être omises ; aucune action pending
+ou rejected ne sera exécutée. Le fingerprint doit être le SHA-256 hexadécimal
+minuscule de 64 caractères obtenu depuis REVIEW avec ces décisions.
+
+```json
+{
+  "candidates": [
+    {
+      "client_ref": "external-001",
+      "data": {"id": "a", "altitude_max_m": 2600},
+      "field_sources": {},
+      "clear_fields": []
+    }
+  ],
+  "decisions": [
+    {"client_ref": "external-001", "operations": {"<operation_id REVIEW>": "approved"}}
+  ],
+  "plan_fingerprint": "<plan_fingerprint REVIEW>",
+  "mode": "dry_run"
+}
+```
+
+Pour écrire, remplacer le mode par `commit` et ajouter `"confirm_apply": true`.
+Le serveur doit également être explicitement activé avec la variable
+`STATION_OPS_APPLY_COMMIT_ENABLED`. Absente, vide, inconnue ou égale à
+`false` / `0` / `no` / `off` : **commit désactivé par défaut**. Seules les valeurs
+`true` / `1` / `yes` / `on` l'activent (casse ignorée, espaces externes retirés).
+Cette variable est lue côté serveur à chaque demande, jamais depuis le payload.
+L'activation de l'environnement ne sera effectuée qu'après décision explicite.
+
+Un commit désactivé est refusé **avant le recalcul et toute transaction métier
+d'écriture**, même avec confirm_apply=true, avec HTTP 403 et exactement :
+
+```json
+{
+  "error": "station_ops_apply_commit_disabled",
+  "message": "Station Ops APPLY commit is disabled on this environment."
+}
+```
+
+La valeur brute de la variable n'est ni retournée ni journalisée. Les contrôles
+admin/CSRF et le touch normal de session restent actifs. dry_run fonctionne
+quelle que soit la variable. Une fois le commit activé, confirm_apply demeure
+une seconde protection obligatoire.
+
+Seul le booléen JSON littéral true est accepté : 1 ou "true" ne valent pas une
+confirmation. Le client ne peut transmettre ni `operations`, ni `apply_plan`,
+ni résultat COMPARE, ni approve_all. Toute clé inconnue est refusée.
+
+### Recalcul, fingerprint et données stale
+
+APPLY utilise `review_in_transaction`, qui appelle une seule fois
+`compare_in_transaction` par batch. Ces fonctions internes exigent une
+transaction active ; aucun appel HTTP ni wrapper REVIEW READ ONLY imbriqué dans
+le commit. Les endpoints publics COMPARE et REVIEW conservent leurs wrappers
+READ ONLY, leurs versions et les mêmes IDs/fingerprints qu'avant cette étape.
+
+Le serveur reconstruit les opérations et applique les décisions exactes. Il
+vérifie ensuite le fingerprint avec le même algorithme REVIEW : SHA-256 du JSON
+canonique `{review_version: "1.0", operations: opérations_approuvées_triées}`.
+Une différence provoque HTTP 409 `plan_fingerprint_mismatch` ; la réponse contient
+les fingerprints fourni et recalculé et demande un nouveau REVIEW.
+
+Les préconditions entrant dans operation_id, un changement de valeur existante
+peut d'abord provoquer une décision obsolète : HTTP 409 `stale_precondition`,
+avec les issues REVIEW. Aucun transfert de décision n'est effectué. Même après
+un fingerprint identique, les cibles, valeurs brutes sérialisées, empreintes
+éditoriales, relations, domaines et absences pour création sont relus/vérifiés
+après les verrous. Les créations sont également comparées à l'état d'identité
+final proposé du batch : deux nouveaux slugs pour la même station plausible
+ne deviennent pas deux créations automatiques.
+
+### Dry-run
+
+Le dry-run reconstruit et valide le plan, les approbations, dépendances,
+préconditions, cibles, colonnes physiques, types, nullabilité, longueurs et
+contraintes de création reconnues. Il simule les valeurs et l'ordre sans DML.
+Il n'alloue pas d'UUID de station, ne modifie pas updated_at, n'invalide pas les
+caches et ne crée aucune relation. Aucun FOR UPDATE ou verrou de table dans
+ce mode. PostgreSQL utilise REPEATABLE READ puis SET TRANSACTION READ ONLY.
+SQLite isolé utilise le garde query_only existant.
+
+Le dry-run n'exécute pas les triggers ni les defaults SQL et n'est pas une
+réservation de l'état. Des contraintes SQL supplémentaires, indisponibilités,
+verrous ou modifications ultérieures peuvent encore refuser le commit.
+Les CHECK non reconnus sont bloqués conservativement.
+
+### Commit, verrous et atomicité
+
+Le commit entier utilise une seule transaction SERIALIZABLE, sans savepoint ou
+commit par candidat. Avant toute lecture métier établissant le snapshot :
+
+1. SET LOCAL lock_timeout = '5s' ; statement_timeout = '30s' par instruction.
+2. LOCK TABLE resort IN SHARE ROW EXCLUSIVE MODE.
+3. LOCK TABLE ski_area_resorts IN SHARE ROW EXCLUSIVE MODE.
+4. Recalcul COMPARE/REVIEW et fingerprint.
+5. SELECT des IDs de stations et domaines utiles FOR UPDATE, triés par ID ;
+   relations existantes utiles également verrouillées en une requête de batch.
+6. Revalidation complète des préconditions et dépendances avant le premier DML.
+7. Écritures groupées, relecture/vérification et log provisoire.
+8. COMMIT ; seulement ensuite log de succès et invalidation des caches.
+
+Les noms réels qualifiés des tables sont tirés des modèles et correctement
+quotés. Les valeurs SQL restent toujours des paramètres.
+
+**Choix conservateur V1 :** les deux verrous de table sérialisent tous les commits
+APPLY et bloquent aussi les INSERT/UPDATE/DELETE des routes admin classiques sur
+ces tables. Cela protège les absences de station et relation, qu'un simple verrou
+de ligne ou les seules contraintes uniques id/slug ne suffisent pas à couvrir
+pour un matching par nom/géographie. Aucun advisory lock ni nouveau schéma SQL.
+Les lectures ordinaires restent possibles. Le coût est une contention globale
+pendant le batch, même pour un plan vide ; la limite d'opérations et les timeouts
+bornent les demandes. statement_timeout est une limite par instruction, pas un
+timeout global de transaction. Une écriture externe déjà en cours est attendue
+avant le snapshot. Deadlock, serialization failure, lock timeout et statement
+timeout donnent HTTP 409 `concurrent_conflict`, sans retry automatique.
+
+Tout échec de validation, DML, vérification ou COMMIT annule toutes les écritures
+métier du batch. SQLite n'est utilisé que dans les fixtures, avec BEGIN IMMEDIATE
+pour les commits. Aucun commit APPLY n'a été exécuté en production pendant le
+développement de cette version.
+
+### Whitelist et valeurs écrites
+
+La définition explicite est centralisée dans `apply_contract.py` :
+
+| Groupe | Champs modifiables sur une station existante |
+|---|---|
+| Identité/état | name, is_active, page_layout_version |
+| Géographie | region_id, region_name, country_code, department, latitude, longitude |
+| Statistiques | altitude_base_m, altitude_top_m, altitude_min_m, altitude_max_m, lifts_count, pistes_count, ski_area_km |
+| Contenu/médias | website_url, cover_image_url, logo_url, amenities, description_md, description_html, meta_title, meta_description |
+| V2 | v2_overview_html, v2_weather_snow_html, v2_ski_pass_html, v2_piste_map_html, v2_webcam_html |
+| Plans | pistes_small_map_url, pistes_large_map_url, pistes_caption, snowpark_map_url, snowpark_caption |
+| Saison | season_open_date, season_close_date |
+
+id et slug sont uniquement utilisables pour identifier ou créer une station ;
+**pas de modification de slug**, conformément à la stabilité des URLs dans la
+route admin actuelle. created_at, updated_at et les champs techniques ne sont
+jamais des propositions du client. set/replace/clear utilisent la même whitelist.
+clear exige clear_fields, l'approbation exacte, sensitive=true et la nullabilité
+physique. Aucun null/absence implicite ne supprime une valeur.
+
+Les valeurs viennent de la normalisation COMPARE, sans seconde règle concurrente :
+booléens, country_code majuscule, URLs normalisées et dates ISO. name conserve
+l'orthographe proposée trimée, comme la création existante ; son casefold est
+une représentation de matching, pas une consigne de changement de casse.
+Les contenus éditoriaux et images inline restent exacts.
+
+Les nombres sont convertis d'après le **type physique**, sans passer par la
+conversion IntegerField lorsqu'une colonne réelle est REAL/NUMERIC. Fractions
+sur INTEGER, dépassements de plage, arrondis NUMERIC(p,s), pertes de précision
+float, chaînes avec NUL et troncatures sont refusés. Un PostgreSQL real float32
+ne peut donc pas accepter tous les décimaux : la validation est volontairement
+conservatrice. CHECK inconnu ou type physique non supporté : refus avant écriture.
+
+### Création, domaines et dépendances
+
+create_station exige une approbation, name et slug explicites, les contraintes
+physiques compatibles et l'absence de match. UUID serveur via uuid.uuid4(),
+is_active=true et page_layout_version=legacy seulement si non fournis,
+updated_at=utcnow() : conventions existantes. Aucun nom/slug métier inventé.
+Les defaults SQL supplémentaires restent gérés par PostgreSQL, sans migration.
+L'ID réel créé est conservé pour les dépendances et retourné au client.
+
+Seules les relations SkiAreaResort sont ajoutées/supprimées ; aucun SkiArea ne
+peut être créé, édité ou supprimé par APPLY V1. Le domaine doit exister, la
+relation doit avoir l'état attendu ; un retrait est sensible et explicitement
+approuvé. Une relation nouvelle dépendant de create_station nécessite cette
+création approuvée. L'ordre est topologique et déterministe, jamais simplement
+le tri des operation_id. Dépendance inconnue/non approuvée, cycle ou mauvaise
+cible : refus avant DML. Les effets identiques de plusieurs candidats sont
+coalescés ; les compteurs restent ceux des opérations REVIEW approuvées.
+
+Aucune écriture dans widgets, pistes, lifts, webcams, forfaits ou autres
+collections bloquées. La création n'ajoute pas le widget par défaut de la route
+admin historique et les modifications de plans ne synchronisent pas widgets :
+ce seraient des effets hors du plan approuvé. Les champs Resort et relations
+sont les seules données métier écrites.
+
+updated_at utilise UTC utcnow pour toute modification réelle, y compris une
+modification de relation. Les valeurs et relations affectées sont relues par
+batch avant COMMIT ; les contenus éditoriaux sont vérifiés par longueur/MD5,
+sans SELECT du texte complet. Un résultat incompatible provoque rollback avec
+`post_write_verification_failed`. Après commit, les mécanismes existants
+bump_public_resorts_version/invalidate_station sont appelés. Une erreur de cache
+post-commit est signalée sans prétendre que la transaction a été annulée.
+
+### Audit, execution_id et retry
+
+Inspection : ResortImportHistory et SkiAreaCatalogImport sont des historiques
+d'imports spécialisés ; aucun journal générique d'actions Station Ops fiable
+et transactionnel n'existe. Cette version ne les détourne pas et ne crée aucune
+migration. Logger `station_ops.apply.audit` configuré INFO, utilisant les handlers
+applicatifs, événements JSON structurés et un enregistrement borné par opération :
+horodatage UTC, UUID execution_id, admin_id, mode, fingerprint, résultat,
+operation_id, cible réelle, type, champ, related_id, source_count et empreintes
+des valeurs avant/après. Pas de contenu, URL, cookies, CSRF, mot de passe ou
+paramètres SQL. verified_pending_commit reste provisoire ; seul committed après
+la sortie de transaction signifie succès. Les refus/rollbacks sont journalisés.
+
+Chaque demande traitée par le service, dry-run compris, reçoit un execution_id
+serveur UUID. Les erreurs attendues du service le retournent aussi. Une erreur
+de JSON, auth ou taille avant l'entrée du service peut ne pas en avoir.
+Les logs ne constituent pas un audit persistant atomique : un arrêt du processus
+après COMMIT avant le log peut perdre la confirmation. Une erreur de logging
+après commit retourne une audit_warning sans annoncer un rollback fictif.
+
+Schéma d'audit persistant recommandé, **à créer dans une migration dédiée future** :
+
+- station_ops_apply_executions : execution_id UUID PK, admin_id du même type que
+  admin_users.id, started_at/committed_at TIMESTAMPTZ, plan_fingerprint CHAR(64),
+  apply_version, outcome, operation_count, summary JSONB ; index admin_id/date et
+  plan_fingerprint (non unique : ce n'est pas une clé d'idempotence).
+- station_ops_apply_operations : execution_id FK, operation_id CHAR(64),
+  client_ref, target_station_id, related_ski_area_id, operation, field,
+  previous_value JSONB, applied_value JSONB, preconditions JSONB, sources JSONB,
+  status ; PK (execution_id, operation_id). Contenus volumineux représentés par
+  longueur/empreinte selon une politique documentée, sans secrets.
+- Enregistrements succès dans la même transaction métier ; événements de refus
+  ou rollback dans une transaction d'audit séparée une fois le rollback terminé.
+
+Cette infrastructure persistante et sa rétention/accès devront être définis avant
+un usage automatisé massif. Aucune garantie d'idempotence persistante en V1 : un
+retry d'un plan déjà appliqué reçoit normalement stale_precondition, jamais un
+already_applied supposé. Refaites COMPARE/REVIEW et l'approbation après tout 409.
+
+### Réponses et erreurs
+
+Réponse HTTP 200 compacte : schema_version, compare_version, review_version,
+apply_version (toutes 1.0), generated_at, mode, execution_id, plan_fingerprint,
+schema_findings, catalog_findings, operations_ready et summary avec
+approved_operations/validated_operations/written_operations/applied_operations.
+Chaque opération contient operation_id, client_ref, operation, field, target_id
+et status ready en dry_run, applied en commit. Une cible créée sans ID explicite
+reste null en dry_run ; son UUID réel apparaît après commit. Aucun gros contenu.
+would_apply ou applied vaut false pour un plan vide, avec reason
+no_approved_operations ; aucune mutation métier ou invalidation de cache.
+written_operations compte les actions logiques, pas les instructions SQL.
+
+| HTTP | Codes / cas |
+|---|---|
+| 400 | invalid_apply_payload, invalid_apply_mode, apply_confirmation_required, invalid_plan_fingerprint, invalid_apply_candidates, field_not_writable, clear_not_allowed, field_not_nullable, physical_type_incompatible, constraint_requires_review, relation_constraint_requires_review, unsupported_operation |
+| 401 / 403 | auth / CSRF existants |
+| 403 | station_ops_apply_commit_disabled : activation serveur absente ou non explicite |
+| 409 | plan_fingerprint_mismatch, stale_precondition, station_already_exists, invalid_dependencies, conflicting_operations, constraint_conflict, concurrent_conflict, post_write_verification_failed |
+| 413 | corps/batch trop grand, apply_operations_limit |
+| 415 | json_content_type_required |
+| 503 | station_ops_schema_incompatible |
+| 500 | station_ops_apply_failed : erreur serveur inattendue ; jamais détails SQL dans la réponse |
+
+### Limites et vérification locale APPLY
+
+1 000 candidats et 16 MiB communs au pipeline. MAX_APPLY_OPERATIONS=1 000 pour
+commit uniquement, compté avant coalescence : un candidat peut proposer beaucoup
+de champs et multiplier la durée des verrous. Ce budget reste suffisant pour
+1 000 corrections unitaires, tout en bornant les transactions ; le futur
+orchestrateur peut découper les plans. Dry_run peut valider davantage d'opérations
+dans les limites du payload. Les DML groupés utilisent des chunks de moins de
+900 paramètres pour rester compatibles avec SQLite et limiter la taille SQL.
+
+Mesures SQLite, authentification comprise ; PRAGMA et commandes transactionnelles
+comptées séparément :
+
+| Batch significatif | SELECT | DML métier |
+|---|---|---|
+| 500 modifications scalaires sur stations distinctes | 7 | 2 UPDATE groupés |
+| 1 000 modifications scalaires sur stations distinctes | 7 | 4 UPDATE groupés |
+| 500 nouvelles stations | 6 | 4 INSERT groupés |
+
+Les métadonnées, cibles et relations sont chargées par batch ; aucun SELECT par
+opération. Les verrous PostgreSQL utilisent au plus trois SELECT FOR UPDATE
+groupés, pas une requête par station. Ces nombres PostgreSQL ne sont pas des
+mesures live. Un PostgreSQL de test et les binaries psql/postgres ne sont pas
+disponibles ; l'accès au daemon Docker est refusé dans cet environnement.
+SQLite teste les écritures/rollback réels isolés ; les portions PostgreSQL
+(isolation, verrous, ordre, SQLSTATE, COMMIT en erreur) sont précisément mockées.
+Un test PostgreSQL dédié de concurrence/contraintes/latence est requis avant
+activation des commits en production, en particulier avec les verrous globaux.
+
+Les tests existants SCAN, COMPARE et REVIEW doivent rester verts. Les tests APPLY
+couvrent dry-run, confirmation, recalcul, fingerprint/stale, whitelist, clear,
+créations/defaults, domaines/dépendances, rollback, relecture, audit, caches,
+auth/CSRF/session normale, limites et batchs significatifs. Aucun push, PR,
+déploiement ou migration n'est effectué pour cette étape.
+
+Résultats locaux : **192 tests Station Ops réussis** (35 SCAN, 44 COMPARE,
+45 REVIEW, 68 APPLY, dont 7 tests du kill switch), 11 tests de cycle de connexion, 9 tests de cache public et
+13 tests d'authentification admin sous harnais SQLite isolé réussis. Syntaxe
+Python et whitespace vérifiés. Les fixtures interdisent explicitement les
+connexions PostgreSQL de production ; seules les bases SQLite éphémères sont
+écrites par les tests. Aucun test de concurrence PostgreSQL réel n'est revendiqué.
