@@ -1,5 +1,6 @@
 """Versioned candidate contract and pure validation; no database access."""
 from datetime import datetime
+import json
 import re
 
 from .duplicates import normalized_name
@@ -51,18 +52,23 @@ def _sources_valid(sources):
         if "." in field and field.split(".", 1)[0] not in COLLECTION_FIELDS | {"ski_areas"}:
             return False
         for row in rows:
-            if not isinstance(row, dict) or set(row) - {"url", "source_type", "observed_at"} or "url" not in row:
+            if not isinstance(row, dict) or set(row) - {"url", "source_type", "observed_at", "publisher", "value_observed"} or "url" not in row:
                 return False
             try:
                 normalized_url(row["url"])
                 if "source_type" in row and (not isinstance(row["source_type"], str) or
                                               not row["source_type"].strip() or len(row["source_type"]) > 64):
                     return False
+                if "publisher" in row and (not isinstance(row["publisher"], str) or
+                                            not row["publisher"].strip() or len(row["publisher"]) > 256):
+                    return False
+                if "value_observed" in row:
+                    json.dumps(row["value_observed"], allow_nan=False)
                 if "observed_at" in row:
                     stamp = datetime.fromisoformat(row["observed_at"].replace("Z", "+00:00"))
                     if stamp.tzinfo is None:
                         return False
-            except (ValueError, TypeError, AttributeError, UnicodeError):
+            except (ValueError, TypeError, AttributeError, UnicodeError, RecursionError):
                 return False
     return True
 

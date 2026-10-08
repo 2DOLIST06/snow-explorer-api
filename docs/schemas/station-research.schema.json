@@ -1,0 +1,956 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Station research batch",
+  "type": "object",
+  "properties": {
+    "research_version": {
+      "const": "1.0"
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "station",
+            "region",
+            "country"
+          ]
+        },
+        "country_code": {
+          "type": "string",
+          "pattern": "^[A-Z]{2}$"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "region_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "region_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "type",
+        "country_code"
+      ],
+      "additionalProperties": false
+    },
+    "batch": {
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "index",
+        "total"
+      ],
+      "additionalProperties": false
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1000,
+      "items": {
+        "$ref": "#/$defs/station_research_candidate"
+      }
+    }
+  },
+  "required": [
+    "research_version",
+    "scope",
+    "candidates"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "station_research_candidate": {
+      "type": "object",
+      "properties": {
+        "client_ref": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "maxLength": 256
+        },
+        "identity": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "existing",
+                "discovered"
+              ]
+            },
+            "status": {
+              "enum": [
+                "resolved",
+                "ambiguous",
+                "unresolved"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "research_level": {
+          "enum": [
+            "identity",
+            "core",
+            "extended"
+          ]
+        },
+        "target_fields": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "altitude_base_m",
+              "altitude_max_m",
+              "altitude_min_m",
+              "altitude_top_m",
+              "amenities",
+              "country_code",
+              "cover_image_url",
+              "department",
+              "description_html",
+              "description_md",
+              "id",
+              "is_active",
+              "latitude",
+              "lifts",
+              "lifts_count",
+              "logo_url",
+              "longitude",
+              "maps",
+              "meta_description",
+              "meta_title",
+              "name",
+              "page_layout_version",
+              "pistes",
+              "pistes_caption",
+              "pistes_count",
+              "pistes_large_map_url",
+              "pistes_small_map_url",
+              "region_id",
+              "region_name",
+              "season_close_date",
+              "season_open_date",
+              "ski_area_km",
+              "ski_areas",
+              "ski_pass_periods",
+              "ski_pass_prices",
+              "ski_pass_products",
+              "ski_pass_seasons",
+              "slug",
+              "snowpark_caption",
+              "snowpark_map_url",
+              "v2_overview_html",
+              "v2_piste_map_html",
+              "v2_ski_pass_html",
+              "v2_weather_snow_html",
+              "v2_webcam_html",
+              "webcams",
+              "website_url",
+              "widgets"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "lifts_count": {
+              "type": "integer"
+            },
+            "v2_overview_html": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "snowpark_map_url": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "region_name": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "logo_url": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "pistes_large_map_url": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "v2_ski_pass_html": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "pistes_small_map_url": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "country_code": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "department": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "v2_weather_snow_html": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "slug": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "longitude": {
+              "type": "number"
+            },
+            "pistes_count": {
+              "type": "integer"
+            },
+            "meta_description": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "description_md": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "is_active": {
+              "type": "boolean"
+            },
+            "altitude_min_m": {
+              "type": "integer"
+            },
+            "altitude_max_m": {
+              "type": "integer"
+            },
+            "season_close_date": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "page_layout_version": {
+              "enum": [
+                "legacy",
+                "v2"
+              ]
+            },
+            "latitude": {
+              "type": "number"
+            },
+            "ski_area_km": {
+              "type": "number"
+            },
+            "altitude_base_m": {
+              "type": "integer"
+            },
+            "v2_webcam_html": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "snowpark_caption": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "meta_title": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "cover_image_url": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "website_url": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "altitude_top_m": {
+              "type": "integer"
+            },
+            "description_html": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "amenities": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "v2_piste_map_html": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "region_id": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "pistes_caption": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "season_open_date": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "pistes": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "ski_pass_products": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "widgets": {
+              "type": "object"
+            },
+            "ski_pass_prices": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "lifts": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "maps": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "ski_pass_periods": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "webcams": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "ski_pass_seasons": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "ski_areas": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9223372036854775807
+                  },
+                  "slug": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
+                  }
+                },
+                "required": [],
+                "additionalProperties": false,
+                "minProperties": 1
+              },
+              "minItems": 1
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "field_statuses": {
+          "type": "object",
+          "properties": {
+            "altitude_base_m": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "altitude_max_m": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "altitude_min_m": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "altitude_top_m": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "amenities": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "country_code": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "cover_image_url": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "department": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "description_html": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "description_md": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "id": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "is_active": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "latitude": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "lifts": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "lifts_count": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "logo_url": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "longitude": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "maps": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "meta_description": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "meta_title": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "name": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "page_layout_version": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "pistes": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "pistes_caption": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "pistes_count": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "pistes_large_map_url": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "pistes_small_map_url": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "region_id": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "region_name": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "season_close_date": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "season_open_date": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "ski_area_km": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "ski_areas": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "ski_pass_periods": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "ski_pass_prices": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "ski_pass_products": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "ski_pass_seasons": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "slug": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "snowpark_caption": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "snowpark_map_url": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "v2_overview_html": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "v2_piste_map_html": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "v2_ski_pass_html": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "v2_weather_snow_html": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "v2_webcam_html": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "webcams": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "website_url": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            },
+            "widgets": {
+              "enum": [
+                "not_researched",
+                "not_found",
+                "found",
+                "conflicting",
+                "ambiguous"
+              ]
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "field_sources": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                },
+                "source_type": {
+                  "enum": [
+                    "official",
+                    "government",
+                    "ski_area_official",
+                    "tourism_official",
+                    "map_reference",
+                    "reputable_reference",
+                    "secondary"
+                  ]
+                },
+                "publisher": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S",
+                  "maxLength": 256
+                },
+                "observed_at": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                },
+                "value_observed": {}
+              },
+              "required": [
+                "url",
+                "source_type"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "relation_coverage": {
+          "type": "object",
+          "properties": {
+            "ski_areas": {
+              "enum": [
+                "complete"
+              ]
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        }
+      },
+      "required": [
+        "client_ref",
+        "identity",
+        "research_level",
+        "target_fields",
+        "data",
+        "field_statuses"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

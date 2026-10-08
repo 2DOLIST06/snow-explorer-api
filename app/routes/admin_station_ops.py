@@ -9,6 +9,7 @@ from app.services.station_ops.candidates import ComparePayloadError, MAX_BODY_BY
 from app.services.station_ops.apply import apply_candidates
 from app.services.station_ops.apply_contract import ApplyError
 from app.services.station_ops.compare import compare_candidates
+from app.services.station_ops.research import validate_research
 from app.services.station_ops.review import ReviewDecisionError, review_candidates
 from app.services.station_ops.scan import scan_stations
 from app.services.station_ops.schema import SchemaCompatibilityError
@@ -136,5 +137,23 @@ def apply():
         response.status_code = 500
     else:
         response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@bp_admin_station_ops.post("/research/validate")
+def research_validate():
+    """Pure contract validation; admin authentication is the existing hook."""
+    if not request.is_json:
+        response = jsonify({"error": "json_content_type_required"})
+        response.status_code = 415
+    else:
+        try:
+            result = validate_research(_compare_payload("RESEARCH"))
+            response = jsonify(result)
+            response.status_code = 200 if result["valid"] else 400
+        except ComparePayloadError as exc:
+            response = jsonify({"error": "invalid_research_payload", "message": str(exc)})
+            response.status_code = exc.status
     response.headers["Cache-Control"] = "no-store"
     return response
