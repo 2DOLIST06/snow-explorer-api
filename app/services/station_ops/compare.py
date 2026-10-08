@@ -23,19 +23,25 @@ def _summary(results):
             **{status: sum(row["status"] == status for row in results) for status in STATUSES}}
 
 
-def compare_candidates(payload):
+def compare_candidates(payload, *, result_builder=None):
+    """Optionally build a REVIEW response inside this same read-only snapshot."""
     prepared = parse_batch(payload)
     database = Resort._meta.database
+    def response(schema_findings, catalog_findings, context):
+        results = [item["result"] for item in prepared]
+        compared = {"schema_version": "1.0", "compare_version": COMPARE_VERSION,
+                    "generated_at": utcnow().isoformat(), "summary": _summary(results),
+                    "results": results, "schema_findings": schema_findings, "catalog_findings": catalog_findings}
+        return result_builder(compared, prepared, database, context) if result_builder else compared
     if any(item["valid"] for item in prepared):
         with read_only_scan(database):
-            schema_findings, catalog_findings = _compare(prepared, database)
+            context = {} if result_builder else None
+            schema_findings, catalog_findings = (_compare(prepared, database, context=context)
+                                                if result_builder else _compare(prepared, database))
+            return response(schema_findings, catalog_findings, context)
     else:
         # No business reads needed for a wholly unusable batch.
-        schema_findings, catalog_findings = [], []
-    results = [item["result"] for item in prepared]
-    return {"schema_version": "1.0", "compare_version": COMPARE_VERSION,
-            "generated_at": utcnow().isoformat(), "summary": _summary(results),
-            "results": results, "schema_findings": schema_findings, "catalog_findings": catalog_findings}
+        return response([], [], None)
 
 
 def _select(schema, model, names):
@@ -53,11 +59,13 @@ def _select(schema, model, names):
     return model.select(*fields).dicts()
 
 
-def _compare(prepared, database):
+def _compare(prepared, database, *, context=None):
     schema = PhysicalSchema(database, SCAN_MODELS)
     schema.require(Resort, "id")
     index_rows = list(_select(schema, Resort, IDENTITY_FIELDS).order_by(Resort.id))
     index = MatchingIndex(index_rows)
+    if context is not None:
+        context.update(schema=schema, index=index)
     if schema.has(Region, "id"):
         catalog_findings = [] if Region.select(Region.id).exists() else [
             {"code": "region_catalog_empty", "severity": "info", "table": "regions"}]
@@ -100,6 +108,8 @@ def _compare(prepared, database):
             for link in _select(schema, SkiAreaResort, ("resort", "ski_area")).where(SkiAreaResort.resort.in_(area_station_ids)):
                 links[link["resort"]].add(link["ski_area"])
     area_indexes = {"slug": defaultdict(list), "name": defaultdict(list)}
+    if context is not None:
+        context["areas"] = areas
     for area in areas.values():
         if area.get("slug"):
             area_indexes["slug"][area["slug"].strip()].append(area["id"])
