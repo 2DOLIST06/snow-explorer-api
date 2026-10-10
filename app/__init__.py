@@ -38,6 +38,7 @@ from app.routes.uploads import bp_uploads
 from app.routes.admin_resort_import import bp_resort_json
 from app.services.admin_auth import protect_admin_routes
 from app.routes.admin_auth import bp_admin_auth
+from app.routes.station_ops_oauth import bp_station_ops_oauth
 from app.routes.admin_indexnow import bp_admin_indexnow
 from app.routes.admin_cache import bp_admin_cache
 from app.routes.admin_station_logos import bp_admin_station_logos
@@ -219,6 +220,7 @@ def create_app(config=None):
     app.register_blueprint(bp_uploads)
     app.register_blueprint(bp_resort_json)
     app.register_blueprint(bp_admin_auth)
+    app.register_blueprint(bp_station_ops_oauth)
     app.register_blueprint(bp_admin_indexnow)
     app.register_blueprint(bp_admin_cache)
     app.register_blueprint(bp_admin_station_logos)

@@ -205,10 +205,12 @@ class AdminAuthenticationTests(unittest.TestCase):
             })
 
         self.assertEqual(app.config["ADMIN_COOKIE_SAMESITE"], "None")
-        response = app.test_client().options(
-            "/api/admin/auth/login",
-            headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
-        )
+        # CORS does not need PostgreSQL; keep this request isolated too.
+        with patch("app.db"):
+            response = app.test_client().options(
+                "/api/admin/auth/login",
+                headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
+            )
         self.assertEqual(response.headers["Access-Control-Allow-Credentials"], "true")
         self.assertEqual(response.headers["Access-Control-Allow-Origin"], origin)
 

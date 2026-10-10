@@ -219,7 +219,8 @@ def admin_required(view):
 
 def login_is_limited(ip, email):
     cutoff = utcnow() - timedelta(seconds=current_app.config["ADMIN_LOGIN_RATE_WINDOW_SECONDS"])
-    AdminLoginAttempt.delete().where(AdminLoginAttempt.attempted_at < cutoff).execute()
+    expired = AdminLoginAttempt.select(AdminLoginAttempt.id).where(AdminLoginAttempt.attempted_at < cutoff).limit(100)
+    AdminLoginAttempt.delete().where(AdminLoginAttempt.id.in_(expired)).execute()
     limit = current_app.config["ADMIN_LOGIN_RATE_LIMIT"]
     by_pair = (AdminLoginAttempt.select(fn.COUNT(AdminLoginAttempt.id))
                .where((AdminLoginAttempt.ip_address == ip) & (AdminLoginAttempt.email == email) &
@@ -237,3 +238,28 @@ def clear_login_failures(ip, email):
     AdminLoginAttempt.delete().where(
         (AdminLoginAttempt.ip_address == ip) & (AdminLoginAttempt.email == email)
     ).execute()
+
+
+def authenticate_admin_credentials(email, password):
+    """Shared browser/OAuth login service; no separate credential store."""
+    ip = _client_ip()
+    if login_is_limited(ip, email):
+        logger.warning("admin login rate limited ip=%s email=%s", ip, email)
+        return None, "too_many_login_attempts", 429
+    user = AdminUser.get_or_none(AdminUser.email == email)
+    if user is None or not verify_password(user.password_hash, password):
+        record_login_failure(ip, email)
+        logger.warning("admin login refused ip=%s email=%s", ip, email)
+        return None, "invalid_credentials", 401
+    if not user.is_active:
+        record_login_failure(ip, email)
+        logger.warning("disabled admin login refused user_id=%s ip=%s", user.id, ip)
+        return None, "admin_disabled", 403
+    clear_login_failures(ip, email)
+    # Hash upgrades occur only after successful verification.
+    if password_needs_rehash(user.password_hash):
+        user.password_hash = hash_password(password)
+    user.last_login_at = utcnow()
+    user.updated_at = utcnow()
+    user.save()
+    return user, None, 200

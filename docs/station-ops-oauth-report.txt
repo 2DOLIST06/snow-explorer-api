@@ -1,0 +1,341 @@
+Snow Explorer Station Ops — rapport OAuth 2.1
+10 octobre 2026 — changements locaux uniquement
+
+1. Architecture retenue
+Le backend Render reste resource server MCP et devient authorization server OAuth.
+Authorization Code + PKCE S256, client public, codes/tokens opaques persistés en base.
+Identité admin existante ; aucun fournisseur externe ni nouveau compte/mot de passe.
+Le SDK mcp==1.30.0 conserve transport, BearerAuthBackend, AccessToken,
+RequireAuthMiddleware, AuthContextMiddleware et chemin de discovery RFC 9728.
+Les endpoints AS standards sont dans Flask afin de réutiliser l'auth admin et
+implémenter le contrat CIMD/RFC 9207 absent des handlers AS de ce SDK.
+
+2. CIMD ou DCR
+CIMD retenu, aucun DCR ni registre dynamique.
+Contrat officiel vérifié le 10 octobre 2026 :
+https://developers.openai.com/plugins/build/auth
+https://chatgpt.com/oauth/client.json
+https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization
+Le document stable réel propose none et private_key_jwt dans le champ pluriel,
+avec une préférence singulière private_key_jwt. Ce serveur accepte none :
+intersection valide, sans client_secret. Le CIMD est réellement récupéré lors
+chaque nouvelle demande authorize, sans redirects, avec limites taille/timeout.
+Client ID, redirect locale et redirect publiée doivent tous correspondre exactement.
+
+3. Resource exacte
+https://snow-explorer-api-3.onrender.com/mcp/station-ops
+Constante canonique, sans normalisation ni variante slash final.
+
+4. Issuer exact par défaut
+https://snow-explorer-api-3.onrender.com
+Sans slash final. Variable facultative STATION_OPS_OAUTH_ISSUER : origine HTTPS
+exacte uniquement, sans path/query/fragment/credentials ni casse différente.
+Le même issuer est utilisé dans les deux metadata, les callbacks et le vérificateur.
+
+5. URLs metadata
+https://snow-explorer-api-3.onrender.com/.well-known/oauth-protected-resource/mcp/station-ops
+https://snow-explorer-api-3.onrender.com/.well-known/oauth-authorization-server
+Metadata publiques sans accès DB dans l'entrée ASGI. 401 MCP : WWW-Authenticate
+Bearer avec resource_metadata et scope station-ops:read.
+Attention SDK : AnyHttpUrl normalise un issuer origine en ajoutant un slash.
+La sérialisation metadata garde donc l'issuer en chaîne exacte, tout en conservant
+le chemin/méthodes RFC 9728 calculés par le SDK. Cette égalité est testée.
+
+6. Authorization endpoint
+https://snow-explorer-api-3.onrender.com/oauth/station-ops/authorize
+GET ouvre la transaction browser et POST login/consentement. response_type=code,
+resource exact, scopes validés et PKCE S256 obligatoires. Paramètres dupliqués refusés.
+Flow browser 10 minutes, handle et liaison cookie hashés ; consentement à usage unique.
+State préservé. Client/redirect non fiables : erreur locale, jamais open redirect.
+
+7. Token endpoint
+https://snow-explorer-api-3.onrender.com/oauth/station-ops/token
+POST application/x-www-form-urlencoded, grant authorization_code ou refresh_token.
+Pas de CSRF frontend, client_secret, Basic auth ni assertion client.
+Révocation RFC 7009 :
+https://snow-explorer-api-3.onrender.com/oauth/station-ops/revoke
+POST client_id + token ; token inconnu : 200 ; grant connu : famille révoquée.
+
+8. Redirect URI autorisées
+Par défaut uniquement https://chatgpt.com/connector_platform_oauth_redirect
+Client par défaut uniquement https://chatgpt.com/oauth/client.json
+Les deux valeurs sont confirmées par la documentation et le document stable réel.
+Listes CSV exactes configurables, sans wildcard/localhost OAuth par défaut.
+Seules les URLs CIMD HTTPS chatgpt.com/oauth/.../client.json sont admissibles,
+sans credentials, query, fragment ni port alternatif. Le fetch ne suit pas les 3xx.
+Si ChatGPT affiche un callback spécifique, copier ses deux valeurs exactes dans
+les listes et vérifier leur correspondance dans le CIMD avant toute mise en service.
+
+9. Scopes
+station-ops:read : station_scan, research_contract, research_validate, compare,
+review, apply_dry_run.
+station-ops:read + station-ops:write : apply_commit.
+Write seul et scopes inconnus refusés. Aucun scope non demandé n'est accordé.
+Un refresh conserve uniquement les scopes initiaux ; nouvelle autorisation/consent
+requise pour les changer. Le scope write ne contourne aucune protection APPLY.
+
+10. Intégration admin auth
+Le login frontend existant est factorisé dans authenticate_admin_credentials,
+réutilisé par les deux entrées sans duplication Argon2/credentials/sessions.
+Session cookie existante réutilisée sans touch ; sinon login minimal backend.
+Le frontend Next.js est distinct et aucun contrat de retour OAuth login n'est
+présent dans ce dépôt, d'où cette page minimale utilisant le même service admin.
+OAuth exige rôle admin actif. Désactivation, changement de rôle/mot de passe
+invalident aussi les tokens. /api/admin/auth/login, /session et /api/admin/*
+conservent cookie + CSRF ; aucun token MCP ne donne accès à ces routes.
+CSRF browser OAuth indépendant : HMAC lié au nonce cookie et au handle persistant.
+Cookie nonce __Host-, Secure, HttpOnly, SameSite=Lax, Path=/ ; cookie admin créé
+par OAuth toujours Secure avec autres paramètres admin existants.
+Consentement explicite affiche Lecture/Écriture demandées séparément.
+
+11. Tables OAuth définies, non créées en production
+station_ops_oauth_flows
+station_ops_oauth_codes
+station_ops_oauth_grants
+station_ops_oauth_tokens
+station_ops_oauth_rate_buckets
+FK vers admin_users uniquement ; aucune table station/trigger modifié.
+Les tables ne sont pas créées automatiquement au démarrage.
+
+12. Migration exacte à exécuter plus tard
+migrations/20261010_add_station_ops_oauth.sql
+SQL complet reproduit à la fin du rapport et fourni en fichier séparé.
+Syntaxe validée avec le parser PostgreSQL pglast : 17 statements.
+Aucune exécution de la migration sur PostgreSQL, même local, dans cette tâche.
+Avant usage : sauvegarde, revue et exécution séparée sur la cible choisie après
+validation en staging. Exécuter le fichier une seule fois, par le processus de
+migration habituel ; transaction BEGIN/COMMIT explicite, aucune modification trigger.
+
+13. Durée access token
+Au plus 3600 secondes, plafonnée à l'expiration absolue du grant.
+expires_in reflète la durée restante ; access token à revalider à chaque requête.
+
+14. Durée refresh token
+30 jours absolus depuis la création du grant, sans prolongation à la rotation.
+Rotation atomique à chaque usage. Ancien refresh immédiatement consommé.
+Replay d'un ancien refresh : refus et révocation de toute la famille, nouveaux
+access tokens inclus. Tombstones conservés tant que le grant est actif.
+Le grant est verrouillé FOR UPDATE en PostgreSQL pour sérialiser refresh/revoke.
+
+15. Hashing
+secrets.token_urlsafe pour codes, access/refresh tokens, handles et nonce browser.
+SHA-256 déterministe sur les valeurs aléatoires de forte entropie ; seuls hashes
+persistés. Ni code_verifier ni mot de passe stockés dans les tables OAuth.
+Comparaisons sensibles via hmac.compare_digest. Aucun nouveau secret serveur OAuth.
+ADMIN_SESSION_SECRET reste exclusivement la clé du service admin existant,
+pas une clé cryptographique OAuth ; SECRET_KEY et STATION_OPS_MCP_TOKEN non réutilisés.
+
+16. PKCE
+S256 obligatoire. Challenge base64url 43 caractères ; verifier syntaxe RFC 7636,
+43–128 caractères ; challenge recalculé à l'échange. Plain/absent refusés.
+Code lié à admin, client, redirect, resource, scopes, challenge et méthode S256.
+Code 5 minutes et consommation transactionnelle unique, avec verrou PostgreSQL.
+
+17. Issuer identification
+authorization_response_iss_parameter_supported=true.
+Tous les callbacks succès/erreur contiennent iss exactement égal à issuer.
+Les erreurs authorize locales contiennent également iss sans rediriger vers une
+URI non fiable. State est conservé dans les callbacks. Pas de normalisation URL.
+
+18. Comportement resource
+Resource obligatoire exacte à authorize, échange code et refresh.
+Conservée dans flow, code et grant, reprise dans AccessToken.resource.
+MCP refuse un token/grant visant une autre resource. Aucune omission silencieuse.
+
+19. securitySchemes MCP
+Chaque tool expose oauth2 + scopes exacts, au niveau top-level et _meta pour
+compatibilité ChatGPT. ReadOnlyHint=true pour six tools read ; apply_commit porte
+readOnlyHint=false et destructiveHint=true. Scopes vérifiés avant appel métier.
+Le refus d'outil insuffisant porte _meta['mcp/www_authenticate'] pour reauthorization.
+L'audit MCP ajoute admin_id issu du token vérifié ; l'acteur du moteur APPLY reste
+station_ops_mcp, sans changement des services métier ni des décisions/fingerprint.
+
+20. Legacy MCP token
+Désactivé par défaut, y compris flag absent ; ancienne valeur statique refusée.
+Compatibilité temporaire uniquement si STATION_OPS_MCP_LEGACY_TOKEN_ENABLED vaut
+true/1/yes/on ET STATION_OPS_MCP_TOKEN est non vide. Comparaison constant-time.
+Legacy dispose temporairement read+write, sans contourner APPLY.
+Ne pas choisir legacy dans ChatGPT. Supprimer/rotater l'ancienne valeur compromise
+avant toute réactivation machine. Aucune rotation de secrets Render faite ici.
+
+21. Rate limiting
+Compteurs atomiques persistants PostgreSQL, cohérents entre workers/instances.
+Authorize/token/revoke : 60 requêtes/minute par endpoint/IP, fenêtres fixes.
+Login OAuth : 20 tentatives/15 minutes, en plus de l'infrastructure admin existante
+(5 échecs/IP+email et 20/IP, fenêtre 15 minutes par défaut).
+Rate limit IP respecte TRUST_PROXY_HEADERS existant ; ne l'activer que si les
+headers sont fournis par un proxy de confiance. Sans cela, IP proxy éventuellement
+partagée ; burst à frontière de fenêtre possible. Refus 429, sans secrets.
+
+22. Cleanup
+Opportuniste, maximum 100 rows par table par requête OAuth, index expiry/revocation.
+Flows/codes expirés, tokens expirés/révoqués ou de grants révoqués, rate buckets
+expirés ; grants expirés/révoqués supprimés seulement après purge de leurs tokens.
+Refresh consommés d'un grant actif conservés pour détecter replay.
+Sans trafic OAuth : purge à la prochaine requête, pas de cron ajouté.
+Purge admin_login_attempts existante également bornée à 100 rows par vérification.
+
+23. Fichiers créés
+app/models/station_ops_oauth.py
+app/routes/station_ops_oauth.py
+app/services/station_ops_oauth.py
+migrations/20261010_add_station_ops_oauth.sql
+tests/test_station_ops_oauth.py
+docs/station-ops-oauth-report.txt
+
+24. Fichiers modifiés
+app/__init__.py : enregistrement blueprint OAuth, pas d'autocréation de tables OAuth.
+app/mcp/http.py : middleware SDK OAuth et discovery.
+app/mcp/tools.py : securitySchemes, scopes et identité audit MCP.
+app/routes/admin_auth.py : réutilisation du service de login factorisé.
+app/services/admin_auth.py : service login partagé et cleanup rate limit borné.
+docs/station-ops-mcp.md : guide OAuth complet, migration et configuration.
+docs/station-ops-api.md : renvoi OAuth sans changement de contrat métier.
+tests/test_station_ops_mcp.py : legacy explicite pour anciens tests machine,
+  absence de token -> 401 OAuth, lookup isolé sans PostgreSQL pour cette classe.
+tests/test_admin_auth.py : mock DB dans le test CORS qui n'a pas besoin de PostgreSQL.
+requirements.txt, Dockerfile, triggers et services SCAN/RESEARCH/COMPARE/REVIEW/APPLY
+inchangés. Aucun changement au kill switch de production.
+
+25. Tests exécutés
+Environnement local work/oauth-venv, dépendances runtime requirements.txt,
+mcp==1.30.0 vérifié, pytest/pglast uniquement utilitaires de validation locaux.
+Commandes (PYTHONDONTWRITEBYTECODE=1) :
+work/oauth-venv/bin/python -m unittest discover -s tests -p 'test_station_ops*.py'
+work/oauth-venv/bin/python -m unittest discover -s tests -p test_admin_auth.py
+work/oauth-venv/bin/python -m unittest discover -s tests -p test_database_lifecycle.py
+work/oauth-venv/bin/python -m pytest tests/test_public_cache.py -q
+work/oauth-venv/bin/python -m pip check
+git diff --check
+AST Python des 11 fichiers Python modifiés/créés et parser pglast sur migration.
+Suites Station Ops également exécutées séparément pendant l'implémentation.
+Après dernières retouches transport : suites OAuth et MCP réexécutées.
+Fixtures SQLite partagées isolées, connexion PostgreSQL configurée interdite/mockée.
+
+26. Résultats
+300 tests unittest Station Ops réussis : 272 existants + 28 nouveaux OAuth.
+13 tests admin réussis, 11 tests cycle de connexion réussis, 9 tests cache réussis.
+Total : 333 tests réussis ; sous-tests de validation également verts.
+OAuth couvre discovery/issuer/resource/challenge, CIMD, refus/validation authorize,
+CSRF/login/consent, code expiry/usage unique/PKCE, scopes exacts, admin révoqué,
+tokens expirés/révoqués/hash-only/no-secret-logs, refresh/rotation/replay/révocation,
+rate limiting, cleanup borné/tombstones, SQL FOR UPDATE compilé sans connexion,
+legacy désactivé et protections APPLY (kill switch/confirmation).
+Parcours client MCP officiel : code/consentement/token échange simulés, puis
+initialize, tools/list et station_scan via ASGI/SQLite réels, sans sockets serveur.
+CIMD des tests simulé d'après le document réel vérifié par lecture web.
+SQL 17 statements valide, AST/whitespace/pip check passent.
+
+27. Limitations
+Pas de raccordement ChatGPT live, de test TLS/proxy Render, de build Docker,
+de migration exécutée ni de test concurrent PostgreSQL live.
+Les tests valident transactions/conditions SQLite et SQL FOR UPDATE compilé ;
+la contention PostgreSQL doit être validée en staging.
+Pas d'OIDC openid/email/UserInfo ni de domaine Enterprise vérifié : non demandé.
+Pas de private_key_jwt/DCR ; seul client public none + PKCE est annoncé.
+Fetch CIMD sans cache : dépend de la disponibilité HTTPS chatgpt.com à authorize.
+Révocation admin via désactivation/rôle/mot de passe immédiate ; logout browser
+seul n'annule pas un grant OAuth distinct. Utiliser revoke pour cette connexion.
+Metadata servies par app.mcp_main:app ; app.main:app Flask seul ne sert pas MCP.
+OAuth tables absentes/outage DB : refus fermé, aucune stacktrace/SQL exposée.
+
+28. Étapes exactes avant déploiement — non exécutées ici
+A. Revoir les changements locaux et le SQL, garder APPLY_COMMIT_ENABLED=false.
+B. Vérifier en staging les migrations admin préalables et sauvegarder la base cible.
+C. Exécuter séparément migrations/20261010_add_station_ops_oauth.sql en staging,
+   une seule fois ; valider types/index/FK, collisions refresh/code et rollback.
+D. Vérifier ADMIN_SESSION_SECRET et configuration cookies/session existante,
+   HTTPS/proxy de confiance et capacité pool DB. Aucun nouveau secret OAuth requis.
+E. Variables nouvelles (toutes non secrètes, défauts sûrs) :
+   STATION_OPS_OAUTH_ISSUER=https://snow-explorer-api-3.onrender.com
+   STATION_OPS_OAUTH_CLIENT_IDS=https://chatgpt.com/oauth/client.json
+   STATION_OPS_OAUTH_REDIRECT_URIS=https://chatgpt.com/connector_platform_oauth_redirect
+   STATION_OPS_MCP_LEGACY_TOKEN_ENABLED=false
+   Les trois premières sont facultatives avec ces défauts ; conserver false pour legacy.
+F. Supprimer/rotater l'ancienne valeur STATION_OPS_MCP_TOKEN exposée, ne pas la
+   réutiliser. Ne pas changer STATION_OPS_APPLY_COMMIT_ENABLED.
+G. Valider sortie HTTPS chatgpt.com pour CIMD et entrée ASGI app.mcp_main:app,
+   discovery exact, challenge, login/consentement et scopes sur staging.
+H. Après validation et autorisation distincte, planifier migration cible production
+   et déploiement, sans aucune modification des tables station/triggers.
+I. Dans ChatGPT Web → Plugins → Add custom MCP server → OAuth, saisir URL MCP,
+   choisir CIMD/client public si demandé, vérifier valeurs callback/client affichées,
+   connecter l'admin et consentir initialement read seulement ; initialize/tools/list/scan.
+J. Vérifier refresh/révocation, puis scopes write en staging uniquement si nécessaire.
+   Aucune opération APPLY réelle nécessaire pour valider OAuth ; kill switch false.
+
+29. Confirmation production
+Aucune donnée PostgreSQL de production touchée. Aucun accès de migration/écriture
+PostgreSQL, aucune donnée station ni trigger modifié. Aucun APPLY réel exécuté.
+Les commits synthétiques des tests métier existants restent dans leurs fixtures SQLite.
+Aucun push, aucune PR, aucun déploiement, aucune modification des variables Render.
+
+SQL EXACT — migrations/20261010_add_station_ops_oauth.sql
+======================================================
+-- OAuth infrastructure only. Run explicitly later; never run at application startup.
+BEGIN;
+CREATE TABLE station_ops_oauth_flows (
+    id BIGSERIAL PRIMARY KEY,
+    handle_hash VARCHAR(64) NOT NULL UNIQUE,
+    browser_hash VARCHAR(64) NOT NULL,
+    client_id TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    resource TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    state TEXT,
+    code_challenge VARCHAR(43) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    consumed_at TIMESTAMPTZ
+);
+CREATE INDEX station_ops_oauth_flows_expiry_idx ON station_ops_oauth_flows(expires_at);
+CREATE TABLE station_ops_oauth_codes (
+    id BIGSERIAL PRIMARY KEY,
+    code_hash VARCHAR(64) NOT NULL UNIQUE,
+    admin_user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    resource TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    code_challenge VARCHAR(43) NOT NULL,
+    code_challenge_method VARCHAR(4) NOT NULL DEFAULT 'S256' CHECK (code_challenge_method = 'S256'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    consumed_at TIMESTAMPTZ
+);
+CREATE INDEX station_ops_oauth_codes_admin_idx ON station_ops_oauth_codes(admin_user_id);
+CREATE INDEX station_ops_oauth_codes_expiry_idx ON station_ops_oauth_codes(expires_at);
+CREATE TABLE station_ops_oauth_grants (
+    id BIGSERIAL PRIMARY KEY,
+    admin_user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL,
+    resource TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ
+);
+CREATE INDEX station_ops_oauth_grants_admin_idx ON station_ops_oauth_grants(admin_user_id);
+CREATE INDEX station_ops_oauth_grants_expiry_idx ON station_ops_oauth_grants(expires_at);
+CREATE INDEX station_ops_oauth_grants_revoked_idx ON station_ops_oauth_grants(revoked_at);
+CREATE TABLE station_ops_oauth_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    grant_id BIGINT NOT NULL REFERENCES station_ops_oauth_grants(id) ON DELETE CASCADE,
+    kind VARCHAR(7) NOT NULL CHECK (kind IN ('access', 'refresh')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    consumed_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ
+);
+CREATE INDEX station_ops_oauth_tokens_grant_idx ON station_ops_oauth_tokens(grant_id);
+CREATE INDEX station_ops_oauth_tokens_expiry_idx ON station_ops_oauth_tokens(expires_at);
+CREATE INDEX station_ops_oauth_tokens_revoked_idx ON station_ops_oauth_tokens(revoked_at);
+CREATE TABLE station_ops_oauth_rate_buckets (
+    id BIGSERIAL PRIMARY KEY,
+    key_hash VARCHAR(64) NOT NULL UNIQUE,
+    count INTEGER NOT NULL DEFAULT 0 CHECK (count >= 0),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX station_ops_oauth_rate_expiry_idx ON station_ops_oauth_rate_buckets(expires_at);
+COMMIT;

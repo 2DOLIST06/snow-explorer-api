@@ -4,6 +4,8 @@ import logging
 from copy import deepcopy
 
 from jsonschema import Draft202012Validator
+from mcp.server.auth.middleware.auth_context import get_access_token
+from app.services.station_ops_oauth import READ, WRITE, ORIGIN, RESOURCE_METADATA_PATH
 from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
 
 from app.datetime_utils import utcnow
@@ -45,6 +47,8 @@ def tool_definitions():
                  ('candidates', 'decisions', 'plan_fingerprint', 'confirm_apply'))),
     ]
     return [Tool(name=name, description=description, inputSchema=schema, outputSchema={'type': 'object'},
+                 securitySchemes=[{'type': 'oauth2', 'scopes': [READ, WRITE] if name == 'apply_commit' else [READ]}],
+                 _meta={'securitySchemes': [{'type': 'oauth2', 'scopes': [READ, WRITE] if name == 'apply_commit' else [READ]}]},
                  annotations=ToolAnnotations(readOnlyHint=name != 'apply_commit',
                                              destructiveHint=name == 'apply_commit',
                                              idempotentHint=name != 'apply_commit', openWorldHint=False))
@@ -102,10 +106,13 @@ def _dispatch(name, arguments):
 def invoke(flask_app, name, arguments):
     """Synchronous worker boundary: app context and connection cleanup, no transaction wrapper."""
     outcome, execution_id, count, failed = 'error', None, 0, False
+    token = get_access_token()
     try:
         definitions = {tool.name: tool for tool in tool_definitions()}
         if name not in definitions:
             raise ToolRefusal('unknown_tool', 'Unknown Station Ops tool', 404)
+        if token is not None and not set([READ, WRITE] if name == 'apply_commit' else [READ]) <= set(token.scopes):
+            raise ToolRefusal('insufficient_scope', 'OAuth scopes do not authorize this tool', 403)
         if not isinstance(arguments, dict):
             raise ToolRefusal('invalid_tool_arguments', 'Expected an arguments object')
         rows = arguments.get('candidates')
@@ -161,6 +168,11 @@ def invoke(flask_app, name, arguments):
         safe_name = name if name in {t.name for t in tool_definitions()} else 'unknown'
         logger.info(json.dumps({'event': 'station_ops_mcp', 'timestamp': utcnow().isoformat(),
                                'tool': safe_name, 'result': outcome, 'candidate_count': count,
+                               'admin_id': token.subject if token else None,
                                'execution_id': execution_id}, sort_keys=True))
+    auth_meta = None
+    if result.get('code') == 'insufficient_scope':
+        auth_meta = {'mcp/www_authenticate': [
+            f'Bearer resource_metadata="{ORIGIN + RESOURCE_METADATA_PATH}", scope="{READ} {WRITE}"']}
     return CallToolResult(content=[TextContent(type='text', text=json.dumps(result, ensure_ascii=False, separators=(',', ':')))],
-                          structuredContent=result, isError=failed)
+                          structuredContent=result, isError=failed, _meta=auth_meta)

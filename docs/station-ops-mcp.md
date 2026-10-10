@@ -1,4 +1,4 @@
-# Snow Explorer Content Ops — MCP privé 1.0
+# Snow Explorer Content Ops — MCP privé 1.0 / OAuth 2.1
 
 La façade MCP appelle directement les services Python Station Ops validés.
 Elle n'effectue aucune recherche web et ne possède aucun moteur d'écriture propre.
@@ -40,52 +40,155 @@ gunicorn -c gunicorn.conf.py -k uvicorn_worker.UvicornWorker -b 0.0.0.0:5001 app
 La commande existante `app.main:app` continue à servir Flask seul et n'expose pas
 MCP. Aucune commande de service Render n'est modifiée dans cette tâche.
 
-## Authentification machine et HTTPS
+## OAuth 2.1 pour ChatGPT Web
 
-Configurer côté serveur **STATION_OPS_MCP_TOKEN** et envoyer uniquement :
+Le backend est à la fois resource server MCP et authorization server OAuth.
+Aucun fournisseur externe et aucun compte/mot de passe OAuth séparé.
+L'authentification `/api/admin/*` garde ses cookies et son CSRF ; les tokens MCP
+ne la remplacent pas. OAuth est actif par défaut et n'a pas de flag d'activation.
 
-```http
-Authorization: Bearer <PRIVATE_MACHINE_TOKEN>
-Accept: application/json, text/event-stream
-Content-Type: application/json
-```
+| Contrat | Valeur par défaut exacte |
+| --- | --- |
+| MCP / resource RFC 8707 | `https://snow-explorer-api-3.onrender.com/mcp/station-ops` |
+| Issuer RFC 8414/9207 | `https://snow-explorer-api-3.onrender.com` (sans slash final) |
+| Protected resource metadata RFC 9728 | `https://snow-explorer-api-3.onrender.com/.well-known/oauth-protected-resource/mcp/station-ops` |
+| Authorization server metadata | `https://snow-explorer-api-3.onrender.com/.well-known/oauth-authorization-server` |
+| Authorization | `https://snow-explorer-api-3.onrender.com/oauth/station-ops/authorize` |
+| Token | `https://snow-explorer-api-3.onrender.com/oauth/station-ops/token` |
+| Révocation RFC 7009 | `https://snow-explorer-api-3.onrender.com/oauth/station-ops/revoke` |
+| Client CIMD | `https://chatgpt.com/oauth/client.json` |
+| Redirect | `https://chatgpt.com/connector_platform_oauth_redirect` |
 
-Le placeholder n'est pas un vrai token. Utiliser un secret aléatoire suffisamment
-long, enregistré dans le gestionnaire de secrets du connecteur et de Render.
-Le serveur lit la variable à chaque requête et compare les octets avec
-`hmac.compare_digest`. Une rotation ne nécessite pas de modifier le code.
-Il ne crée aucune session admin et n'accepte ni cookie admin ni CSRF comme
-substitut au Bearer. L'authentification admin existante reste inchangée ; un
-Bearer MCP ne permet pas d'accéder aux endpoints `/api/admin`.
+### CIMD, SDK et contrat OpenAI vérifié
 
-| Cas | HTTP | Code |
-| --- | --- | --- |
-| Variable absente, vide ou uniquement espaces | 503 | station_ops_mcp_unavailable |
-| Authorization absent, incorrect ou dupliqué | 401 | unauthorized |
-| Token seulement en query string | 401 | unauthorized |
-| Bearer valide avec query string | 400 | mcp_query_not_allowed |
-| HTTP hors fixtures TESTING | 403 | https_required |
-| Chemin MCP inconnu après authentification | 404 | not_found |
+Contrat vérifié le 10 octobre 2026 dans la documentation officielle
+[OpenAI Authentication](https://developers.openai.com/plugins/build/auth) et le
+[document CIMD stable](https://chatgpt.com/oauth/client.json).
+Le callback et le client stables nécessitent RFC 9207 et le même issuer exact dans
+les deux metadata. Le CIMD actuel propose `none` et `private_key_jwt` dans le champ
+pluriel, même si sa préférence singulière est `private_key_jwt`. Ce serveur propose
+uniquement `none` : l'intersection autorise le client public avec PKCE.
 
-L'authentification protège aussi GET, DELETE, OPTIONS et le namespace `/mcp` avant
-le SDK et avant toute connexion métier. Les refus ne retournent ni token ni
-valeur de variable ; les 401 portent `WWW-Authenticate: Bearer`.
-Les réponses MCP portent `Cache-Control: no-store`.
+Pas de DCR ni de registre de clients. Le serveur récupère le CIMD HTTPS à chaque
+nouvelle autorisation, exige le client_id exact, une redirect présente dans le CIMD
+ET dans la liste locale, et les méthodes/grants compatibles. Fetch limité à 64 KiB,
+timeouts connect/read, sans suivi de redirection, origine strictement chatgpt.com,
+port standard, sans credentials/query/fragment. Toute indisponibilité refuse le flow.
+La configuration n'accepte pas d'origine CIMD alternative ni de wildcard.
 
-**HTTPS est obligatoire hors tests.** La façade vérifie le schéma ASGI, pas un
-X-Forwarded-Proto arbitraire. Derrière Render, Uvicorn doit reconnaître uniquement
-le proxy TLS de confiance : régler `FORWARDED_ALLOW_IPS` sur les IP du proxy si
-nécessaire. Ne choisir `*` que si toute connexion à l'origine provient d'un proxy
-qui écrase les headers forwarded des clients et dont la frontière est vérifiée.
-Un simple header client ne suffit pas à convertir HTTP en HTTPS. La terminaison
-TLS et cette configuration de proxy n'ont pas été vérifiées ou modifiées en production.
+Le SDK officiel `mcp==1.30.0` conserve le transport, le backend Bearer, AccessToken,
+RequireAuthMiddleware, AuthContextMiddleware et le chemin RFC 9728. Les handlers AS
+de cette version n'implémentent pas le contrat CIMD pluriel/RFC 9207 demandé ;
+authorize/token sont donc des endpoints OAuth standard Flask qui utilisent la même
+base et les services admin existants. Ce choix ne change pas le protocole MCP et ne
+nécessite pas DCR. Le JSON metadata de ressource utilise l'issuer chaîne exact :
+AnyHttpUrl du SDK ajouterait un slash à un issuer origine et casserait RFC 9207.
 
-La protection DNS rebinding du SDK reste active. Les hosts par défaut sont
-`snow-explorer-api-3.onrender.com`, `localhost`, `localhost:*`, `127.0.0.1`,
-`127.0.0.1:*`. Les Origin HTTPS correspondants sont autorisés lorsqu'un Origin est
-fourni. Pour un domaine personnalisé, configurer la liste séparée par virgules
-`STATION_OPS_MCP_ALLOWED_HOSTS` avec les hosts réellement utilisés ; ne pas la
-remplacer par un wildcard global. Aucun CORS anonyme supplémentaire n'est ouvert.
+### Login, consentement et flux
+
+1. ChatGPT découvre metadata et utilise le client CIMD public.
+2. GET authorize : `response_type=code`, client_id et redirect_uri exacts,
+   `resource` exact obligatoire, scopes, `code_challenge` et méthode `S256` obligatoires.
+3. Une transaction browser persistée (10 minutes) redirige vers un handle aléatoire
+   hashé. Le navigateur reçoit un cookie `__Host-`, Secure/HttpOnly/SameSite=Lax/Path=/.
+4. Une session admin existante valide est réutilisée sans touch. Sinon une page login
+   minimale backend réutilise `authenticate_admin_credentials`, Argon2, le rate limit
+   et `create_admin_session`. Le frontend Next.js est séparé et aucun contrat de retour
+   OAuth de son login n'est présent dans ce dépôt : pas de redirection arbitraire vers lui.
+5. Consentement explicite affichant séparément Lecture et Écriture demandées. Les POST
+   login/consent exigent un CSRF HMAC lié au cookie browser et au handle de flow.
+   Ce mécanisme est indépendant du CSRF admin frontend et du token endpoint OAuth.
+6. Consentement accepté : code à usage unique de 5 minutes lié à l'admin, au client,
+   à la redirect, à resource, aux scopes et à PKCE S256. Consentement refusé : access_denied.
+   State est conservé ; chaque callback succès/erreur contient l'issuer exact dans `iss`.
+   Client/redirect non fiables ne déclenchent aucun callback ; l'erreur locale contient `iss`.
+7. POST token en form-urlencoded : resource, client_id, redirect_uri et code_verifier
+   sont vérifiés ; consommation et création des tokens sont atomiques.
+8. Bearer opaque envoyé dans Authorization seulement. Chaque requête vérifie token,
+   expiry, révocation, grant, resource et admin encore actif/admin. Un changement de
+   mot de passe invalide également les grants antérieurs.
+
+Les scopes autorisés sont `station-ops:read` et `station-ops:write`. Read est obligatoire ;
+write seul est refusé. Aucun scope non demandé n'est accordé. Les six tools de lecture,
+y compris apply_dry_run, exigent read. apply_commit exige read + write ; il conserve
+absolument toutes les protections APPLY. Chaque tool expose `securitySchemes` oauth2,
+également dans `_meta.securitySchemes`, avec ses scopes ; les annotations restent
+readOnly/destructive. Un refus de scope d'outil porte un challenge
+`_meta["mcp/www_authenticate"]` pour permettre une nouvelle autorisation.
+
+Access token : au plus 1 heure, plafonnée à l'expiration du grant. Refresh token :
+30 jours absolus à compter du grant, sans prolongation à la rotation. Chaque refresh
+consomme immédiatement l'ancien et retourne une nouvelle paire. Les refresh consommés
+restent conservés tant que le grant est valide : leur réutilisation révoque toute la
+famille, y compris les nouveaux access tokens. PostgreSQL utilise un verrou de grant
+pour sérialiser refresh/révocation. La révocation d'un access ou refresh révoque le grant.
+POST revoke accepte client_id et token, sans secret client ; token inconnu retourne 200.
+Les scopes ne peuvent pas être changés par refresh : refaire authorization/consent.
+
+Tous les codes, access tokens, refresh tokens et handles sont générés via secrets et
+stockés uniquement en SHA-256. Aucun mot de passe ni token brut OAuth n'est persisté.
+Aucune nouvelle clé cryptographique serveur n'est nécessaire. Le secret admin existant
+reste utilisé uniquement par le service de session admin, pas comme clé OAuth.
+
+### Migration et stockage
+
+Migration à exécuter **plus tard**, séparément, après validation :
+`migrations/20261010_add_station_ops_oauth.sql`.
+
+Tables OAuth dédiées : station_ops_oauth_flows, station_ops_oauth_codes,
+station_ops_oauth_grants, station_ops_oauth_tokens, station_ops_oauth_rate_buckets.
+Aucune création automatique de ces tables au démarrage. Aucune migration de production
+n'a été exécutée dans cette tâche. Aucun trigger ni donnée station ne change.
+Un accès avant migration échoue fermé ; les 401 MCP donnent les metadata, sans détail DB.
+
+Rate limit partagé en base, par endpoint/IP : 60 requêtes/minute, incluant token,
+authorize et revoke. Login OAuth : 20 tentatives/15 minutes en plus du rate limit admin
+existant (5 échecs par paire IP/email, 20 par IP sur 15 minutes par défaut).
+Compteurs OAuth atomiques, indépendants des workers. Sans confiance proxy configurée,
+la limite porte sur l'IP du proxy ; configurer TRUST_PROXY_HEADERS seulement avec un
+proxy de confiance. Les fenêtres sont fixes, donc un burst à la frontière reste possible.
+
+Cleanup opportuniste : au maximum 100 rows par table/request OAuth ; requêtes sur expiry
+indexées, pas de DELETE massif. Tokens expirés/révoqués ou liés à un grant révoqué purgés ; grants expirés/révoqués
+supprimés seulement sans tokens enfants.
+Les tombstones de refresh consommés restent jusqu'au terme absolu pour détecter le replay.
+Sans trafic OAuth, la purge attend la prochaine requête ; pas de cron requis.
+
+### Variables et compatibilité legacy
+
+| Variable | Défaut / effet |
+| --- | --- |
+| STATION_OPS_OAUTH_ISSUER | Origine HTTPS Render ci-dessus, sans slash/path/query/fragment ; facultative |
+| STATION_OPS_OAUTH_CLIENT_IDS | Liste CSV exacte du client CIMD stable ; facultative |
+| STATION_OPS_OAUTH_REDIRECT_URIS | Liste CSV exacte du callback stable ; facultative |
+| STATION_OPS_MCP_LEGACY_TOKEN_ENABLED | absent/false : Bearer statique refusé ; true/1/yes/on : compatibilité temporaire |
+| STATION_OPS_MCP_TOKEN | uniquement si legacy activé ; ancienne valeur compromise à supprimer/rotater |
+| STATION_OPS_MCP_ALLOWED_HOSTS | Liste DNS-rebinding existante, indépendante des clients OAuth |
+
+Les lifetimes, limits et resource sont des constantes, sans variables supplémentaires.
+ADMIN_SESSION_SECRET, ADMIN_SESSION_COOKIE_NAME, ADMIN_COOKIE_SAMESITE, TTL et rate limit
+admin restent ceux du frontend ; cookies posés par le login OAuth toujours Secure.
+STATION_OPS_APPLY_COMMIT_ENABLED n'est pas modifié ; conserver false en production.
+Si le mode de callback indiqué par ChatGPT diffère, copier les deux valeurs exactes du
+management dans les listes et vérifier le CIMD ; aucun localhost/wildcard OAuth par défaut.
+
+Le legacy ne doit pas être utilisé pour ChatGPT. Il exige à la fois flag explicite et
+STATION_OPS_MCP_TOKEN non vide et dispose temporairement des scopes read + write ;
+il ne contourne jamais APPLY. Supprimer/rotater l'ancienne valeur exposée avant utilisation.
+
+### Transport et confidentialité
+
+HTTPS obligatoire hors fixtures TESTING. Le SDK vérifie DNS rebinding. Le middleware
+refuse Authorization dupliqué, tokens query-only, paramètres MCP en query et corps
+MCP >16 MiB. Les 401 portent WWW-Authenticate Bearer avec resource_metadata et read.
+Pas de cookie admin comme substitut au token MCP. Les erreurs de scope global donnent
+403 ; les erreurs de tool restent des CallToolResult structurés.
+Responses OAuth et MCP : no-store. Pages OAuth : CSP anti-frame, no-referrer, nosniff.
+Formulaires OAuth limités à 16 KiB, paramètres dupliqués refusés. Token endpoint sans
+CSRF frontend, sans client_secret ni assertion. Errors standard sans SQL/stacktrace.
+Ne pas activer les logs DEBUG de headers/bodies ni journaliser les Location OAuth.
+Les logs applicatifs contiennent seulement événements et identités/scopes autorisés ;
+les arguments Station Ops et credentials ne sont pas journalisés.
 
 ## Outils et contrats
 
@@ -198,8 +301,8 @@ L'absence de décision approved est refusée explicitement avec
 L'acteur d'audit APPLY est la valeur serveur fixe **station_ops_mcp**, dans le champ
 admin_id du logger existant. Aucun compte admin n'est usurpé et aucun ID d'acteur
 client n'est accepté. L'audit MCP distingue également le nom de l'outil.
-Un seul secret machine ne permet pas d'attribuer individuellement les actions à
-plusieurs utilisateurs ; des identités/scopes distincts constituent une évolution future.
+L'audit MCP ajoute l'admin_id OAuth vérifié ; l'acteur du moteur APPLY reste inchangé.
+En mode legacy, aucun admin individuel n'est attribué.
 
 Le wrapper n'ouvre aucune transaction métier autour des services. Il exécute les
 fonctions synchrones dans un worker dédié avec contexte Flask, puis ferme la
@@ -264,16 +367,12 @@ Ne configurer aucun logging DEBUG des headers/secrets dans l'infrastructure exte
 9. Éventuellement apply_commit, après décision explicite et activation serveur séparée.
 
 Toute modification stale impose de refaire REVIEW et les décisions concernées.
-Le fingerprint n'est pas une signature de sécurité. Le Bearer est un secret machine
-partagé, pas une preuve d'approbation utilisateur ; le futur plugin doit contrôler
+Le fingerprint n'est pas une signature de sécurité. Le scope OAuth write n'est pas une approbation des opérations ; le plugin doit contrôler
 ses demandes d'écriture et présenter les décisions à l'utilisateur.
 
-Le serveur utilise le protocole MCP standard et est testé avec le client officiel.
-Il n'implémente **pas OAuth** : utiliser un connecteur/plugin permettant de fournir
-le Bearer statique dans Authorization. Une interface ChatGPT n'acceptant que OAuth
-ne pourra pas être raccordée directement sans étape d'authentification dédiée.
-Aucun plugin n'est installé ou publié et aucun raccordement ChatGPT/Render réel
-n'est revendiqué dans cette tâche.
+Le serveur implémente OAuth Authorization Code + PKCE S256/CIMD et est prévu pour
+ChatGPT Web → Plugins → Add custom MCP server → OAuth. Le raccordement réel nécessite
+migration et déploiement séparés. Aucun raccordement ChatGPT/Render live n'est revendiqué.
 
 ## Vérifications locales
 
@@ -290,10 +389,10 @@ PostgreSQL de production. Les tests PostgreSQL existants couvrent l'isolation,
 verrous et rollback par simulation ; aucune nouvelle transaction PostgreSQL live
 ou activation du kill switch de production n'est exécutée.
 
-Résultat local final : **272 tests Station Ops réussis**, dont **35 tests MCP**,
-et **111 sous-tests réussis**. Les suites supplémentaires de cycle de connexion
-et cache public passent (**20 tests**), ainsi que l'authentification admin sous
-harnais SQLite isolé (**13 tests**). `pip check`, syntaxe Python et whitespace
-passent. Un avertissement de dépréciation Starlette concerne uniquement l'usage
-HTTPX de TestClient ; le test avec le client MCP officiel passe.
-Aucun build Docker, test TLS/proxy Render ou raccordement ChatGPT live n'est revendiqué.
+Les résultats du travail OAuth et les commandes exactes sont consignés dans le
+rapport `docs/station-ops-oauth-report.txt`. Les tests OAuth simulent le CIMD stable
+vérifié, exécutent le login/consentement/token endpoint et le client MCP officiel sur
+ASGI en mémoire et SQLite isolé. Ils n'utilisent ni API Render ni PostgreSQL de production.
+Le test admin CORS a reçu un mock DB afin de ne plus demander un PostgreSQL local.
+Pas de test TLS/proxy Render, de concurrence PostgreSQL live ou de raccordement ChatGPT
+réel dans cette tâche ; ces vérifications sont à faire en staging avant déploiement.

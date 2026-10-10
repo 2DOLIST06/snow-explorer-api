@@ -16,6 +16,7 @@ from app.mcp.http import create_mcp_application, MCP_PATH
 from app.mcp.tools import invoke, tool_definitions, MACHINE_ACTOR
 from app.models.admin_session import AdminSession
 from app.models.resort import Resort
+from app.models.station_ops_oauth import OAuthToken
 from app.services.station_ops import apply, scan, compare, review
 from app.services.station_ops.candidates import MAX_BODY_BYTES
 from app.services.station_ops.research_schema import research_schema
@@ -225,7 +226,11 @@ class McpToolsTests(unittest.TestCase):
 
 class McpTransportTests(unittest.TestCase):
     def setUp(self):
-        env = patch.dict(os.environ, {'STATION_OPS_MCP_TOKEN': TOKEN})
+        # This class tests explicit machine compatibility only. OAuth persistence
+        # is exercised in test_station_ops_oauth; never query a configured PG here.
+        oauth_lookup = patch.object(OAuthToken, 'get_or_none', return_value=None)
+        oauth_lookup.start(); self.addCleanup(oauth_lookup.stop)
+        env = patch.dict(os.environ, {'STATION_OPS_MCP_TOKEN': TOKEN, 'STATION_OPS_MCP_LEGACY_TOKEN_ENABLED': 'true'})
         env.start(); self.addCleanup(env.stop)
         self.flask_app = Flask('mcp-test')
         self.flask_app.config['TESTING'] = True
@@ -253,7 +258,7 @@ class McpTransportTests(unittest.TestCase):
         self.assertEqual(self.rpc('tools/list', headers={**AUTH, 'Authorization': 'Bearer wrong'}).status_code, 401)
         self.assertEqual(self.rpc('tools/list').status_code, 200)
         with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(self.rpc('tools/list').status_code, 503)
+            self.assertEqual(self.rpc('tools/list').status_code, 401)
 
     def test_query_token_never_authenticates(self):
         response = self.client.post(MCP_PATH + '?token=' + TOKEN, json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}, headers={'Accept': AUTH['Accept']})
@@ -338,7 +343,7 @@ class McpRuntimeIntegrationTests(unittest.TestCase):
         # the fixture thread keeps the anchor alive until all clients close.
         with patch.object(fixtures, 'PooledSqliteDatabase', side_effect=lambda path, **kwargs: original(shared, uri=True, check_same_thread=False, **kwargs)):
             fixtures.StationOpsTests.setUp(self)
-        env = patch.dict(os.environ, {'STATION_OPS_MCP_TOKEN': TOKEN, 'STATION_OPS_APPLY_COMMIT_ENABLED': 'false'})
+        env = patch.dict(os.environ, {'STATION_OPS_MCP_TOKEN': TOKEN, 'STATION_OPS_MCP_LEGACY_TOKEN_ENABLED': 'true', 'STATION_OPS_APPLY_COMMIT_ENABLED': 'false'})
         env.start(); self.addCleanup(env.stop)
         self.asgi = create_mcp_application(self.app)
         self.http = TestClient(self.asgi, base_url='https://localhost')
