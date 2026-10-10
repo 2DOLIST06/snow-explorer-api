@@ -207,6 +207,7 @@ documenté dans [station-ops-api.md](station-ops-api.md).
 | Outil | Arguments exacts | Sortie | Données métier |
 | --- | --- | --- | --- |
 | station_scan | Aucun obligatoire ; uniquement id, slug, country_code, region_id, department, is_active, ski_area_id | Snapshot SCAN inchangé | REPEATABLE READ / READ ONLY |
+| station_catalog | Filtres country_code, region_id, department, is_active, ski_area_id facultatifs ; limit et offset facultatifs | Page compacte, total, returned, next_offset, has_more | REPEATABLE READ / READ ONLY |
 | research_contract | Objet vide uniquement | research_version, field_statuses, source_types, research_levels, candidate_fields, limits, json_schema | Aucune requête métier |
 | research_validate | Objet RESEARCH 1.0 complet, validé par le validateur canonique | valid, errors, warnings, summary, results/audit, excluded_candidates, compare_payload | Aucune requête métier |
 | compare | candidates obligatoire uniquement | Contrat COMPARE inchangé, avec results/changes/review_items | REPEATABLE READ / READ ONLY |
@@ -223,6 +224,68 @@ Le schéma discovery de research_validate accepte un objet pour laisser le
 validateur canonique retourner ses diagnostics complets, notamment sur les champs
 inconnus et données manquantes. research_contract fournit son schéma détaillé
 canonique, dérivé du générateur RESEARCH, sans copie manuelle.
+
+### Catalogue compact pour les gros audits
+
+`station_catalog` permet de commencer un audit RESEARCH d'un pays ou d'une région
+sans transporter le snapshot complet. Le contrat de `station_scan` est inchangé.
+Le nouvel outil déclare `readOnlyHint=true` et le scope OAuth `station-ops:read`
+dans `securitySchemes` et `_meta.securitySchemes`.
+
+Les filtres géographiques conservent les types SCAN : chaînes uniquement,
+notamment `is_active="true"`/`"false"` et `ski_area_id="123"`.
+`limit` est un entier de 1 à 250, avec défaut 100 ; `offset` est un entier de
+0 à 9223372036854775807, avec défaut 0. Les arguments inconnus et valeurs
+invalides sont refusés avec une erreur d'outil structurée de statut 400.
+
+Premier appel, puis page suivante avec les mêmes filtres :
+
+```json
+{"country_code": "FR", "limit": 100, "offset": 0}
+```
+
+La réponse contient `schema_version="1.0"`, `catalog_version="1.0"`,
+`generated_at`, `scope.filters`, `order_by="id"`, `limit`, `offset`, `total`,
+`returned`, `has_more`, `next_offset`, `stations` et `schema_findings`.
+`total` compte toutes les stations correspondant aux filtres ; `returned` compte
+la page. Utiliser `next_offset` pour poursuivre jusqu'à `has_more=false`, auquel
+cas `next_offset=null`. Une page vide ou un offset au-delà du catalogue est valide.
+L'ordre par `id` est stable. Chaque page possède sa propre transaction : des
+créations ou suppressions entre appels peuvent décaler les offsets. La pagination
+ne remplace pas la revalidation des données par REVIEW et APPLY.
+
+Chaque station contient exclusivement :
+
+- `id`, `name`, `slug`, `is_active`, `country_code` ;
+- `region_id`, `region_name` (libellé stocké sur la station), `department` ;
+- `latitude`, `longitude`, `altitude_min_m`, `altitude_max_m`, `ski_area_km` ;
+- `website_url`, `updated_at` ;
+- `has_cover_image`, `has_logo`, `has_piste_map`.
+
+Les indicateurs de médias sont calculés en SQL sur la présence d'une URL non vide.
+Ils ne vérifient ni l'accessibilité des URLs ni les collections de maps. Le dernier
+indicateur examine `pistes_small_map_url` et `pistes_large_map_url`. Aucune URL de
+média, texte éditorial, piste, remontée, forfait, widget ou collection n'est chargé
+dans la page. Aucun accès web n'est effectué. Les champs d'identité disponibles
+restent fidèles aux données stockées, sans troncature silencieuse.
+
+Le service utilise l'inventaire du schéma physique existant. Un champ optionnel
+absent est retourné à `null` avec un diagnostic `schema_findings`. Pour un média,
+`null` signifie une présence inconnue si une colonne nécessaire manque et qu'aucune
+colonne disponible ne démontre sa présence. Un filtre dont la colonne manque
+provoque `station_ops_schema_incompatible` (statut 503), sans élargir le périmètre.
+
+PostgreSQL : `REPEATABLE READ / READ ONLY`, un inventaire du schéma puis deux
+requêtes SELECT (comptage et page), indépendamment du nombre de stations.
+Le filtre domaine utilise une sous-requête sur la relation plusieurs-à-plusieurs,
+sans N+1. SQLite conserve la protection `query_only` des tests. Aucune donnée
+métier ou session admin n'est écrite. Aucun changement de schéma n'est effectué.
+
+Les tests couvrent 73 stations françaises, les pages de 100 et 250 stations, et
+une réponse MCP complète de moins de 160 KiB pour 73 stations malgré des contenus
+et URLs de médias volumineux en base. Cette mesure inclut la représentation texte
+et `structuredContent`. La limite de page borne le nombre de stations, sans
+garantir un plafond universel en octets pour des champs d'identité anormalement longs.
 
 Exemples d'arguments :
 
@@ -356,7 +419,7 @@ Ne configurer aucun logging DEBUG des headers/secrets dans l'infrastructure exte
 
 ## Workflow conseillé et limites d'intégration ChatGPT
 
-1. station_scan avec le scope pays/région/station souhaité.
+1. station_catalog avec le scope pays/région souhaité, en suivant next_offset pour les gros audits ; station_scan reste disponible pour le snapshot détaillé d'une station via id/slug.
 2. ChatGPT fait la recherche externe avec ses propres capacités.
 3. research_contract puis research_validate pour chaque lot RESEARCH 1.0.
 4. compare avec compare_payload.

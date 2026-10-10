@@ -1,4 +1,4 @@
-"""Seven explicit tools delegating to the validated Station Ops services."""
+"""Explicit tools delegating to the validated Station Ops services."""
 import json
 import logging
 from copy import deepcopy
@@ -10,7 +10,7 @@ from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
 
 from app.datetime_utils import utcnow
 from app.models.resort import Resort
-from app.services.station_ops import scan, compare, review, research, apply
+from app.services.station_ops import scan, compare, review, research, apply, catalog
 from app.services.station_ops.apply_contract import ApplyError, MAX_APPLY_OPERATIONS
 from app.services.station_ops.candidates import ComparePayloadError, MAX_BODY_BYTES, MAX_CANDIDATES
 from app.services.station_ops.schema import SchemaCompatibilityError
@@ -34,6 +34,10 @@ def tool_definitions():
     specs = [
         ('station_scan', 'Read the current Station Ops snapshot. Filter values use the existing SCAN string contract.',
          _object({key: {'type': 'string'} for key in scan.FILTER_FIELDS})),
+        ('station_catalog', 'Read a compact catalogue page for large audits. Use next_offset with identical filters; default limit 100, maximum 250. No editorial content or collections.',
+         _object({**{key: {'type': 'string'} for key in catalog.CATALOG_FILTERS},
+                  'limit': {'type': 'integer', 'minimum': 1, 'maximum': catalog.MAX_LIMIT, 'default': catalog.DEFAULT_LIMIT},
+                  'offset': {'type': 'integer', 'minimum': 0, 'maximum': catalog.MAX_OFFSET, 'default': 0}})),
         ('research_contract', 'Read the canonical RESEARCH 1.0 schema and shared limits. No web research.', _object({})),
         # Structural/semantic invalid research must reach its validator and retain its diagnostics.
         ('research_validate', 'Validate externally collected RESEARCH 1.0 and return the exact COMPARE payload. No web research.',
@@ -82,6 +86,8 @@ def _dispatch(name, arguments):
         except ValueError as exc:
             raise ToolRefusal('invalid_filters', str(exc)) from exc
         return scan.scan_stations(arguments)
+    if name == 'station_catalog':
+        return catalog.catalog_stations(arguments)
     if name == 'research_contract':
         return research_contract()
     if name == 'research_validate':
