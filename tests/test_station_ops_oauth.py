@@ -344,7 +344,7 @@ class OAuthTests(unittest.TestCase):
                 async with streamable_http_client(oauth.RESOURCE, http_client=http) as (read, write, _):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
-                        self.assertEqual(len((await session.list_tools()).tools), 8)
+                        self.assertEqual(len((await session.list_tools()).tools), 9)
                         result = await session.call_tool('station_scan', {'country_code': 'FR'})
                         self.assertFalse(result.isError, result.structuredContent)
                         self.assertTrue(result.structuredContent['stations'])

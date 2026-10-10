@@ -459,3 +459,8 @@ ASGI en mémoire et SQLite isolé. Ils n'utilisent ni API Render ni PostgreSQL d
 Le test admin CORS a reçu un mock DB afin de ne plus demander un PostgreSQL local.
 Pas de test TLS/proxy Render, de concurrence PostgreSQL live ou de raccordement ChatGPT
 réel dans cette tâche ; ces vérifications sont à faire en staging avant déploiement.
+
+## Inventaire dynamique du catalogue
+
+`catalog_schema` est un outil read-only du même MCP. Voir
+[contrat, exemples et règles de remplissage](station-ops-catalog-schema.md).

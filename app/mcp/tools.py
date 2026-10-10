@@ -10,7 +10,7 @@ from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
 
 from app.datetime_utils import utcnow
 from app.models.resort import Resort
-from app.services.station_ops import scan, compare, review, research, apply, catalog
+from app.services.station_ops import scan, compare, review, research, apply, catalog, catalog_schema
 from app.services.station_ops.apply_contract import ApplyError, MAX_APPLY_OPERATIONS
 from app.services.station_ops.candidates import ComparePayloadError, MAX_BODY_BYTES, MAX_CANDIDATES
 from app.services.station_ops.schema import SchemaCompatibilityError
@@ -32,6 +32,13 @@ def tool_definitions():
     review_input = _object({'candidates': candidates, 'decisions': decisions}, ('candidates',))
     apply_fields = {'candidates': candidates, 'decisions': decisions, 'plan_fingerprint': {'type': 'string'}}
     specs = [
+        ('catalog_schema', 'Discover stored catalogue fields dynamically and profile their presence; read only.',
+         _object({'entity': {'type': 'string', 'enum': ['station', 'ski_area']},
+                  'country_code': {'type': 'string', 'minLength': 1},
+                  'is_active': {'type': 'boolean'},
+                  'include_nested': {'type': 'boolean'},
+                  'min_fill_rate': {'type': 'number', 'minimum': 0, 'maximum': 1},
+                  'max_fill_rate': {'type': 'number', 'minimum': 0, 'maximum': 1}})),
         ('station_scan', 'Read the current Station Ops snapshot. Filter values use the existing SCAN string contract.',
          _object({key: {'type': 'string'} for key in scan.FILTER_FIELDS})),
         ('station_catalog', 'Read a compact catalogue page for large audits. Use next_offset with identical filters; default limit 100, maximum 250. No editorial content or collections.',
@@ -80,6 +87,11 @@ def research_contract():
 
 
 def _dispatch(name, arguments):
+    if name == 'catalog_schema':
+        try:
+            return catalog_schema.catalog_schema(arguments)
+        except ValueError as exc:
+            raise ToolRefusal('invalid_filters', str(exc)) from exc
     if name == 'station_scan':
         try:
             scan.parse_filters(arguments)

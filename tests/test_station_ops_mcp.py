@@ -57,9 +57,9 @@ class McpToolsTests(unittest.TestCase):
             return original(sql, *args, **kwargs)
         return patch.object(self.database, 'execute_sql', side_effect=execute)
 
-    def test_tools_exactly_eight_with_write_annotations(self):
+    def test_tools_exactly_nine_with_write_annotations(self):
         tools = {t.name: t for t in tool_definitions()}
-        self.assertEqual(set(tools), {'station_scan', 'station_catalog', 'research_contract', 'research_validate', 'compare', 'review', 'apply_dry_run', 'apply_commit'})
+        self.assertEqual(set(tools), {'catalog_schema', 'station_scan', 'station_catalog', 'research_contract', 'research_validate', 'compare', 'review', 'apply_dry_run', 'apply_commit'})
         self.assertTrue(all(t.annotations.readOnlyHint for k, t in tools.items() if k != 'apply_commit'))
         self.assertFalse(tools['apply_commit'].annotations.readOnlyHint)
         self.assertTrue(tools['apply_commit'].annotations.destructiveHint)
@@ -248,7 +248,7 @@ class McpTransportTests(unittest.TestCase):
         self.assertEqual(initialized.status_code, 200, initialized.text)
         self.assertEqual(initialized.json()['result']['serverInfo']['name'], 'Snow Explorer Content Ops')
         tools = self.rpc('tools/list').json()['result']['tools']
-        self.assertEqual(len(tools), 8)
+        self.assertEqual(len(tools), 9)
         contract = self.rpc('tools/call', {'name': 'research_contract', 'arguments': {}}).json()['result']
         self.assertFalse(contract['isError'])
         self.assertEqual(contract['structuredContent']['research_version'], '1.0')
@@ -324,7 +324,7 @@ class McpTransportTests(unittest.TestCase):
                         result = await session.initialize()
                         self.assertEqual(result.serverInfo.name, 'Snow Explorer Content Ops')
                         tools = await session.list_tools()
-                        self.assertEqual(len(tools.tools), 8)
+                        self.assertEqual(len(tools.tools), 9)
                         contract = await session.call_tool('research_contract', {})
                         self.assertFalse(contract.isError)
                         self.assertEqual(contract.structuredContent['json_schema'], research_schema())
