@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "filters": {
+    "entity": "station",
+    "min_fill_rate": 0.9,
+    "max_fill_rate": 1,
+    "include_nested": true,
+    "country_code": "FR",
+    "is_active": true
+  },
+  "population": {
+    "total_records": 10
+  },
+  "entities": {
+    "station": {
+      "fields": [
+        {"path": "country_code","type": "string","nullable": true,"collection": false,"internal": false,"readable": true,"writable": true,"filled_count": 10,"total_count": 10,"fill_rate": 1.0},
+        {"path": "id","type": "string","nullable": false,"collection": false,"internal": true,"readable": true,"writable": false,"filled_count": 10,"total_count": 10,"fill_rate": 1.0},
+        {"path": "is_active","type": "integer","nullable": false,"collection": false,"internal": false,"readable": true,"writable": true,"filled_count": 10,"total_count": 10,"fill_rate": 1.0},
+        {"path": "name","type": "string","nullable": false,"collection": false,"internal": false,"readable": true,"writable": true,"filled_count": 10,"total_count": 10,"fill_rate": 1.0},
+        {"path": "page_layout_version","type": "string","nullable": false,"collection": false,"internal": false,"readable": true,"writable": true,"filled_count": 10,"total_count": 10,"fill_rate": 1.0},
+        {"path": "slug","type": "string","nullable": false,"collection": false,"internal": false,"readable": true,"writable": false,"filled_count": 10,"total_count": 10,"fill_rate": 1.0},
+        {"path": "updated_at","type": "datetime","nullable": false,"collection": false,"internal": true,"readable": true,"writable": false,"filled_count": 10,"total_count": 10,"fill_rate": 1.0}
+      ]
+    }
+  }
+}
