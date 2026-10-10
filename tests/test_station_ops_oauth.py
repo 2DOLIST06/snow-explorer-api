@@ -238,6 +238,26 @@ class OAuthTests(unittest.TestCase):
             self.assertEqual(self.rpc(tokens['access_token']).status_code, 401)
             setattr(self.user, field, old); self.user.save()
 
+    def test_station_catalog_with_read_only_oauth_token(self):
+        token = self.exchange().json()['access_token']
+        Resort.insert_many([{'id': f'catalog-{i:03d}', 'slug': f'catalog-{i:03d}',
+                             'name': f'French station {i}', 'country_code': 'FR'}
+                            for i in range(72)]).execute()
+        first = self.rpc(token, 'station_catalog', {'country_code': 'FR', 'limit': 50})
+        self.assertEqual(first.status_code, 200)
+        result = first.json()['result']
+        self.assertFalse(result['isError'], result)
+        page = result['structuredContent']
+        self.assertEqual((page['total'], page['returned'], page['next_offset']), (73, 50, 50))
+        second = self.rpc(token, 'station_catalog', {'country_code': 'FR', 'limit': 50,
+                                                   'offset': page['next_offset']}).json()['result']
+        self.assertFalse(second['isError'], second)
+        self.assertEqual(second['structuredContent']['returned'], 23)
+        self.assertFalse(second['structuredContent']['has_more'])
+        ids = [row['id'] for row in page['stations'] + second['structuredContent']['stations']]
+        self.assertEqual(ids, sorted(set(ids)))
+        self.assertNotIn('description_html', page['stations'][0])
+
     def test_scopes_declared_and_enforced_before_business_call(self):
         read = self.exchange().json()['access_token']
         tools = self.http.post(MCP_PATH, headers={'Authorization': 'Bearer ' + read,
@@ -324,7 +344,7 @@ class OAuthTests(unittest.TestCase):
                 async with streamable_http_client(oauth.RESOURCE, http_client=http) as (read, write, _):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
-                        self.assertEqual(len((await session.list_tools()).tools), 7)
+                        self.assertEqual(len((await session.list_tools()).tools), 8)
                         result = await session.call_tool('station_scan', {'country_code': 'FR'})
                         self.assertFalse(result.isError, result.structuredContent)
                         self.assertTrue(result.structuredContent['stations'])
