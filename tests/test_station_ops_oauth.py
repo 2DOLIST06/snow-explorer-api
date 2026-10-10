@@ -155,6 +155,23 @@ class OAuthTests(unittest.TestCase):
             result = self.http.get(oauth.PREFIX + '/authorize', params=self.params(), follow_redirects=False)
             self.assertEqual(result.status_code, 400)
 
+    def test_authorize_csp_allows_chatgpt_callback_without_widening_other_directives(self):
+        expected_csp = ("default-src 'none'; form-action 'self' https://chatgpt.com; "
+                        "frame-ancestors 'none'; base-uri 'none'")
+        fields, page = self.begin()
+        self.assertEqual(page.headers['Content-Security-Policy'], expected_csp)
+        result = self.http.post(oauth.PREFIX + '/authorize',
+                                data={**fields, 'decision': 'allow'}, follow_redirects=False)
+        self.assertEqual(result.status_code, 302, result.text)
+        self.assertEqual(result.headers['Content-Security-Policy'], expected_csp)
+        callback = urlsplit(result.headers['location'])
+        self.assertEqual((callback.scheme, callback.netloc, callback.path),
+                         ('https', 'chatgpt.com', '/connector_platform_oauth_redirect'))
+        values = parse_qs(callback.query)
+        self.assertTrue(values['code'][0])
+        self.assertEqual(values['state'], ['s & unicode é'])
+        self.assertEqual(values['iss'], [oauth.ORIGIN])
+
     def test_shared_admin_login_and_consent(self):
         self.http.cookies.delete('admin_session')
         fields, page = self.begin(scope=' '.join(oauth.SCOPES))
