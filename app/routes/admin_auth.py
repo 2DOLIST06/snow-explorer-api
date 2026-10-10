@@ -1,11 +1,9 @@
 from flask import Blueprint, current_app, g, jsonify, make_response, request
 
-from app.models.admin_user import AdminUser
 from app.services.admin_auth import (
-    _client_ip, _cookie_settings, _csrf_for_session_token, clear_login_failures,
-    create_admin_session, login_is_limited, logger, normalize_email,
-    password_needs_rehash, record_login_failure, revoke_all_sessions, utcnow,
-    validate_email, verify_password,
+    authenticate_admin_credentials, _client_ip, _cookie_settings, _csrf_for_session_token,
+    create_admin_session, logger, normalize_email, revoke_all_sessions, utcnow,
+    validate_email,
 )
 
 bp_admin_auth = Blueprint("admin_auth", __name__, url_prefix="/api/admin/auth")
@@ -20,27 +18,10 @@ def login():
     password = payload.get("password")
     if not validate_email(email) or not isinstance(password, str) or len(password) > 1024:
         return jsonify({"error": "invalid_request"}), 400
+    user, error, status = authenticate_admin_credentials(email, password)
+    if error:
+        return jsonify({"error": error}), status
     ip = _client_ip()
-    if login_is_limited(ip, email):
-        logger.warning("admin login rate limited ip=%s email=%s", ip, email)
-        return jsonify({"error": "too_many_login_attempts"}), 429
-    user = AdminUser.get_or_none(AdminUser.email == email)
-    if user is None or not verify_password(user.password_hash, password):
-        record_login_failure(ip, email)
-        logger.warning("admin login refused ip=%s email=%s", ip, email)
-        return jsonify({"error": "invalid_credentials"}), 401
-    if not user.is_active:
-        record_login_failure(ip, email)
-        logger.warning("disabled admin login refused user_id=%s ip=%s", user.id, ip)
-        return jsonify({"error": "admin_disabled"}), 403
-    clear_login_failures(ip, email)
-    # Hash upgrades occur only after successful verification.
-    if password_needs_rehash(user.password_hash):
-        from app.services.admin_auth import hash_password
-        user.password_hash = hash_password(password)
-    user.last_login_at = utcnow()
-    user.updated_at = utcnow()
-    user.save()
     _, raw_token, csrf_token = create_admin_session(user)
     response = make_response(jsonify({
         "authenticated": True,

@@ -1589,3 +1589,13 @@ Le connecteur machine et les sept outils MCP sont documentés dans
 [station-ops-mcp.md](station-ops-mcp.md). Ils délèguent aux services ci-dessus,
 sans modifier les contrats admin cookie/CSRF ni les protections APPLY.
 RESEARCH reste une collecte externe.
+
+
+## OAuth MCP Station Ops
+
+La façade `/mcp/station-ops` utilise OAuth 2.1 Authorization Code + PKCE S256,
+CIMD ChatGPT et les identités admin existantes. Le transport des routes admin
+reste cookie + CSRF. Scopes read pour les tools read/dry-run, read + write pour
+apply_commit, sans contourner les protections APPLY ni activer son kill switch.
+Voir [station-ops-mcp.md](station-ops-mcp.md) pour discovery, endpoints,
+migration OAuth explicite et variables. Aucun changement du pipeline métier.

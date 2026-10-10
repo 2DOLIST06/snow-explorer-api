@@ -1,6 +1,5 @@
 """Official MCP Streamable HTTP, isolated Bearer auth, and Flask ASGI coexistence."""
 from contextlib import asynccontextmanager
-import hmac
 import json
 import os
 from functools import partial
@@ -13,6 +12,14 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
+from starlette.middleware.authentication import AuthenticationMiddleware
+from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend, AuthenticatedUser, RequireAuthMiddleware
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.routes import create_protected_resource_routes
+from pydantic import AnyHttpUrl
+
+from app.services import station_ops_oauth as oauth
+from app.routes.station_ops_oauth import metadata
 
 from app.datetime_utils import utcnow
 from app.services.station_ops.candidates import MAX_BODY_BYTES
@@ -46,18 +53,17 @@ class Guard:
             logger.info(json.dumps({'event': 'station_ops_mcp', 'timestamp': utcnow().isoformat(),
                                    'tool': 'transport', 'result': 'refused', 'candidate_count': 0,
                                    'execution_id': None, 'code': code}))
-            headers = {'WWW-Authenticate': 'Bearer'} if status == 401 else None
+            headers = {'WWW-Authenticate': f'Bearer resource_metadata="{oauth.ORIGIN + oauth.RESOURCE_METADATA_PATH}", scope="{oauth.READ}"'} if status == 401 else None
             await JSONResponse({'code': code, 'message': message}, status_code=status, headers=headers)(scope, receive, safe_send)
-        expected = os.environ.get('STATION_OPS_MCP_TOKEN', '')
-        if not expected.strip():
-            return await refuse('station_ops_mcp_unavailable', 503, 'Station Ops MCP is unavailable on this environment.')
         if scope.get('scheme') != 'https' and not self.flask_app.testing:
             return await refuse('https_required', 403, 'Station Ops MCP requires HTTPS.')
         headers = [v for k, v in scope.get('headers', []) if k.lower() == b'authorization']
         if len(headers) != 1:
             return await refuse('unauthorized', 401, 'A valid Bearer token is required.')
         parts = headers[0].split(b' ')
-        if len(parts) != 2 or parts[0].lower() != b'bearer' or not parts[1] or not hmac.compare_digest(parts[1], expected.encode('utf-8')):
+        if len(parts) != 2 or parts[0].lower() != b'bearer' or not parts[1]:
+            return await refuse('unauthorized', 401, 'A valid Bearer token is required.')
+        if not isinstance(scope.get('user'), AuthenticatedUser):
             return await refuse('unauthorized', 401, 'A valid Bearer token is required.')
         if scope.get('query_string'):
             return await refuse('mcp_query_not_allowed', 400, 'MCP credentials and arguments must not be sent in query strings.')
@@ -136,6 +142,39 @@ def create_mcp_application(flask_app):
     async def lifespan(app):
         async with manager.run():
             yield
-    app = Starlette(routes=[Route(MCP_PATH, endpoint=Transport(manager)),
-                           Mount('/', app=WSGIMiddleware(flask_app, workers=2))], lifespan=lifespan)
-    return Guard(app, flask_app)
+    async def authorization_metadata(request):
+        return JSONResponse(metadata(), headers={'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*'})
+    async def protected_resource_metadata(request):
+        # SDK/Pydantic AnyHttpUrl adds '/' to origin issuers. RFC 9207 requires
+        # exact issuer identity, so serialize the configured issuer as a string.
+        return JSONResponse({'resource': oauth.RESOURCE, 'authorization_servers': [oauth.issuer()],
+                             'scopes_supported': oauth.SCOPES, 'bearer_methods_supported': ['header'],
+                             'resource_name': 'Snow Explorer Station Ops'},
+                            headers={'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*'})
+    resource_routes = create_protected_resource_routes(
+        resource_url=AnyHttpUrl(oauth.RESOURCE), authorization_servers=[AnyHttpUrl(oauth.issuer())],
+        scopes_supported=oauth.SCOPES, resource_name='Snow Explorer Station Ops')
+    # Retain the SDK's RFC 9728 path/methods; avoid its issuer normalization.
+    resource_routes = [Route(route.path, endpoint=protected_resource_metadata, methods=route.methods)
+                       for route in resource_routes]
+    app = Starlette(routes=resource_routes + [
+        Route('/.well-known/oauth-authorization-server', endpoint=authorization_metadata),
+        Route(MCP_PATH, endpoint=Transport(manager)),
+        Mount('/', app=WSGIMiddleware(flask_app, workers=2))], lifespan=lifespan)
+    protected = AuthenticationMiddleware(
+        Guard(AuthContextMiddleware(RequireAuthMiddleware(app, [oauth.READ],
+              resource_metadata_url=AnyHttpUrl(oauth.ORIGIN + oauth.RESOURCE_METADATA_PATH))), flask_app),
+        backend=BearerAuthBackend(oauth.StationOpsTokenVerifier(flask_app)))
+    class Dispatch:
+        async def __call__(self, scope, receive, send):
+            is_mcp = scope['type'] == 'http' and (scope['path'] == '/mcp' or scope['path'].startswith('/mcp/'))
+            # Enforce HTTPS and unique credentials before any token database access.
+            if is_mcp and scope.get('scheme') != 'https' and not flask_app.testing:
+                return await JSONResponse({'code': 'https_required'}, status_code=403,
+                                          headers={'Cache-Control': 'no-store'})(scope, receive, send)
+            if is_mcp and len([1 for k, _ in scope.get('headers', []) if k.lower() == b'authorization']) > 1:
+                return await JSONResponse({'code': 'unauthorized'}, status_code=401, headers={
+                    'Cache-Control': 'no-store',
+                    'WWW-Authenticate': f'Bearer resource_metadata="{oauth.ORIGIN + oauth.RESOURCE_METADATA_PATH}"'})(scope, receive, send)
+            return await (protected if is_mcp else app)(scope, receive, send)
+    return Dispatch()
