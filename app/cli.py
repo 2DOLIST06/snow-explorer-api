@@ -23,6 +23,26 @@ def _create_admin(email, password):
 
 
 def register_admin_commands(app):
+    @app.cli.command("meteo-france-map")
+    @click.option("--slug", required=True)
+    @click.option("--station-id", required=True)
+    @with_appcontext
+    def meteo_france_map(slug, station_id):
+        """Validate a DPObs station and persist an operator override."""
+        from app.models.resort import Resort
+        from app.services.meteo_france import MeteoFranceError, MeteoFranceService, STATION_ID
+        if not STATION_ID.fullmatch(station_id):
+            raise click.ClickException("Le poste doit avoir un identifiant de huit chiffres.")
+        try:
+            with db.connection_context():
+                resort = Resort.get_or_none(Resort.slug == slug)
+                if resort is None:
+                    raise click.ClickException("Station Snow Explorer introuvable.")
+                MeteoFranceService().set_manual_mapping(resort, station_id)
+        except MeteoFranceError:
+            raise click.ClickException("Impossible de valider ce poste auprès de Météo-France.") from None
+        click.echo("Mapping Météo-France manuel enregistré.")
+
     @app.cli.command("sync-anmsm-logos")
     @with_appcontext
     def sync_anmsm_logos():
