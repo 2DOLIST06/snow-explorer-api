@@ -16,6 +16,8 @@ from app.models.admin_session import AdminSession
 from app.models.admin_login_attempt import AdminLoginAttempt
 from app.models.ski_pass import SkiPassSeason, SkiPassPeriod, SkiPassProduct, SkiPassPrice
 from app.models.anmsm_station_mapping import AnmsmStationMapping
+from app.models.meteo_france_station_mapping import MeteoFranceStationMapping
+from app.routes.station_weather import bp_station_weather
 from app.models.station_logo_candidate import StationLogoCandidate
 from app.models.station_piste_map_candidate import StationPisteMapCandidate
 from app.models.anmsm_station_snapshot import AnmsmStationSnapshot
@@ -99,6 +101,15 @@ def create_app(config=None):
         TRUST_PROXY_HEADERS=_env_bool("TRUST_PROXY_HEADERS", False),
         INDEXNOW_KEY=os.getenv("INDEXNOW_KEY"),
         REDIS_URL=os.getenv("REDIS_URL"),
+        METEO_FRANCE_API_KEY=os.getenv("METEO_FRANCE_API_KEY"),
+        METEO_FRANCE_CONNECT_TIMEOUT=float(os.getenv("METEO_FRANCE_CONNECT_TIMEOUT", "3.05")),
+        METEO_FRANCE_READ_TIMEOUT=float(os.getenv("METEO_FRANCE_READ_TIMEOUT", "5")),
+        METEO_FRANCE_STATIONS_CACHE_TTL_SECONDS=int(os.getenv("METEO_FRANCE_STATIONS_CACHE_TTL_SECONDS", "86400")),
+        METEO_FRANCE_OBSERVATION_CACHE_TTL_SECONDS=int(os.getenv("METEO_FRANCE_OBSERVATION_CACHE_TTL_SECONDS", "300")),
+        METEO_FRANCE_STALE_CACHE_TTL_SECONDS=int(os.getenv("METEO_FRANCE_STALE_CACHE_TTL_SECONDS", "604800")),
+        METEO_FRANCE_FRESHNESS_THRESHOLD_MINUTES=float(os.getenv("METEO_FRANCE_FRESHNESS_THRESHOLD_MINUTES", "120")),
+        METEO_FRANCE_MAX_CANDIDATES=int(os.getenv("METEO_FRANCE_MAX_CANDIDATES", "5")),
+        METEO_FRANCE_MAX_DISTANCE_KM=float(os.getenv("METEO_FRANCE_MAX_DISTANCE_KM", "75")),
         BREVO_API_KEY=os.getenv("BREVO_API_KEY"),
         BREVO_SENDER_EMAIL=os.getenv("BREVO_SENDER_EMAIL"),
         BREVO_SENDER_NAME=os.getenv("BREVO_SENDER_NAME", "Snow Explorer"),
@@ -192,7 +203,7 @@ def create_app(config=None):
         db.create_tables([Region, Resort, Piste, Lift, ResortMap, StationWidgets, ResortImportHistory,
                           AdminUser, AdminSession, AdminLoginAttempt, SkiPassSeason,
                           SkiPassPeriod, SkiPassProduct, SkiPassPrice,
-                          AnmsmStationMapping, StationLogoCandidate,
+                          AnmsmStationMapping, MeteoFranceStationMapping, StationLogoCandidate,
                           StationPisteMapCandidate, AnmsmStationSnapshot])
         db.create_tables([SkiArea, SkiAreaResort, SkiAreaCatalogImport,
                           SkiAreaCatalogArea, SkiAreaExpectedStation,
@@ -210,6 +221,7 @@ def create_app(config=None):
     # Enregistrement des blueprints
     app.register_blueprint(bp_public)
     app.register_blueprint(bp_public_stations)
+    app.register_blueprint(bp_station_weather)
     app.register_blueprint(bp_admin)
     app.register_blueprint(bp_widgets)  # ⬅️ Enregistrement widgets
     app.register_blueprint(bp_forfaits)
