@@ -18,6 +18,8 @@ from app.models.ski_pass import SkiPassSeason, SkiPassPeriod, SkiPassProduct, Sk
 from app.models.anmsm_station_mapping import AnmsmStationMapping
 from app.models.meteo_france_station_mapping import MeteoFranceStationMapping
 from app.routes.station_weather import bp_station_weather
+from app.models.meteo_france_massif_override import MeteoFranceMassifOverride
+from app.routes.station_avalanche_risk import bp_station_avalanche_risk
 from app.models.station_logo_candidate import StationLogoCandidate
 from app.models.station_piste_map_candidate import StationPisteMapCandidate
 from app.models.anmsm_station_snapshot import AnmsmStationSnapshot
@@ -102,6 +104,13 @@ def create_app(config=None):
         INDEXNOW_KEY=os.getenv("INDEXNOW_KEY"),
         REDIS_URL=os.getenv("REDIS_URL"),
         METEO_FRANCE_API_KEY=os.getenv("METEO_FRANCE_API_KEY"),
+        METEO_FRANCE_BRA_API_KEY=os.getenv("METEO_FRANCE_BRA_API_KEY"),
+        METEO_FRANCE_BRA_CONNECT_TIMEOUT=float(os.getenv("METEO_FRANCE_BRA_CONNECT_TIMEOUT", "3.05")),
+        METEO_FRANCE_BRA_READ_TIMEOUT=float(os.getenv("METEO_FRANCE_BRA_READ_TIMEOUT", "5")),
+        METEO_FRANCE_BRA_MASSIFS_TTL=int(os.getenv("METEO_FRANCE_BRA_MASSIFS_TTL", "86400")),
+        METEO_FRANCE_BRA_XML_TTL=int(os.getenv("METEO_FRANCE_BRA_XML_TTL", "300")),
+        METEO_FRANCE_BRA_ASSETS_TTL=int(os.getenv("METEO_FRANCE_BRA_ASSETS_TTL", "300")),
+        METEO_FRANCE_BRA_MAPPING_TTL=int(os.getenv("METEO_FRANCE_BRA_MAPPING_TTL", "86400")),
         METEO_FRANCE_CONNECT_TIMEOUT=float(os.getenv("METEO_FRANCE_CONNECT_TIMEOUT", "3.05")),
         METEO_FRANCE_READ_TIMEOUT=float(os.getenv("METEO_FRANCE_READ_TIMEOUT", "5")),
         METEO_FRANCE_STATIONS_CACHE_TTL_SECONDS=int(os.getenv("METEO_FRANCE_STATIONS_CACHE_TTL_SECONDS", "86400")),
@@ -203,7 +212,7 @@ def create_app(config=None):
         db.create_tables([Region, Resort, Piste, Lift, ResortMap, StationWidgets, ResortImportHistory,
                           AdminUser, AdminSession, AdminLoginAttempt, SkiPassSeason,
                           SkiPassPeriod, SkiPassProduct, SkiPassPrice,
-                          AnmsmStationMapping, MeteoFranceStationMapping, StationLogoCandidate,
+                          AnmsmStationMapping, MeteoFranceStationMapping, MeteoFranceMassifOverride, StationLogoCandidate,
                           StationPisteMapCandidate, AnmsmStationSnapshot])
         db.create_tables([SkiArea, SkiAreaResort, SkiAreaCatalogImport,
                           SkiAreaCatalogArea, SkiAreaExpectedStation,
@@ -222,6 +231,7 @@ def create_app(config=None):
     app.register_blueprint(bp_public)
     app.register_blueprint(bp_public_stations)
     app.register_blueprint(bp_station_weather)
+    app.register_blueprint(bp_station_avalanche_risk)
     app.register_blueprint(bp_admin)
     app.register_blueprint(bp_widgets)  # ⬅️ Enregistrement widgets
     app.register_blueprint(bp_forfaits)
