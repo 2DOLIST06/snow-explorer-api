@@ -451,7 +451,8 @@ class LegacyReviewTests(unittest.TestCase):
         self.assertEqual(body['results'][0]['operations'][0]['existing'], 45.75)
         self.assertEqual(body['results'][0]['operations'][0]['preconditions']['expected_existing'], 45.75)
         self.assertEqual(body['catalog_findings'], [{'code': 'region_catalog_empty', 'severity': 'info', 'table': 'regions'}])
-        self.assertTrue(any(f.get('field') == 'description_html' for f in body['schema_findings']))
+        self.assertFalse(any(f['table'] == 'regions' and f.get('field') == 'description_html'
+                             for f in body['schema_findings']))
 
 
 class PureReviewTests(unittest.TestCase):

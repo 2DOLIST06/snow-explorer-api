@@ -93,8 +93,12 @@ class PhysicalSchema:
         for name in extra_fields:
             if name in actual and name not in model._meta.columns:
                 fields.append(Column(model._meta.table, name).alias(name))
-        contents = [(name, model._meta.fields[name]) for name in content_fields if self.has(model, name)]
-        contents.extend((name, Column(model._meta.table, name)) for name in extra_content_fields if name in actual)
+        # Audit summaries describe physical columns, including mapped model fields.
+        contents = [(model._meta.fields[name].column_name, model._meta.fields[name])
+                    for name in content_fields if self.has(model, name)]
+        projected_content = {name for name, _field in contents}
+        contents.extend((name, Column(model._meta.table, name)) for name in extra_content_fields
+                        if name in actual and name not in projected_content)
         for name, field in contents:
             # Do not inherit TextField conversion for numeric LENGTH results.
             fields.extend((fn.LENGTH(field).coerce(False).alias(name + "__length"),

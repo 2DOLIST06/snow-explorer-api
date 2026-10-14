@@ -16,7 +16,13 @@ class RegionRoutesTests(unittest.TestCase):
         self.database = SqliteDatabase(":memory:")
         self.database.bind([Region, Resort])
         self.database.connect()
-        self.database.create_tables([Region, Resort])
+        # Reproduce the production schema independently of Peewee's model.
+        self.database.execute_sql('''CREATE TABLE regions (
+            id VARCHAR PRIMARY KEY, name VARCHAR NOT NULL,
+            country_code VARCHAR NOT NULL DEFAULT 'FR', seo_text TEXT,
+            meta_title TEXT, meta_description TEXT, updated_at TIMESTAMP
+        )''')
+        self.database.create_tables([Resort])
         app = Flask(__name__)
         app.register_blueprint(bp_regions)
         app.register_blueprint(bp_departments)
@@ -45,6 +51,61 @@ class RegionRoutesTests(unittest.TestCase):
 
     def test_unknown_region_returns_404(self):
         self.assertEqual(self.client.get("/api/regions/inconnue").status_code, 404)
+
+    def test_admin_list_opens_existing_fiches_without_changing_data(self):
+        Region.create(id="italie", name="Italie", country_code="IT")
+        before = self.database.execute_sql("SELECT * FROM regions ORDER BY id").fetchall()
+        listing = self.client.get("/api/admin/regions")
+        self.assertEqual(listing.status_code, 200)
+        regions = listing.get_json()
+        self.assertEqual([region["name"] for region in regions],
+                         sorted(region["name"] for region in regions))
+        self.assertEqual(len(regions), 3)
+        self.assertEqual(self.client.get("/api/admin/regions/").get_json(), regions)
+        for region in regions:
+            response = self.client.get(f'/api/admin/regions/{region["slug"]}')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json()["region"], region)
+        self.assertEqual(before, self.database.execute_sql("SELECT * FROM regions ORDER BY id").fetchall())
+        self.assertEqual(len(self.client.get("/api/regions").get_json()), 2)
+
+    def test_legacy_seo_text_is_read_and_saved_with_existing_json_contract(self):
+        slug = "auvergne-rhone-alpes"
+        original = "<p>Contenu existant</p>"
+        self.database.execute_sql("UPDATE regions SET seo_text=? WHERE id=?", (original, slug))
+        self.assertEqual(self.client.get(f"/api/admin/regions/{slug}").get_json()["region"]["description_html"], original)
+        self.assertEqual(self.client.get(f"/api/regions/{slug}").get_json()["description_html"], original)
+        # Updating a separate field must preserve the historical content.
+        response = self.client.patch(f"/api/admin/regions/{slug}", json={"meta_title": "Titre"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["region"]["description_html"], original)
+        response = self.client.patch(f"/api/admin/regions/{slug}", json={"description_html": "<p>Nouveau</p><script>x</script>"})
+        self.assertEqual(response.status_code, 200)
+        stored = self.database.execute_sql("SELECT seo_text FROM regions WHERE id=?", (slug,)).fetchone()[0]
+        self.assertEqual(stored, "<p>Nouveau</p>")
+        self.assertEqual(self.client.get(f"/api/regions/{slug}").get_json()["description_html"], stored)
+        self.assertEqual(Region.select().count(), 2)
+
+    def test_admin_can_open_and_save_historical_paca_from_list(self):
+        Region.delete().where(Region.id == "provence-alpes-cote-d-azur").execute()
+        Region.create(id="provence-alpes-cote-dazur", name="PACA", description_html="<p>Historique</p>")
+        listed = next(region for region in self.client.get("/api/admin/regions").get_json()
+                      if region["name"] == "PACA")
+        url = f'/api/admin/regions/{listed["slug"]}'
+        self.assertEqual(self.client.get(url).get_json()["region"], listed)
+        response = self.client.patch(url, json={"meta_title": "Titre PACA"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Region.get_by_id("provence-alpes-cote-dazur").meta_title, "Titre PACA")
+
+    def test_admin_prefers_canonical_paca_row_if_both_exist(self):
+        Region.create(id="provence-alpes-cote-dazur", name="Ancienne PACA")
+        listing = self.client.get("/api/admin/regions").get_json()
+        self.assertEqual(len(listing), 2)
+        for region in listing:
+            self.assertEqual(self.client.get(f'/api/admin/regions/{region["slug"]}').get_json()["region"], region)
+        response = self.client.get("/api/admin/regions/provence-alpes-cote-dazur")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["region"]["name"], "Provence Alpes Côte d'azur")
 
     def test_list_uses_database_region_identifiers(self):
         response = self.client.get("/api/regions")
@@ -86,7 +147,8 @@ class RegionRoutesTests(unittest.TestCase):
         self.assertEqual(body["id"], "provence-alpes-cote-d-azur")
         self.assertEqual(
             [station["slug"] for station in body["stations"]],
-            ["auron", "legacy-paca"],
+            # The public route orders stations by name (Ancienne before Auron).
+            ["legacy-paca", "auron"],
         )
 
     def test_region_list_canonicalizes_and_deduplicates_historical_paca_id(self):
