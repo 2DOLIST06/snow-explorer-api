@@ -70,7 +70,7 @@ class ValidationProblem(Exception):
 
 
 class _Cleaner(HTMLParser):
-    allowed = {"p", "br", "strong", "em", "ul", "ol", "li", "a", "h2", "h3", "blockquote"}
+    allowed = {"p", "br", "strong", "em", "ul", "ol", "li", "a", "h1", "h2", "h3", "blockquote"}
     blocked = {"script", "style", "iframe", "object", "embed"}
     def __init__(self):
         super().__init__(convert_charrefs=True); self.parts = []; self.skip = 0

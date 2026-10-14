@@ -203,6 +203,15 @@ class RegionRoutesTests(unittest.TestCase):
             region,
         )
 
+    def test_editor_preserves_heading_tags_in_saved_description_html(self):
+        url = "/api/admin/regions/auvergne-rhone-alpes"
+        html = "<h1>Titre</h1><h2>Section</h2><h3>Sous-section</h3>"
+        response = self.client.patch(url, json={"description_html": html})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["region"]["description_html"], html)
+        self.assertEqual(Region.get_by_id("auvergne-rhone-alpes").description_html, html)
+        self.assertEqual(self.client.get(url).get_json()["region"]["description_html"], html)
+
     def test_editor_rejects_unknown_fields(self):
         response = self.client.patch(
             "/api/admin/regions/auvergne-rhone-alpes", json={"name": "Non"}
