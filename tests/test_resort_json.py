@@ -199,6 +199,17 @@ class ResortJsonValidationTests(unittest.TestCase):
     def test_html_sanitization(self):
         clean = sanitize_html('<p onclick="x">Sûr<script>alert(1)</script><a href="javascript:x">lien</a></p>')
         self.assertEqual(clean, "<p>Sûr<a>lien</a></p>")
+
+    def test_html_sanitization_preserves_heading_tags(self):
+        html = "<h1>Titre</h1><h2>Section</h2><h3>Sous-section</h3>"
+        self.assertEqual(sanitize_html(html), html)
+
+    def test_html_sanitization_removes_unsafe_heading_content(self):
+        html = ('<h1 onclick="alert(1)">Titre<script>alert(1)</script></h1>'
+                '<h2 style="color:red">Section</h2><h3 id="suite">Sous-section</h3>')
+        self.assertEqual(sanitize_html(html),
+                         "<h1>Titre</h1><h2>Section</h2><h3>Sous-section</h3>")
+
     def test_bulk_limit(self):
         self.app.config["RESORT_IMPORT_MAX_STATIONS"] = 1
         self.assertInvalid({"schema_version": SCHEMA_VERSION, "stations": [self.document()["station"], self.document()["station"]]})
