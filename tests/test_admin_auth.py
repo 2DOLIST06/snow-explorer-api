@@ -212,11 +212,16 @@ class AdminAuthenticationTests(unittest.TestCase):
             url = f'/api/admin/regions/{region["slug"]}'
             self.assertEqual(self.client.get(url).get_json()["region"], region)
             self.assertEqual(self.client.patch(url, json={"meta_title": "Refusé"}).status_code, 403)
+            self.assertEqual(self.client.patch(url, json={"seo_text": "Refusé"}).status_code, 403)
             self.assertIsNone(Region.get_by_id("alpes").meta_title)
             saved = self.client.patch(url, json={"meta_title": "Titre"}, headers={"X-CSRF-Token": csrf})
             self.assertEqual(saved.status_code, 200)
             self.assertEqual(saved.get_json()["region"]["description_html"], "<p>Existant</p>")
             self.assertEqual(self.client.get(url).get_json()["region"], saved.get_json()["region"])
+            saved = self.client.patch(url, json={"seo_text": "<h2>Contenu</h2><p>Texte</p>"},
+                                      headers={"X-CSRF-Token": csrf})
+            self.assertEqual(saved.status_code, 200)
+            self.assertEqual(saved.get_json()["region"]["seo_text"], "<h2>Contenu</h2><p>Texte</p>")
 
     def test_password_is_not_logged(self):
         password = "never log this password"
