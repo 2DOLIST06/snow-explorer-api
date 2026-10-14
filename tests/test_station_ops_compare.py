@@ -356,8 +356,8 @@ class LegacyCompareTests(unittest.TestCase):
         self.assertEqual(body["results"][0]["status"], "unchanged")
         self.assertEqual(body["catalog_findings"], [{"code": "region_catalog_empty", "severity": "info", "table": "regions"}])
         codes = {(f["table"], f.get("field"), f["code"]) for f in body["schema_findings"]}
-        self.assertIn(("regions", "description_html", "model_column_missing_in_database"), codes)
-        self.assertIn(("regions", "seo_text", "database_column_not_in_model"), codes)
+        self.assertNotIn(("regions", "description_html", "model_column_missing_in_database"), codes)
+        self.assertNotIn(("regions", "seo_text", "database_column_not_in_model"), codes)
         self.assertIn(("resort", "ski_area_km", "model_column_type_mismatch"), codes)
         region_reads = [call.args[0] for call in sql.call_args_list if call.args[0].startswith("SELECT") and '"regions"' in call.args[0]]
         self.assertTrue(all("description_html" not in query and "seo_text" not in query for query in region_reads))

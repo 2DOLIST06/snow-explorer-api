@@ -36,6 +36,10 @@ stations déjà enregistrées.
 
 ## Éditeur d'administration
 
+`GET /api/admin/regions` (avec ou sans slash final) renvoie un tableau des
+régions existantes, triées par nom puis identifiant, avec les mêmes champs
+éditoriaux que les fiches.
+
 L'éditeur charge le contenu avec `GET /api/admin/regions/:slug`, puis
 l'enregistre avec `PATCH /api/admin/regions/:slug`. Comme toutes les routes
 `/api/admin/*`, ces routes utilisent la session administrateur et la protection
@@ -49,3 +53,7 @@ Le `PATCH` accepte uniquement les propriétés facultatives suivantes :
 
 Le HTML est nettoyé côté serveur avec la même liste blanche que le contenu des
 stations. Envoyer `null` permet d'effacer une propriété.
+
+Le champ JSON `description_html` est lu et enregistré dans la colonne historique
+`regions.seo_text`. Ce correctif ne nécessite aucune migration, création de
+colonne ou copie de données.

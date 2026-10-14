@@ -126,8 +126,10 @@ Les colonnes physiques absentes des modèles sont signalées par
 automatiquement : cela évite de modifier le contrat des stations ou de diffuser
 des colonnes inconnues. Pour les régions legacy, les colonnes vérifiées `slug`
 et `created_at` sont exposées sous leur vrai nom, et `seo_text` est résumé sous
-`region.content.seo_text` (présence, longueur, MD5). Aucun mapping n'affirme que
-`seo_text` équivaut à `description_html`. Si les deux existent, ils sont distincts.
+`region.content.seo_text` (présence, longueur, MD5). Le modèle Region utilise
+désormais `seo_text` pour le champ API `description_html` ; SCAN conserve le
+nom physique `seo_text` dans ses résumés. Une colonne physique `description_html`
+distincte, si elle existe, reste indépendante.
 
 Une colonne d'identité ou de relation indispensable, une table indisponible, ou
 la colonne d'un filtre demandé absente empêche une lecture sans ambiguïté.
@@ -670,8 +672,8 @@ qu'un inventaire a été réalisé.
 Un inventaire physique partagé des douze tables conserve `schema_findings`,
 les colonnes supplémentaires et le type réel fractionnaire de ski_area_km. La
 table regions vide produit `catalog_findings` exactement comme SCAN. Region
-n'est lu que pour sa présence : pas de sélection de description_html absent,
-pas de mapping de seo_text vers un champ modèle. Si son ID est indisponible,
+n'est lu que pour sa présence : aucune sélection du contenu éditorial,
+y compris `seo_text`. Si son ID est indisponible,
 `region_catalog_unavailable` indique la limitation globale.
 
 Un champ candidat physiquement absent impose une revue

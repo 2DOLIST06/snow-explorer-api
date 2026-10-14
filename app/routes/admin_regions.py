@@ -5,6 +5,7 @@ from app.models.region import Region
 from app.services.resort_json import sanitize_html
 from app.datetime_utils import utcnow
 from app.services.public_cache import invalidate_region
+from app.services.region_ids import canonical_region_id, region_id_variants
 
 
 bp_admin_regions = Blueprint(
@@ -14,7 +15,23 @@ EDITABLE_FIELDS = {"description_html", "meta_title", "meta_description"}
 
 
 def _find_region(slug):
-    return Region.get_or_none(fn.LOWER(Region.id) == slug.strip().lower())
+    requested_id = canonical_region_id(slug)
+    stored_id = fn.LOWER(fn.TRIM(Region.id))
+    region = Region.get_or_none(stored_id == requested_id)
+    if region is None:
+        region = Region.get_or_none(stored_id.in_(region_id_variants(requested_id)))
+    return region
+
+
+@bp_admin_regions.get("", strict_slashes=False)
+def list_regions_admin():
+    regions = Region.select().order_by(Region.name.asc(), Region.id.asc())
+    payload = {}
+    for region in regions:
+        public_id = canonical_region_id(region.id)
+        if public_id not in payload or region.id.strip().lower() == public_id:
+            payload[public_id] = region.to_dict()
+    return jsonify(sorted(payload.values(), key=lambda item: (item["name"], item["id"]))), 200
 
 
 @bp_admin_regions.get("/<slug>")

@@ -418,7 +418,7 @@ class PureStationOpsTests(unittest.TestCase):
         sql.assert_called_once()
         self.assertTrue(sql.call_args.args[0].startswith("WITH scanned_tables"))
         self.assertEqual(sql.call_args.args[1], ["regions", '"regions"'])
-        self.assertFalse(schema.has(Region, "description_html"))
+        self.assertTrue(schema.has(Region, "description_html"))
         self.assertTrue(any(item.get("timestamp_convention") == "legacy_naive_assumed_utc"
                             for item in schema.findings))
         query, _params = schema.projection(Region, ("description_html",),
@@ -451,9 +451,8 @@ class LegacyRegionStationOpsTests(unittest.TestCase):
         self.assertEqual(body["summary"]["stations_with_warnings"], 0)
         self.assertEqual(body["catalog_findings"], [
             {"code": "region_catalog_empty", "severity": "info", "table": "regions"}])
-        self.assertIn({"table": "regions", "field": "description_html", "column": "description_html",
-                       "code": "model_column_missing_in_database", "severity": "warning"},
-                      body["schema_findings"])
+        self.assertFalse(any(item["table"] == "regions" and item.get("field") == "description_html"
+                             for item in body["schema_findings"]))
 
     def test_legacy_regions_snapshot_preserves_physical_data_and_never_writes(self):
         legacy_text = "<p>Contenu SEO legacy réel de fixture</p>"
@@ -480,9 +479,8 @@ class LegacyRegionStationOpsTests(unittest.TestCase):
         self.assertTrue(region["content"]["seo_text"]["present"])
         self.assertEqual(region["content"]["seo_text"]["length"], len(legacy_text))
         self.assertEqual(region["content"]["seo_text"]["md5"], hashlib.md5(legacy_text.encode()).hexdigest())
-        self.assertIn({"table": "regions", "field": "description_html", "column": "description_html",
-                       "code": "model_column_missing_in_database", "severity": "warning"},
-                      result["schema_findings"])
+        self.assertFalse(any(item["table"] == "regions" and item.get("field") == "description_html"
+                             for item in result["schema_findings"]))
         selects = [statement for statement in statements if statement.startswith("SELECT") and '"regions"' in statement]
         self.assertTrue(selects)
         self.assertTrue(all('"description_html"' not in statement for statement in selects))

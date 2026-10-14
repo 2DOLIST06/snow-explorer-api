@@ -12,6 +12,7 @@ from app.models.admin_login_attempt import AdminLoginAttempt
 from app.models.admin_session import AdminSession
 from app.models.admin_user import AdminUser
 from app.routes.admin_auth import bp_admin_auth
+from app.models.region import Region
 from app.datetime_utils import ensure_utc, utcnow
 from app.services.admin_auth import hash_password, protect_admin_routes, revoke_all_sessions
 
@@ -187,6 +188,35 @@ class AdminAuthenticationTests(unittest.TestCase):
         for _ in range(5):
             self.assertEqual(self.login(password="incorrect password value").status_code, 401)
         self.assertEqual(self.login(password="incorrect password value").status_code, 429)
+
+    def test_region_routes_use_existing_session_and_csrf_protection(self):
+        self.app = create_app({
+            **self.app.config, "SKIP_DATABASE_INIT": True,
+            "PUBLIC_CACHE_ENABLED": False,
+        })
+        self.client = self.app.test_client()
+        # Isolate PostgreSQL connection hooks; all models use the SQLite fixture.
+        database_hooks = patch("app.db")
+        database_hooks.start()
+        self.addCleanup(database_hooks.stop)
+        with self.database.bind_ctx([Region]):
+            self.database.create_tables([Region])
+            Region.create(id="alpes", name="Alpes", description_html="<p>Existant</p>")
+            for url in ("/api/admin/regions", "/api/admin/regions/", "/api/admin/regions/alpes"):
+                self.assertEqual(self.client.get(url).status_code, 401)
+            self.assertEqual(self.client.patch("/api/admin/regions/alpes", json={}).status_code, 401)
+            csrf = self.login().get_json()["csrf_token"]
+            listing = self.client.get("/api/admin/regions")
+            self.assertEqual(listing.status_code, 200)
+            region = listing.get_json()[0]
+            url = f'/api/admin/regions/{region["slug"]}'
+            self.assertEqual(self.client.get(url).get_json()["region"], region)
+            self.assertEqual(self.client.patch(url, json={"meta_title": "Refusé"}).status_code, 403)
+            self.assertIsNone(Region.get_by_id("alpes").meta_title)
+            saved = self.client.patch(url, json={"meta_title": "Titre"}, headers={"X-CSRF-Token": csrf})
+            self.assertEqual(saved.status_code, 200)
+            self.assertEqual(saved.get_json()["region"]["description_html"], "<p>Existant</p>")
+            self.assertEqual(self.client.get(url).get_json()["region"], saved.get_json()["region"])
 
     def test_password_is_not_logged(self):
         password = "never log this password"

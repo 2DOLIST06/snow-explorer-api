@@ -7,7 +7,8 @@ class Region(BaseModel):
     id = CharField(primary_key=True)     # ex: "auvergne-rhone-alpes"
     name = CharField()
     country_code = CharField(max_length=2, default="FR")
-    description_html = TextField(null=True)
+    # Keep the API field name while using the existing production column.
+    description_html = TextField(null=True, column_name="seo_text")
     meta_title = TextField(null=True)
     meta_description = TextField(null=True)
     updated_at = UTCDateTimeField(default=utcnow)
