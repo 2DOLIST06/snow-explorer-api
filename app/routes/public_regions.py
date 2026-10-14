@@ -21,12 +21,9 @@ def list_regions():
         public_id = canonical_region_id(region.id)
         # Prefer the canonical row if a transition left both rows in the table.
         if public_id not in payload or region.id.strip().lower() == public_id:
-            payload[public_id] = {
-                "id": public_id,
-                "name": region.name,
-                "country_code": region.country_code,
-                "updated_at": region.updated_at.isoformat() if region.updated_at else None,
-            }
+            # Explicit canonical slug prevents frontend matching by a shared name.
+            # Include editorial fields for the existing region-page list consumer.
+            payload[public_id] = region.to_dict()
     return jsonify(sorted(payload.values(), key=lambda item: (item["name"], item["id"]))), 200
 
 

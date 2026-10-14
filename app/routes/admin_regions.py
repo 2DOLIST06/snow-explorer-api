@@ -11,7 +11,14 @@ from app.services.region_ids import canonical_region_id, region_id_variants
 bp_admin_regions = Blueprint(
     "admin_regions", __name__, url_prefix="/api/admin/regions"
 )
-EDITABLE_FIELDS = {"description_html", "meta_title", "meta_description"}
+EDITABLE_FIELDS = {"description_html", "seo_text", "meta_title", "meta_description"}
+
+
+def _admin_region_dict(region):
+    payload = region.to_dict()
+    # The existing administration reads/saves seo_text; both names share one value.
+    payload["seo_text"] = payload["description_html"]
+    return payload
 
 
 def _find_region(slug):
@@ -30,7 +37,7 @@ def list_regions_admin():
     for region in regions:
         public_id = canonical_region_id(region.id)
         if public_id not in payload or region.id.strip().lower() == public_id:
-            payload[public_id] = region.to_dict()
+            payload[public_id] = _admin_region_dict(region)
     return jsonify(sorted(payload.values(), key=lambda item: (item["name"], item["id"]))), 200
 
 
@@ -39,7 +46,7 @@ def get_region_admin(slug):
     region = _find_region(slug)
     if region is None:
         return jsonify({"error": "region_not_found"}), 404
-    return jsonify({"region": region.to_dict()}), 200
+    return jsonify({"region": _admin_region_dict(region)}), 200
 
 
 @bp_admin_regions.patch("/<slug>")
@@ -55,6 +62,12 @@ def patch_region_admin(slug):
     if unknown:
         return jsonify({"error": "unknown_fields", "fields": sorted(unknown)}), 400
 
+    if "seo_text" in payload:
+        if "description_html" in payload and payload["seo_text"] != payload["description_html"]:
+            return jsonify({"error": "conflicting_content_fields"}), 400
+        payload = dict(payload)
+        payload["description_html"] = payload.pop("seo_text")
+
     for field, value in payload.items():
         if value is not None and not isinstance(value, str):
             return jsonify({"error": f"{field}_must_be_a_string"}), 400
@@ -65,4 +78,4 @@ def patch_region_admin(slug):
         region.updated_at = utcnow()
         region.save()
         invalidate_region(region.id)
-    return jsonify({"ok": True, "region": region.to_dict()}), 200
+    return jsonify({"ok": True, "region": _admin_region_dict(region)}), 200
