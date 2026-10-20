@@ -1,0 +1,16 @@
+BEGIN;
+CREATE TABLE IF NOT EXISTS station_activities (
+ station_id VARCHAR PRIMARY KEY REFERENCES resort(id) ON DELETE CASCADE,
+ revision INTEGER NOT NULL DEFAULT 1, block_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS activity_templates (
+ id VARCHAR PRIMARY KEY, name VARCHAR(200) NOT NULL, revision INTEGER NOT NULL DEFAULT 1, block_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS activity_batches (
+ id VARCHAR PRIMARY KEY, owner_id INTEGER NOT NULL, plan_json TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS activity_batch_results (
+ id SERIAL PRIMARY KEY, batch_id VARCHAR NOT NULL REFERENCES activity_batches(id) ON DELETE CASCADE,
+ station_id VARCHAR NOT NULL, status VARCHAR NOT NULL, message TEXT NOT NULL DEFAULT '', UNIQUE(batch_id, station_id)
+);
+COMMIT;
