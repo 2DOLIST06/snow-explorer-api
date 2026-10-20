@@ -59,6 +59,8 @@ from app.routes.ski_areas import (bp_admin_ski_areas, bp_public_ski_areas,
                                   bp_station_ski_areas)
 from app.routes.admin_ski_area_catalog import bp_admin_ski_area_catalog
 from app.routes.admin_station_ops import bp_admin_station_ops
+from app.models.activities import StationActivities, ActivityTemplate, ActivityBatch, ActivityBatchResult
+from app.routes.activities import bp_activities
 from app.cli import register_admin_commands
 
 
@@ -214,6 +216,7 @@ def create_app(config=None):
                           SkiPassPeriod, SkiPassProduct, SkiPassPrice,
                           AnmsmStationMapping, MeteoFranceStationMapping, MeteoFranceMassifOverride, StationLogoCandidate,
                           StationPisteMapCandidate, AnmsmStationSnapshot])
+        db.create_tables([StationActivities, ActivityTemplate, ActivityBatch, ActivityBatchResult])
         db.create_tables([SkiArea, SkiAreaResort, SkiAreaCatalogImport,
                           SkiAreaCatalogArea, SkiAreaExpectedStation,
                           SkiAreaExpectedMembership, SkiAreaCatalogNotice])
@@ -228,6 +231,7 @@ def create_app(config=None):
         db.close_idle()
 
     # Enregistrement des blueprints
+    app.register_blueprint(bp_activities)
     app.register_blueprint(bp_public)
     app.register_blueprint(bp_public_stations)
     app.register_blueprint(bp_station_weather)
