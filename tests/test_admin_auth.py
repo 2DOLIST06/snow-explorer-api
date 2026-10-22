@@ -8,6 +8,7 @@ from flask import Flask, jsonify
 from peewee import SqliteDatabase
 
 from app import create_app
+from app.models.admin_login_link import AdminLoginLink
 from app.models.admin_login_attempt import AdminLoginAttempt
 from app.models.admin_session import AdminSession
 from app.models.admin_user import AdminUser
@@ -16,7 +17,7 @@ from app.models.region import Region
 from app.datetime_utils import ensure_utc, utcnow
 from app.services.admin_auth import hash_password, protect_admin_routes, revoke_all_sessions
 
-MODELS = [AdminUser, AdminSession, AdminLoginAttempt]
+MODELS = [AdminUser, AdminSession, AdminLoginAttempt, AdminLoginLink]
 
 
 class AdminAuthenticationTests(unittest.TestCase):
@@ -37,6 +38,9 @@ class AdminAuthenticationTests(unittest.TestCase):
             ADMIN_LOGIN_RATE_LIMIT=5,
             ADMIN_LOGIN_RATE_WINDOW_SECONDS=900,
             TRUST_PROXY_HEADERS=False,
+            ADMIN_ALLOWED_ORIGINS=["https://www.snow-explorer.com"],
+            FRONTEND_URL="https://www.snow-explorer.com",
+            BREVO_API_KEY="test-key", BREVO_SENDER_EMAIL="hello@snow-explorer.com", BREVO_SENDER_NAME="Snow Explorer",
         )
         protect_admin_routes(app)
         app.register_blueprint(bp_admin_auth)
@@ -222,6 +226,76 @@ class AdminAuthenticationTests(unittest.TestCase):
                                       headers={"X-CSRF-Token": csrf})
             self.assertEqual(saved.status_code, 200)
             self.assertEqual(saved.get_json()["region"]["seo_text"], "<h2>Contenu</h2><p>Texte</p>")
+
+    def request_link(self, email="admin@example.com"):
+        return self.client.post("/api/admin/auth/login-link", json={"email": email}, headers={"Origin": "https://www.snow-explorer.com"})
+
+    def consume_link(self, token):
+        return self.client.post("/api/admin/auth/login-link/consume", json={"token": token}, headers={"Origin": "https://www.snow-explorer.com"})
+
+    @patch("app.services.admin_recovery.requests.post")
+    def test_recovery_single_use_expiration_and_cookie(self, sender):
+        self.assertEqual(self.request_link(" ADMIN@example.com ").status_code, 200)
+        token = sender.call_args.kwargs["json"]["textContent"].split("#", 1)[1].split()[0]
+        self.assertEqual(len(token), 64)
+        self.assertNotEqual(AdminLoginLink.get().token_hash, token)
+        self.assertEqual(self.request_link().status_code, 429)
+        self.assertEqual(sender.call_count, 1)
+        self.assertEqual(self.client.get("/api/admin/auth/login-link/consume").status_code, 401)
+        AdminLoginLink.update(expires_at=utcnow() - timedelta(seconds=1)).execute()
+        self.assertEqual(self.consume_link(token).status_code, 401)
+        AdminLoginLink.update(expires_at=utcnow() + timedelta(minutes=1)).execute()
+        consumed = self.consume_link(token)
+        self.assertEqual(consumed.status_code, 200)
+        self.assertIn("HttpOnly", consumed.headers["Set-Cookie"])
+        self.assertIn("Secure", consumed.headers["Set-Cookie"])
+        self.assertNotIn("token", consumed.get_json())
+        self.assertEqual(self.client.get("/api/admin/probe").status_code, 200)
+        self.assertEqual(self.consume_link(token).status_code, 401)
+
+    @patch("app.services.admin_recovery.requests.post")
+    def test_recovery_unknown_disabled_origin_and_delivery_errors(self, sender):
+        import requests
+        self.assertEqual(self.request_link("missing@example.com").get_json()["error"], "account_not_found")
+        self.assertEqual(sender.call_count, 0)
+        self.assertEqual(self.client.post("/api/admin/auth/login-link", json={"email": self.user.email}, headers={"Origin": "https://evil.example"}).status_code, 403)
+        sender.side_effect = requests.RequestException("provider failure")
+        self.assertEqual(self.request_link().status_code, 503)
+        self.assertIsNone(AdminLoginLink.get().token_hash)
+        self.assertIsNone(AdminLoginLink.get().requested_at)
+        self.app.config["FRONTEND_URL"] = None
+        self.assertEqual(self.request_link().status_code, 503)
+        self.assertEqual(sender.call_count, 1)
+        self.user.is_active = False
+        self.user.save()
+        self.assertEqual(self.request_link().status_code, 403)
+        self.assertEqual(AdminSession.select().count(), 0)
+
+    @patch("app.services.admin_recovery.requests.post")
+    def test_password_rotation_revokes_sessions_and_links(self, sender):
+        csrf = self.login().get_json()["csrf_token"]
+        other = self.app.test_client()
+        other.post("/api/admin/auth/login", json={"email": self.user.email, "password": "correct horse battery"})
+        self.request_link()
+        token = sender.call_args.kwargs["json"]["textContent"].split("#", 1)[1].split()[0]
+        endpoint = "/api/admin/auth/password"
+        self.assertEqual(self.client.post(endpoint, json={"password": "a new secure password"}).status_code, 403)
+        self.assertEqual(self.client.post(endpoint, json={"password": "short"}, headers={"X-CSRF-Token": csrf}).status_code, 400)
+        changed = self.client.post(endpoint, json={"password": "a new secure password"}, headers={"X-CSRF-Token": csrf})
+        self.assertEqual(changed.status_code, 200)
+        self.assertNotEqual(changed.get_json()["csrf_token"], csrf)
+        self.assertEqual(other.get("/api/admin/probe").status_code, 401)
+        self.assertEqual(self.client.get("/api/admin/probe").status_code, 200)
+        self.assertEqual(AdminLoginLink.select().count(), 0)
+        self.assertEqual(self.consume_link(token).status_code, 401)
+        self.assertEqual(self.login().status_code, 401)
+        self.assertEqual(self.login(password="a new secure password").status_code, 200)
+
+    def test_recovery_rate_limit_and_password_authentication(self):
+        self.assertEqual(self.client.post("/api/admin/auth/password", json={"password": "a new secure password"}).status_code, 401)
+        for _ in range(5):
+            self.assertEqual(self.request_link("missing@example.com").status_code, 404)
+        self.assertEqual(self.request_link("missing@example.com").status_code, 429)
 
     def test_password_is_not_logged(self):
         password = "never log this password"

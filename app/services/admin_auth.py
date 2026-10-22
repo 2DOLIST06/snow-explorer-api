@@ -16,6 +16,7 @@ from app.datetime_utils import ensure_utc, utcnow
 from app.models.admin_login_attempt import AdminLoginAttempt
 from app.models.admin_session import AdminSession
 from app.models.admin_user import AdminUser
+from app.models.admin_login_link import AdminLoginLink
 
 logger = logging.getLogger("security.admin")
 _password_hasher = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4, hash_len=32, salt_len=16, type=Type.ID)
@@ -134,6 +135,7 @@ def change_admin_password(user, new_password):
         user.password_changed_at = now
         user.updated_at = now
         user.save(only=[AdminUser.password_hash, AdminUser.password_changed_at, AdminUser.updated_at])
+        AdminLoginLink.delete().where(AdminLoginLink.admin_user == user.id).execute()
         return revoke_all_sessions(user.id)
 
 
@@ -198,7 +200,7 @@ def protect_admin_routes(app, *, read_only_endpoints=()):
     def require_admin_authentication():
         if not (request.path == "/api/admin" or request.path.startswith("/api/admin/")):
             return None
-        if request.method == "OPTIONS" or (request.path == "/api/admin/auth/login" and request.method == "POST"):
+        if request.method == "OPTIONS" or (request.path in {"/api/admin/auth/login", "/api/admin/auth/login-link", "/api/admin/auth/login-link/consume"} and request.method == "POST"):
             return None
         # Unsupported methods have no request.endpoint. Exact read-only paths
         # must still avoid touching the session before Flask returns its 405.

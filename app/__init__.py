@@ -12,6 +12,7 @@ from app.models.resort_map import ResortMap
 from app.models.station_widgets import StationWidgets   
 from app.models.resort_import_history import ResortImportHistory
 from app.models.admin_user import AdminUser
+from app.models.admin_login_link import AdminLoginLink
 from app.models.admin_session import AdminSession
 from app.models.admin_login_attempt import AdminLoginAttempt
 from app.models.ski_pass import SkiPassSeason, SkiPassPeriod, SkiPassProduct, SkiPassPrice
@@ -212,7 +213,7 @@ def create_app(config=None):
     if not app.config.get("SKIP_DATABASE_INIT"):
         db.connect(reuse_if_open=True)
         db.create_tables([Region, Resort, Piste, Lift, ResortMap, StationWidgets, ResortImportHistory,
-                          AdminUser, AdminSession, AdminLoginAttempt, SkiPassSeason,
+                          AdminUser, AdminSession, AdminLoginAttempt, AdminLoginLink, SkiPassSeason,
                           SkiPassPeriod, SkiPassProduct, SkiPassPrice,
                           AnmsmStationMapping, MeteoFranceStationMapping, MeteoFranceMassifOverride, StationLogoCandidate,
                           StationPisteMapCandidate, AnmsmStationSnapshot])
