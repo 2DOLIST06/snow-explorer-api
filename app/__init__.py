@@ -11,6 +11,8 @@ from app.models.lift import Lift
 from app.models.resort_map import ResortMap
 from app.models.station_widgets import StationWidgets   
 from app.models.resort_import_history import ResortImportHistory
+from app.models.member import MemberUser, MemberSession, MemberLoginLink, MemberLoginAttempt
+from app.routes.member import bp_member
 from app.models.admin_user import AdminUser
 from app.models.admin_login_link import AdminLoginLink
 from app.models.admin_session import AdminSession
@@ -202,6 +204,11 @@ def create_app(config=None):
             "allow_headers": ["Content-Type", "X-CSRF-Token", "Authorization"],
             "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         },
+        r"/api/member/*": {
+            "origins": app.config["ADMIN_ALLOWED_ORIGINS"], "supports_credentials": True,
+            "allow_headers": ["Content-Type", "X-CSRF-Token"],
+            "methods": ["GET", "POST", "PUT", "OPTIONS"],
+        },
         r"/api/*": {
             "origins": app.config["API_ALLOWED_ORIGINS"],
             "supports_credentials": False,
@@ -213,7 +220,8 @@ def create_app(config=None):
     if not app.config.get("SKIP_DATABASE_INIT"):
         db.connect(reuse_if_open=True)
         db.create_tables([Region, Resort, Piste, Lift, ResortMap, StationWidgets, ResortImportHistory,
-                          AdminUser, AdminSession, AdminLoginAttempt, AdminLoginLink, SkiPassSeason,
+                          AdminUser, AdminSession, AdminLoginAttempt, AdminLoginLink,
+                          MemberUser, MemberSession, MemberLoginLink, MemberLoginAttempt, SkiPassSeason,
                           SkiPassPeriod, SkiPassProduct, SkiPassPrice,
                           AnmsmStationMapping, MeteoFranceStationMapping, MeteoFranceMassifOverride, StationLogoCandidate,
                           StationPisteMapCandidate, AnmsmStationSnapshot])
@@ -246,6 +254,7 @@ def create_app(config=None):
     app.register_blueprint(bp_departments)
     app.register_blueprint(bp_uploads)
     app.register_blueprint(bp_resort_json)
+    app.register_blueprint(bp_member)
     app.register_blueprint(bp_admin_auth)
     app.register_blueprint(bp_station_ops_oauth)
     app.register_blueprint(bp_admin_indexnow)
