@@ -74,13 +74,17 @@ class NewsletterStationPreference(BaseModel):
     snow_conditions_enabled = BooleanField(default=True)
     resort_updates_enabled = BooleanField(default=True)
     weather_frequency = CharField(max_length=16, default="weekly", index=True)
+    snowfall_enabled = BooleanField(default=True)
+    articles_enabled = BooleanField(default=True)
+    newsletter_frequency = CharField(max_length=16, default="weekly")
     created_at = UTCDateTimeField(default=utcnow)
     updated_at = UTCDateTimeField(default=utcnow)
 
     class Meta:
         table_name = "newsletter_station_preferences"
         indexes = ((('subscriber', 'station'), True),)
-        constraints = [Check("weather_frequency IN ('daily', 'friday', 'weekly', 'disabled')")]
+        constraints = [Check("weather_frequency IN ('daily', 'friday', 'weekly', 'disabled')"),
+                       Check("newsletter_frequency IN ('immediate', 'weekly', 'monthly')")]
 
 
 class SnowAlert(BaseModel):

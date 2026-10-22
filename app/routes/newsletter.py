@@ -14,6 +14,7 @@ from app.models.newsletter import (
 )
 from app.models.resort import Resort
 from app.services.newsletter_email import send_welcome_email
+from app.services import newsletter_stations
 
 
 bp_newsletter = Blueprint("newsletter", __name__, url_prefix="/api/newsletter")
@@ -86,11 +87,7 @@ def _follow_station(subscriber, station):
     followed, _ = NewsletterSubscriberStation.get_or_create(
         subscriber=subscriber, station=station
     )
-    NewsletterStationPreference.get_or_create(
-        subscriber=subscriber,
-        station=station,
-        defaults={"weather_frequency": "weekly"},
-    )
+    newsletter_stations.ensure_preference(subscriber, station)
     return followed
 
 
@@ -477,3 +474,35 @@ def unsubscribe(token=None):
     return jsonify({"data": {
         "status": "unsubscribed", "unsubscribed_at": _iso(subscriber.unsubscribed_at)
     }}), 200
+
+
+# Same editor for the existing personal links sent by email.
+
+
+def _settings_subscriber(token):
+    subscriber = _subscriber_for_token(token)
+    return subscriber if subscriber and subscriber.status in {"active", "pending"} else None
+
+
+@bp_newsletter.route("/preferences/<token>/station-settings", methods=["GET", "POST"])
+def station_settings(token):
+    subscriber = _settings_subscriber(token)
+    if not subscriber:
+        return jsonify({"error": "invalid_preferences_token"}), 404
+    return newsletter_stations.list_settings(subscriber) if request.method == "GET" else newsletter_stations.add_station(subscriber, _json_object())
+
+
+@bp_newsletter.post("/preferences/<token>/station-settings/<station_id>")
+def station_settings_update(token, station_id):
+    subscriber = _settings_subscriber(token)
+    if not subscriber:
+        return jsonify({"error": "invalid_preferences_token"}), 404
+    return newsletter_stations.update_station(subscriber, station_id, _json_object())
+
+
+@bp_newsletter.post("/preferences/<token>/station-settings/<station_id>/remove")
+def station_settings_remove(token, station_id):
+    subscriber = _settings_subscriber(token)
+    if not subscriber:
+        return jsonify({"error": "invalid_preferences_token"}), 404
+    return newsletter_stations.remove_station(subscriber, station_id)
