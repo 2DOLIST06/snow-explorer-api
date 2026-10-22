@@ -41,3 +41,17 @@ Le navigateur doit envoyer `credentials: "include"`, conserver le jeton CSRF uni
 Les cookies de production sont `HttpOnly`, `Secure`, `SameSite=None`, `Path=/`. Les mêmes attributs sont appliqués à leur création et à leur suppression. CORS n'autorise les credentials que pour les origines exactes de `ADMIN_ALLOWED_ORIGINS`; aucun couple wildcard + credentials n'est émis. Les routes publiques existantes `/api/*` restent accessibles sans session et sans credentials CORS.
 
 Lors d'un changement de mot de passe futur, le service doit enregistrer `password_changed_at` et appeler `revoke_all_sessions(user.id)`. La vérification rejette déjà toute session antérieure à ce changement.
+
+## Récupération par mail et Mon compte
+
+Le formulaire `/admin/login` propose un lien de connexion envoyé via le service Brevo existant. Variables API : `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`, `FRONTEND_URL=https://www.snow-explorer.com`. L’origine de FRONTEND_URL doit être dans ADMIN_ALLOWED_ORIGINS. Ne pas enregistrer les clés dans le dépôt.
+
+Déployer l’API avant le frontend. La nouvelle table admin_login_links est créée par l’initialisation existante ; le SQL équivalent est fourni dans migrations/20261022_add_admin_login_links.sql pour les installations avec initialisation désactivée. Comptes et sessions existants sont conservés.
+
+POST `/api/admin/auth/login-link` reçoit `{ "email": "..." }`. Messages explicites pour adresse inconnue (404), compte indisponible (403), configuration ou livraison en échec (503) et délai entre envois (429). Délai d’une minute par compte et limitation en base réutilisant le mécanisme existant. Demande et consommation exigent une origine autorisée.
+
+Jeton aléatoire de 256 bits, HMAC stocké uniquement, valable 15 minutes, consommation atomique unique. Le lien `/admin/login-link#jeton` conserve le secret dans le fragment, retiré au chargement. Un clic explicite appelle POST `/api/admin/auth/login-link/consume` ; GET ne consomme jamais le lien.
+
+La page `/admin/account` permet de changer le mot de passe sans l’ancien (12 caractères minimum). POST `/api/admin/auth/password` exige session et CSRF. Les anciennes sessions et les liens en attente sont invalidés ; une nouvelle session et un nouveau CSRF maintiennent le navigateur actuel connecté.
+
+Vérifier réception et connexion après déploiement ; les tests automatisés simulent Brevo et n’envoient aucun mail réel.
