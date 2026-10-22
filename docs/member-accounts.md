@@ -30,3 +30,15 @@ Déployer l’API avant le frontend. Les quatre nouvelles tables sont créées p
 Réutilise BREVO_API_KEY, BREVO_SENDER_EMAIL, BREVO_SENDER_NAME, FRONTEND_URL et ADMIN_SESSION_SECRET. FRONTEND_URL doit être l’origine publique canonique, autorisée dans ADMIN_ALLOWED_ORIGINS. Les clés ne sont pas à recopier dans le dépôt.
 
 Les tests automatisés simulent Brevo. Après déploiement, vérifier inscription, réception réelle, confirmation, définition du mot de passe, reconnexion, préférence newsletter et déconnexion sur le site public.
+
+## Choix de newsletter par station
+
+L’éditeur membre et celui des liens personnels par mail partagent les cinq thèmes par station : snowfall_enabled, snow_conditions_enabled, weather_enabled, resort_updates_enabled et articles_enabled. Chaque station possède sa newsletter_frequency (immediate/weekly/monthly). Les choix ouvertures/fermetures, remontées et forfaits sont retirés de l’interface ; les anciennes colonnes générales et weather_frequency sont conservées pour compatibilité.
+
+**Appliquer migrations/20261022_newsletter_station_topics.sql avant de déployer cette version de l’API.** create_tables ne modifie pas une table déjà existante. La migration ajoute trois colonnes à newsletter_station_preferences (snowfall_enabled, articles_enabled, newsletter_frequency) et reprend les anciens choix généraux pour les valeurs manquantes. Elle est idempotente et ne remplace pas des choix par station déjà renseignés. Aucune migration de production n’est exécutée par la PR.
+
+Les relations abonnés/stations existantes sont réutilisées, sans nouvelle table. L’ajout de station est idempotent ; l’enregistrement et le retrait restent limités au propriétaire vérifié. Le retrait d’une station enlève ses réglages et alertes associés pour cet abonné seulement, comme l’ancien centre de préférences.
+
+Routes membres : GET/POST /api/member/newsletter/stations ; POST /api/member/newsletter/stations/{station_id} ; POST /api/member/newsletter/stations/{station_id}/remove. Les liens personnels utilisent leurs routes /api/newsletter/preferences/{token}/station-settings équivalentes.
+
+Cette modification stocke les abonnements et préférences. Elle n’ajoute pas de moteur d’envoi automatique des bulletins ni de collecte d’informations en direct.

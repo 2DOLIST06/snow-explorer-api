@@ -28,7 +28,7 @@ def build_welcome_email(subscriber, station_name=None):
         intro = "Votre inscription à Snow Explorer a bien été prise en compte."
         description = (
             "Vous pouvez suivre vos stations préférées et choisir les informations que "
-            "vous souhaitez recevoir : météo, neige, ouvertures, forfaits et actualités."
+            "vous souhaitez recevoir : chutes de neige, état de la neige, météo, actualités des stations et nouveaux articles."
         )
         station_text = (
             f"Vous suivez désormais la station {safe_station_name}." if safe_station_name else ""
@@ -41,7 +41,7 @@ def build_welcome_email(subscriber, station_name=None):
         intro = "Your Snow Explorer subscription has been successfully registered."
         description = (
             "You can follow your favourite resorts and choose the information you want "
-            "to receive: weather, snow, openings, ski passes and news."
+            "to receive: snowfall, snow conditions, weather, resort news and new articles."
         )
         station_text = (
             f"You are now following {safe_station_name}." if safe_station_name else ""

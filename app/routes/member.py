@@ -5,6 +5,7 @@ from app.models.newsletter import NewsletterSubscriber, SnowNewsletterPreference
 from app.services.admin_auth import normalize_email, validate_email, validate_password, hash_password, verify_password, _cookie_settings
 from app.services.member_auth import authenticated, limited, send_member_link, consume_link, session_response, user_json, csrf_for, COOKIE
 from app.routes import newsletter
+from app.services import newsletter_stations
 
 bp_member = Blueprint("member", __name__, url_prefix="/api/member")
 
@@ -189,3 +190,37 @@ def member_newsletter_unsubscribe():
     if not subscriber:
         return jsonify({"error": "newsletter_inactive"}), 409
     return newsletter.unsubscribe(token=subscriber.preferences_token)
+
+
+# Session-owned station settings: subscriber identity never comes from a client-supplied ID.
+
+
+def _member_subscriber():
+    return NewsletterSubscriber.get_or_none((NewsletterSubscriber.email == g.member_user.email) & NewsletterSubscriber.status.in_(["active", "pending"]))
+
+
+@bp_member.route("/newsletter/stations", methods=["GET", "POST"])
+@authenticated
+def member_stations():
+    subscriber = _member_subscriber()
+    if not subscriber:
+        return jsonify({"error": "newsletter_inactive"}), 409
+    return newsletter_stations.list_settings(subscriber) if request.method == "GET" else newsletter_stations.add_station(subscriber, body())
+
+
+@bp_member.post("/newsletter/stations/<station_id>")
+@authenticated
+def member_station_update(station_id):
+    subscriber = _member_subscriber()
+    if not subscriber:
+        return jsonify({"error": "newsletter_inactive"}), 409
+    return newsletter_stations.update_station(subscriber, station_id, body())
+
+
+@bp_member.post("/newsletter/stations/<station_id>/remove")
+@authenticated
+def member_station_remove(station_id):
+    subscriber = _member_subscriber()
+    if not subscriber:
+        return jsonify({"error": "newsletter_inactive"}), 409
+    return newsletter_stations.remove_station(subscriber, station_id)
