@@ -59,6 +59,109 @@ class StationBatchTests(unittest.TestCase):
             with self.assertRaises(ValidationProblem):
                 batch.resolve_batch(document())
 
+    def test_official_cover_photograph_is_rejected(self):
+        data = document()
+        data["media"][0].update(status="found", source_url="https://official.example/photo.jpg", source_page_url="https://official.example/")
+        with self.assertRaises(ValidationProblem):
+            batch.validate_batch(data)
+
+    def test_local_generated_files_can_be_embedded_in_one_importable_json(self):
+        import base64
+        import json
+        import subprocess
+        import sys
+        from pathlib import Path
+        script = Path(__file__).resolve().parents[1] / "plugins/snow-explorer-content-ops/skills/snow-explorer-orchestrator/scripts/embed-generated-media.py"
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "generated.png"
+            Image.new("RGBA", (512, 320), (0, 100, 220, 180)).save(source, "PNG")
+            original = Path(directory) / "batch.json"
+            output = Path(directory) / "prepared.json"
+            original.write_text(json.dumps(document()))
+            subprocess.run([sys.executable, str(script), str(original), str(output),
+                            "--cover", f"test-station={source}", "--logo", f"test-station={source}"],
+                           capture_output=True, text=True, check=True, timeout=30)
+            data = json.loads(output.read_text())
+            self.assertEqual(len(batch.validate_batch(data)), 1)
+            for asset in data["media"]:
+                if asset["role"] == "piste_map":
+                    continue
+                encoded = base64.b64decode(asset["data_base64"], validate=True)
+                self.assertLessEqual(len(encoded), batch.GENERATED_LIMITS[asset["role"]])
+                with Image.open(io.BytesIO(encoded)) as image:
+                    self.assertEqual(image.format, "WEBP")
+                    self.assertEqual(image.mode, "RGBA")
+
+    def test_anmsm_workspace_exposes_only_existing_converted_urls(self):
+        from types import SimpleNamespace
+        row = SimpleNamespace(external_station_id="STAT1", anmsm_media_id="map1", display_s3_key="anmsm/existing/display.webp",
+                              anmsm_title="Existing plan", anmsm_credit="Credit", plan_type="alpine", error_code=None,
+                              station=SimpleNamespace(slug="test-station", name="Test Station"))
+        query = Mock()
+        query.where.return_value = [row]
+        with patch.object(batch.StationPisteMapCandidate, "select", return_value=query), \
+             patch.object(batch.s3, "public_url", side_effect=lambda key: "https://cdn.example/" + key), \
+             patch.object(batch, "download") as download:
+            result = batch.prepared_map_feed()
+        download.assert_not_called()
+        self.assertEqual(result[0]["piste_maps"][0]["url"], "https://cdn.example/anmsm/existing/display.webp")
+
+    def test_generated_cover_and_badge_store_the_actual_webp_bytes(self):
+        import base64
+        import hashlib
+        raw = io.BytesIO()
+        Image.new("RGBA", (320, 200), (0, 100, 220, 180)).save(raw, "WEBP")
+        content = raw.getvalue()
+        for role in ("cover", "logo"):
+            data = document()
+            asset = next(m for m in data["media"] if m["role"] == role)
+            asset.update(status="found", source_kind="generated", data_base64=base64.b64encode(content).decode())
+            captured = []
+            def upload(key, filename, mime):
+                with open(filename, "rb") as image:
+                    captured.append(image.read())
+                return "https://cdn.example/" + key
+            with patch("app.routes.admin_resort_import._resolve", return_value=None):
+                resolved = batch.resolve_batch(data)
+            job = resolved["jobs"][0]
+            self.assertNotIn("data_base64", job)
+            with patch.object(batch, "download") as download, \
+                 patch.object(batch.s3, "put_file", side_effect=upload), \
+                 patch.object(batch.s3, "preview_url", return_value="https://preview.example/image.webp"):
+                prepared = batch.prepare_media(job["job_token"])
+            download.assert_not_called()
+            self.assertEqual(captured, [content])
+            self.assertEqual(prepared["sha256"], hashlib.sha256(content).hexdigest())
+            self.assertNotIn("data_base64", batch.verified(prepared["receipt"], "prepared"))
+            with patch("app.routes.admin_resort_import._resolve", return_value=None), \
+                 patch.object(batch.s3, "validate_object", return_value=True):
+                output, _ = batch.assemble_batch(data, [prepared["receipt"]])
+            field = "cover_image_url" if role == "cover" else "logo_url"
+            self.assertEqual(output["stations"][0]["station"][field], prepared["url"])
+
+    def test_generated_webp_limits_and_invalid_bytes_cannot_be_bypassed(self):
+        import base64
+        for role, content in (("logo", b"RIFFxxxxWEBP" + b"x" * (40 * 1024)),
+                              ("cover", b"RIFFxxxxWEBP" + b"x" * (80 * 1024)),
+                              ("cover", b"not a WebP")):
+            data = document()
+            asset = next(m for m in data["media"] if m["role"] == role)
+            asset.update(status="found", source_kind="generated", data_base64=base64.b64encode(content).decode())
+            with self.assertRaises(ValidationProblem):
+                batch.validate_batch(data)
+        job = {"kind": "job", "role": "cover", "source_kind": "generated", "data_base64": base64.b64encode(b"RIFFxxxxWEBPbad").decode()}
+        with patch.object(batch.s3, "put_file") as upload:
+            with self.assertRaises(ValidationProblem):
+                batch.prepare_media(batch.signed(job))
+        upload.assert_not_called()
+
+    def test_missing_anmsm_logo_requires_original_generated_badge(self):
+        data = document()
+        data["media"][1].update(status="found", source_url="https://official.example/logo.png", source_page_url="https://official.example/")
+        with patch("app.routes.admin_resort_import._resolve", return_value=None):
+            with self.assertRaises(ValidationProblem):
+                batch.resolve_batch(data)
+
     def test_creation_scope_rejects_unrequested_fields_and_lower_description(self):
         for key, value in (("description", {"html": "<p>Wrong field</p>"}), ("webcams", {"enabled": False})):
             data = document()
@@ -116,7 +219,7 @@ class StationBatchTests(unittest.TestCase):
         logos = [{"external_station_id": "STAT1", "external_name": "Test Station", "logo": {"url": "https://anmsm.example/logo.png"}}]
         with patch("app.routes.admin_resort_import._resolve", return_value=None), \
              patch.object(batch.anmsm_logos, "fetch_stations", return_value=logos), \
-             patch.object(batch.anmsm_piste_maps, "fetch_maps", return_value=[]), \
+             patch.object(batch, "prepared_map_feed", return_value=[]), \
              patch.object(batch, "public_target"):
             resolved = batch.resolve_batch(data)
         self.assertEqual(resolved["jobs"][0]["source_url"], "https://anmsm.example/logo.png")
@@ -135,7 +238,7 @@ class StationBatchTests(unittest.TestCase):
         maps = [{"external_station_id": "STAT1", "piste_maps": [{"media_id": "old", "url": "https://example.org/2016.pdf"}]}]
         with patch("app.routes.admin_resort_import._resolve", return_value=None), \
              patch.object(batch.anmsm_logos, "fetch_stations", return_value=logos), \
-             patch.object(batch.anmsm_piste_maps, "fetch_maps", return_value=maps), \
+             patch.object(batch, "prepared_map_feed", return_value=maps), \
              patch.object(batch, "public_target"):
             result = batch.resolve_batch(data)
         self.assertEqual(result["jobs"][0]["source_url"], "https://official.example/current")
@@ -152,23 +255,20 @@ class StationBatchTests(unittest.TestCase):
                 batch.resolve_batch(data)
         feed.assert_not_called()
 
-    def test_official_image_link_is_decoded_and_kept_without_duplicate_upload(self):
-        job = {"kind": "job", "station_slug": "test-station", "role": "piste_map", "source_provider": "official",
-               "source_url": "https://official.example/map.jpg", "batch_checksum": "test"}
-        with tempfile.NamedTemporaryFile(delete=False) as source:
-            source.write(b"downloaded")
-        with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as display:
-            display.write(b"decoded")
-        import json
-        metadata = {"ok": True, "path": display.name, "width": 1200, "height": 800}
-        with patch.object(batch, "download", return_value=(source.name, "image/jpeg", 10)), \
-             patch.object(batch.subprocess, "run", return_value=Mock(returncode=0, stdout=json.dumps(metadata))), \
-             patch.object(batch.s3, "put_file") as upload:
-            result = batch.prepare_media(batch.signed(job))
-        upload.assert_not_called()
-        self.assertTrue(result["linked_image"])
-        self.assertEqual(result["url"], job["source_url"])
-        self.assertIsNone(result["s3_key"])
+    def test_plan_link_is_probed_without_downloading_converting_or_uploading(self):
+        for provider in ("official", "anmsm"):
+            job = {"kind": "job", "station_slug": "test-station", "role": "piste_map", "source_provider": provider,
+                   "source_url": "https://example.org/already-converted.webp", "batch_checksum": "test"}
+            with patch.object(batch, "probe_map_image") as probe, \
+                 patch.object(batch, "download") as download, \
+                 patch.object(batch.subprocess, "run") as convert, \
+                 patch.object(batch.s3, "put_file") as upload:
+                result = batch.prepare_media(batch.signed(job))
+            probe.assert_called_once_with(job["source_url"])
+            download.assert_not_called(); convert.assert_not_called(); upload.assert_not_called()
+            self.assertTrue(result["linked_image"])
+            self.assertEqual(result["url"], job["source_url"])
+            self.assertIsNone(result["s3_key"])
 
     def test_linked_image_assembly_uses_official_field_and_keeps_domains(self):
         data = document()
@@ -190,7 +290,7 @@ class StationBatchTests(unittest.TestCase):
         ]}]
         with patch("app.routes.admin_resort_import._resolve", return_value=None), \
              patch.object(batch.anmsm_logos, "fetch_stations", return_value=logos), \
-             patch.object(batch.anmsm_piste_maps, "fetch_maps", return_value=maps):
+             patch.object(batch, "prepared_map_feed", return_value=maps):
             with self.assertRaises(ValidationProblem):
                 batch.resolve_batch(document("FR"))
 
@@ -243,13 +343,13 @@ class StationBatchTests(unittest.TestCase):
                 captured["mode"] = image.mode
             captured["size"] = os.path.getsize(filename)
             return "https://cdn.example/" + key
-        job = {"kind": "job", "batch_checksum": "abc", "station_slug": "test-station", "role": "logo", "source_url": "https://example.org/logo.png"}
+        job = {"kind": "job", "batch_checksum": "abc", "station_slug": "test-station", "role": "logo", "source_provider": "anmsm", "source_url": "https://example.org/logo.png"}
         with patch.object(batch, "download", return_value=(path, "image/png", "hash")), \
              patch.object(batch.s3, "put_file", side_effect=upload), \
              patch.object(batch.s3, "preview_url", return_value="https://preview.example/logo.webp"):
             result = batch.prepare_media(batch.signed(job))
         self.assertEqual(captured["mode"], "RGBA")
-        self.assertLessEqual(captured["size"], 50 * 1024)
+        self.assertLessEqual(captured["size"], 40 * 1024)
         self.assertEqual(batch.verified(result["receipt"], "prepared")["url"], result["url"])
         self.assertFalse(os.path.exists(path))
 

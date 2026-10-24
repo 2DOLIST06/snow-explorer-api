@@ -101,3 +101,7 @@ Pour une demande de JSON à importer, suivre [le workflow par lots](references/s
 ## Descriptions et périmètre de création
 
 Pour toute création de station, appliquer impérativement [les règles de description](references/station-descriptions.md) : recherche des faits d’abord, rédaction originale ensuite, sans plan ni phrases préfabriqués ; relire fluidité et diversité avant livraison. Le périmètre exact des champs figure dans [le workflow par lots](references/station-batches.md). Ne pas enrichir automatiquement avec d’autres blocs.
+
+## Médias de création
+
+Appliquer obligatoirement [cover, écusson et plan](references/station-media.md) avant de produire un lot : cover générée de zéro ≤ 80 Ko ; logo ANMSM ou écusson Snow Explorer original ≤ 40 Ko ; plan uniquement par URL déjà disponible, jamais reconverti dans l’import. Les images originales sont réellement générées avec l’outil de génération, puis embarquées en WebP dans le JSON ; une photo officielle n’est jamais une cover de remplacement.
