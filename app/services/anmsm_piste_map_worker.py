@@ -135,11 +135,29 @@ def main():
                 output.save(output_path, "WEBP", quality=args.quality, method=6)
                 # Photographs may be reduced to a byte budget. Piste maps never
                 # use this option: their labels must remain readable.
-                if args.adaptive_photo:
+                if args.adaptive_photo and not is_pdf:
                     for quality in (78, 68, 58, 48, 40):
                         if os.path.getsize(output_path) <= args.output_limit:
                             break
                         output.save(output_path, "WEBP", quality=quality, method=6)
+                    # Detailed snow/forest photographs may still exceed the
+                    # budget at quality 40. Reduce dimensions as well, keeping
+                    # the aspect ratio and trying a useful quality again.
+                    for _ in range(8):
+                        encoded_size = os.path.getsize(output_path)
+                        if encoded_size <= args.output_limit or max(output.size) <= 32:
+                            break
+                        factor = max(.5, min(.85, (args.output_limit / encoded_size) ** .5 * .9))
+                        smaller = tuple(max(1, int(dimension * factor)) for dimension in output.size)
+                        resized = output.resize(smaller, Image.Resampling.LANCZOS)
+                        if output is not image and output is not oriented:
+                            output.close()
+                        output = resized
+                        for quality in (78, 68, 58, 48, 40):
+                            output.save(output_path, "WEBP", quality=quality, method=6)
+                            if os.path.getsize(output_path) <= args.output_limit:
+                                break
+                    size = output.size
                 _log("webp_encoding", "after")
                 if not is_pdf and output is not image:
                     output.close()
