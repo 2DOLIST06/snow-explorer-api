@@ -4,6 +4,8 @@ The transport pins public DNS addresses, the existing isolated decoders produce
 WebP files, and signed receipts bind the review to the exact prepared bytes.
 """
 import copy
+import base64
+import binascii
 import hashlib
 import http.client
 import ipaddress
@@ -22,13 +24,15 @@ from urllib.parse import urljoin, urlsplit
 from flask import current_app
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from app.services import anmsm_logos, anmsm_piste_maps, s3
+from app.services import anmsm_logos, s3
 from app.services.resort_json import BLOCK_FIELDS, STATION_FIELDS, ValidationProblem, checksum, validate_document, validate_references
 from app.models.ski_area import SkiArea
+from app.models.station_piste_map_candidate import StationPisteMapCandidate
 
 ROLES = {"cover", "logo", "piste_map"}
 MAX_BATCH = 10
 MAX_BYTES = 20 * 1024 * 1024
+GENERATED_LIMITS = {"cover": 80 * 1024, "logo": 40 * 1024}
 BATCH_STATION_FIELDS = {
     "id", "slug", "name", "is_active", "country_code", "region_id", "region_name", "department",
     "website_url", "latitude", "longitude", "altitude_min_m", "altitude_max_m",
@@ -74,6 +78,38 @@ def verified(token, kind):
 def normalized(value):
     return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", value or "")
                   .encode("ascii", "ignore").decode().lower())
+
+
+def generated_bytes(asset):
+    role = asset.get("role")
+    encoded = asset.get("data_base64")
+    limit = GENERATED_LIMITS.get(role, 0)
+    if not limit or not isinstance(encoded, str) or len(encoded) > ((limit + 2) // 3) * 4:
+        fail("media.data_base64", "WebP généré requis : couverture ≤ 80 Ko, écusson ≤ 40 Ko.")
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error):
+        fail("media.data_base64", "Encodage base64 invalide.")
+    if not 0 < len(data) <= limit or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        fail("media.data_base64", "Fichier WebP valide requis, dans la limite de poids du rôle.")
+    return data
+
+
+def prepared_map_feed():
+    """Reuse the existing ANMSM workspace; never download/convert a raw plan."""
+    grouped = {}
+    query = StationPisteMapCandidate.select().where(
+        StationPisteMapCandidate.display_s3_key.is_null(False)
+        & StationPisteMapCandidate.status.in_(["pending", "approved"]))
+    for row in query:
+        if not row.display_s3_key or row.error_code:
+            continue
+        grouped.setdefault(row.external_station_id, []).append({
+            "media_id": row.anmsm_media_id, "url": s3.public_url(row.display_s3_key),
+            "title": row.anmsm_title, "plan_type": row.plan_type, "credit": row.anmsm_credit,
+            "station_slug": row.station.slug, "station_name": row.station.name,
+        })
+    return [{"external_station_id": key, "piste_maps": values} for key, values in grouped.items()]
 
 
 def validate_batch(batch):
@@ -127,14 +163,20 @@ def validate_batch(batch):
             fail(f"media.{i}.status", "Le média doit être recherché : found ou not_found.")
         if asset.get("format", "file") not in {"file", "interactive"} or (asset.get("format") == "interactive" and asset["role"] != "piste_map"):
             fail(f"media.{i}.format", "Le format interactive est réservé aux plans.")
-        if asset["status"] == "found" and not asset.get("source_page_url"):
+        if asset.get("source_kind") == "generated":
+            if asset["role"] not in GENERATED_LIMITS or asset["status"] != "found" or asset.get("source_url"):
+                fail(f"media.{i}", "Un média généré est un cover/logo WebP embarqué, sans URL de photo source.")
+            generated_bytes(asset)
+        elif asset["status"] == "found" and asset["role"] == "cover":
+            fail(f"media.{i}", "La couverture doit être générée de zéro et embarquée en WebP ; une photo officielle est refusée.")
+        elif asset["status"] == "found" and not asset.get("source_page_url"):
             fail(f"media.{i}.source_page_url", "La page source du média est requise.")
     return records
 
 
 def batch_contract():
     return {
-        "batch_version": "1.0", "document_schema_version": "1.0", "max_stations": MAX_BATCH,
+        "batch_version": "1.0", "media_policy_version": "2.0", "document_schema_version": "1.0", "max_stations": MAX_BATCH,
         "max_bytes": 1024 * 1024, "creation_only": True, "is_active": False,
         "root_fields": ["batch_version", "scope", "document", "media", "research"],
         "scope_fields": ["country_code", "massif", "discipline", "season"],
@@ -146,13 +188,14 @@ def batch_contract():
         "legacy_price_label": "Preserved as note; never discarded.",
         "media_roles": sorted(ROLES), "media_statuses": ["found", "not_found"],
         "media_fields": ["station_slug", "role", "status", "format", "source_url", "source_page_url",
-                         "source_provider", "credit", "anmsm_external_id", "anmsm_media_id"],
-        "media_policy": "ANMSM first for logos and unselected FR maps. Preserve an explicitly selected map; official image links stay URLs, never PDF fallbacks. Browser modal test before confirmation.",
+                         "source_provider", "source_kind", "data_base64", "generation_prompt", "inspiration_urls", "credit", "anmsm_external_id", "anmsm_media_id"],
+        "media_policy": "Cover: generated from scratch, embedded WebP. Logo: ANMSM first, otherwise original Snow Explorer badge, embedded WebP. Maps: URLs only; reuse already-converted ANMSM workspace images, never convert or upload plans here.",
+        "generated_media": {"source_kind": "generated", "data_base64": "strict base64 of actual WebP bytes; not a URL", "generation": "ChatGPT image generation before JSON export; server never generates an image or substitutes an official photograph"},
+        "prepared_anmsm_maps": prepared_map_feed(),
         "existing_ski_areas": [{"id": area.id, "slug": area.slug, "name": area.name}
                                for area in SkiArea.select().order_by(SkiArea.slug)],
         "ski_area_policy": "Link existing catalogue areas only via domaines_skiables.items [{id, slug}]; never create an area implicitly.",
-        "limits": {"cover_webp_bytes": 80 * 1024, "logo_webp_bytes": 50 * 1024,
-                   "piste_map_webp_bytes": 6 * 1024 * 1024},
+        "limits": {"cover_webp_bytes": 80 * 1024, "logo_webp_bytes": 40 * 1024},
         "unsupported": ["proof of cross-origin iframe rendering from HTTP alone", "SVG media", "automatic station publication"],
     }
 
@@ -168,13 +211,13 @@ def resolve_batch(batch):
             raise ValidationProblem(errors)
     # ANMSM is checked once per lot, including when the plugin found nothing.
     logos = anmsm_logos.fetch_stations() if batch["scope"]["country_code"] == "FR" else []
-    maps = anmsm_piste_maps.fetch_maps() if batch["scope"]["country_code"] == "FR" else []
+    maps = prepared_map_feed() if batch["scope"]["country_code"] == "FR" else []
     stations = {r["station"]["slug"]: r["station"] for r in records}
     jobs, warnings = [], []
     for asset in batch["media"]:
         slug, role = asset["station_slug"], asset["role"]
         choice = copy.deepcopy(asset)
-        choice["source_provider"] = "official"
+        choice["source_provider"] = "generated" if choice.get("source_kind") == "generated" else "official"
         if role in {"logo", "piste_map"} and batch["scope"]["country_code"] == "FR":
             matches = [row for row in logos if normalized(row["external_name"]) == normalized(stations[slug]["name"])]
             external_id = asset.get("anmsm_external_id")
@@ -206,15 +249,21 @@ def resolve_batch(batch):
                     chosen = candidates[0]
                     choice.update(status="found", source_url=chosen["url"], source_provider="anmsm",
                                   format="file", anmsm_external_id=match["external_station_id"], credit=chosen.get("credit"))
-            else:
-                warnings.append(f"{slug} : aucune correspondance ANMSM exacte ; source de remplacement à vérifier.")
+                    choice.pop("data_base64", None)
+                    choice["source_kind"] = "anmsm"
         if choice["status"] == "not_found":
             warnings.append(f"{slug} : {role} recherché mais non trouvé, champ omis.")
             continue
+        if choice.get("source_kind") == "generated":
+            payload = {"kind": "job", "batch_checksum": checksum(batch), **choice}
+            jobs.append({**{k: v for k, v in choice.items() if k != "data_base64"}, "job_token": signed(payload)})
+            continue
+        if role == "logo" and choice.get("source_provider") != "anmsm":
+            fail("media", f"{slug} : sans logo ANMSM, générez un écusson Snow Explorer original ; pas de logo officiel de remplacement.")
         if not choice.get("source_url"):
             fail("media", f"{slug} : URL directe requise pour {role}.")
-        if role == "piste_map" and choice.get("source_provider") != "anmsm" and urlsplit(choice["source_url"]).path.lower().endswith(".pdf"):
-            fail("media", f"{slug} : utilisez le lecteur officiel ou un lien image, pas un PDF de remplacement.")
+        if role == "piste_map" and urlsplit(choice["source_url"]).path.lower().endswith(".pdf"):
+            fail("media", f"{slug} : utilisez le plan ANMSM déjà converti ou le lecteur officiel, pas un PDF brut.")
         # Validate the structure now; DNS/network checks happen in preparation.
         public_target(choice["source_url"])
         payload = {"kind": "job", "batch_checksum": checksum(batch), **choice}
@@ -324,60 +373,73 @@ def probe_interactive(url):
     fail("source_url", "Trop de redirections.")
 
 
+def probe_map_image(url):
+    """Check a linked plan without writing, converting or uploading its bytes."""
+    for _ in range(4):
+        parsed, address = public_target(url)
+        connection = PinnedHTTPSConnection(parsed.hostname, address)
+        try:
+            connection.request("GET", parsed.path + ("?" + parsed.query if parsed.query else ""),
+                               headers={"User-Agent": "SnowExplorer-MediaImport/1.0", "Range": "bytes=0-15"})
+            response = connection.getresponse()
+            if response.status in {301, 302, 303, 307, 308}:
+                url = urljoin(url, response.getheader("Location", ""))
+                continue
+            mime = (response.getheader("Content-Type") or "").split(";")[0].strip().lower()
+            if response.status not in {200, 206} or mime not in {"image/jpeg", "image/png", "image/webp"}:
+                fail("source_url", "Le lien du plan doit répondre avec une image déjà disponible, pas un PDF brut ni une page HTML.")
+            if not response.read(16):
+                fail("source_url", "Le lien du plan est vide.")
+            return url
+        finally:
+            connection.close()
+    fail("source_url", "Trop de redirections.")
+
+
 def prepare_media(token):
     job = verified(token, "job")
-    if job.get("format") == "interactive":
-        url = probe_interactive(job["source_url"])
-        value = {**job, "kind": "prepared", "url": url, "render_mode": "interactive",
-                 "s3_key": None, "width": None, "height": None, "size_bytes": None}
-        return {**value, "preview_url": url, "receipt": signed(value)}
+    if job["role"] == "piste_map":
+        interactive = job.get("format") == "interactive"
+        probe_interactive(job["source_url"]) if interactive else probe_map_image(job["source_url"])
+        value = {**job, "kind": "prepared", "url": job["source_url"],
+                 "render_mode": "interactive" if interactive else "image",
+                 "linked_image": not interactive, "s3_key": None,
+                 "width": None, "height": None, "size_bytes": None}
+        return {**value, "preview_url": value["url"], "receipt": signed(value)}
     source = display = None
     try:
-        source, mime, _ = download(job["source_url"], job["role"])
-        linked_map = job["role"] == "piste_map" and job.get("source_provider") != "anmsm"
-        if linked_map and mime == "application/pdf":
-            fail("source_url", "Le lien du plan officiel doit être une image ou un lecteur, pas un PDF.")
-        if job["role"] == "logo":
+        if job.get("source_kind") == "generated":
+            data = generated_bytes(job)
             with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as output:
-                display = output.name
-            metadata = anmsm_logos._convert_subprocess(source, display)
-            width, height = metadata.get("width", 512), metadata.get("height", 512)
-        else:
-            role = job["role"]
-            # The isolated existing decoder also accepts cover photographs.
-            command = [sys.executable, "-m", "app.services.anmsm_piste_map_worker", source,
-                       "--output-directory", tempfile.gettempdir(), "--max-pixels", "24000000",
-                       "--max-dimension", "3000" if role == "piste_map" else "1600",
-                       "--output-limit", str(6 * 1024 * 1024 if role == "piste_map" else 80 * 1024),
-                       "--quality", "88", "--memory-mb", "512"]
-            if mime == "application/pdf":
-                command += ["--source-format", "pdf"]
-            if role == "cover":
-                command += ["--adaptive-photo"]
-            result = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
-            import json
+                output.write(data)
+                source = display = output.name
+            result = subprocess.run([sys.executable, "-m", "app.services.generated_media_worker", source],
+                                    capture_output=True, text=True, timeout=15, check=False)
             try:
                 metadata = json.loads(result.stdout)
             except ValueError:
-                fail("media", "Échec du convertisseur isolé.")
+                fail("media", "Le vérificateur WebP n’a pas retourné de résultat valide.")
             if result.returncode or not metadata.get("ok"):
-                fail("media", "Conversion impossible : " + str(metadata.get("error", "decoder_failed")))
-            display = metadata.get("path")
-            if not isinstance(display, str) or os.path.dirname(os.path.realpath(display)) != os.path.realpath(tempfile.gettempdir()):
-                fail("media", "Chemin de conversion invalide.")
-            width, height = metadata["width"], metadata["height"]
+                fail("media", "WebP généré invalide ou dimensions excessives.")
+        elif job["role"] == "logo" and job.get("source_provider") == "anmsm":
+            source, _, _ = download(job["source_url"], "logo")
+            with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as output:
+                display = output.name
+            metadata = anmsm_logos._convert_subprocess(source, display, output_limit=40 * 1024)
+        else:
+            fail("media", "La couverture et l’écusson de remplacement doivent être générés avant l’import.")
+        if os.path.getsize(display) > GENERATED_LIMITS[job["role"]]:
+            fail("media", "Le WebP dépasse la limite de poids du rôle.")
         with open(display, "rb") as image:
             digest = hashlib.file_digest(image, "sha256").hexdigest()
         key = f"station-batches/{job['station_slug']}/{job['role']}/{digest}.webp"
-        # Decode the official image to verify it, but retain its existing URL.
-        # This also avoids duplicating plans already hosted on our server.
-        url = job["source_url"] if linked_map else s3.put_file(key, display, "image/webp")
-        value = {**job, "kind": "prepared", "url": url, "s3_key": key, "render_mode": "image",
-                 "sha256": digest, "width": width, "height": height,
+        url = s3.put_file(key, display, "image/webp")
+        clean_job = {k: v for k, v in job.items() if k != "data_base64"}
+        value = {**clean_job, "kind": "prepared", "url": url, "s3_key": key, "render_mode": "image",
+                 "sha256": digest, "width": metadata.get("width", metadata.get("optimized_width", 512)),
+                 "height": metadata.get("height", metadata.get("optimized_height", 512)),
                  "size_bytes": os.path.getsize(display)}
-        if linked_map:
-            value.update(s3_key=None, linked_image=True)
-        return {**value, "preview_url": url if linked_map else s3.preview_url(key), "receipt": signed(value)}
+        return {**value, "preview_url": s3.preview_url(key), "receipt": signed(value)}
     finally:
         for path in {source, display} - {None}:
             if os.path.exists(path):
@@ -396,9 +458,9 @@ def assemble_batch(batch, receipts):
         identity = (value.get("station_slug"), value.get("role"))
         job = expected.get(identity)
         if (not job or identity in assets or value.get("batch_checksum") != checksum(batch)
-                or value.get("source_url") != job["source_url"]):
+                or value.get("source_url") != job.get("source_url")):
             fail("receipts", "Le lot ou une source a changé depuis la préparation.")
-        if value.get("linked_image") and (value.get("url") != job["source_url"] or job.get("source_provider") == "anmsm"):
+        if value.get("linked_image") and (value.get("url") != job["source_url"]):
             fail("receipts", "Le lien image a changé depuis la préparation.")
         if value.get("render_mode") != "interactive" and not value.get("linked_image") and not s3.validate_object(value["s3_key"]):
             fail("receipts", "Un média préparé n’est plus disponible.")
@@ -411,7 +473,7 @@ def assemble_batch(batch, receipts):
                 record["station"][field] = assets[(slug, role)]["url"]
         if (slug, "piste_map") in assets:
             plan = assets[(slug, "piste_map")]
-            field = "official_map_url" if plan.get("render_mode") == "interactive" or plan.get("linked_image") else "large_map_url"
+            field = "large_map_url" if plan.get("source_provider") == "anmsm" else "official_map_url"
             record.setdefault("pistes", {}).update({"enabled": True, field: plan["url"]})
     validate_document(output, bulk=True)
     return output, resolved["warnings"]
