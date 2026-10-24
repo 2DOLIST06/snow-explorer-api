@@ -21,7 +21,7 @@ La recherche est faite par ChatGPT avec ses capacités web, jamais par le backen
 
 Appliquer la politique de sources décrite dans [Politique RESEARCH](references/research-policy.md).
 
-Ne jamais inventer une donnée. Quand une information n'est pas trouvée, la marquer `not_found`; quand elle n'a pas été recherchée, `not_researched`; quand des sources fiables divergent sans résolution sûre, `conflicting`; quand l'identité est douteuse, `ambiguous`.
+Ne jamais inventer une donnée. Quand une information n'est pas trouvée, la marquer `not_found`; quand elle n'a pas été recherchée, `not_researched`; en cas d’écart, choisir d’abord la valeur la plus pertinente selon la politique de sources ; réserver `conflicting` aux cas réellement impossibles à départager; quand l'identité est douteuse, `ambiguous`.
 
 Une donnée `not_found`, `not_researched`, `conflicting` ou `ambiguous` ne doit pas être placée dans `data` comme proposition. RESEARCH ne génère jamais de `clear_fields` automatiquement.
 
@@ -33,7 +33,7 @@ Une donnée `not_found`, `not_researched`, `conflicting` ou `ambiguous` ne doit 
 4. Construire un candidat RESEARCH 1.0 avec une provenance par champ.
 5. Appeler `research_validate` et corriger toute erreur de contrat.
 6. Envoyer le `compare_payload` validé à `compare`.
-7. Expliquer les champs inchangés, modifiés, nouveaux, ambigus ou invalides.
+7. Présenter les changements utiles ; résoudre les écarts de données en autonomie, sans demander un arbitrage champ par champ.
 8. Appeler `review` sans décisions pour obtenir les `operation_id` et le plan proposé.
 9. Ne jamais approuver à la place de l'utilisateur.
 10. Après approbation explicite, appeler `review` avec les décisions exactes.
