@@ -46,6 +46,9 @@ def tool_definitions():
                   'limit': {'type': 'integer', 'minimum': 1, 'maximum': catalog.MAX_LIMIT, 'default': catalog.DEFAULT_LIMIT},
                   'offset': {'type': 'integer', 'minimum': 0, 'maximum': catalog.MAX_OFFSET, 'default': 0}})),
         ('research_contract', 'Read the canonical RESEARCH 1.0 schema and shared limits. No web research.', _object({})),
+        ('station_batch_contract', 'Read the JSON batch import contract for researched station creations and media preparation. No writes.', _object({})),
+        ('station_batch_validate', 'Validate a researched station creation batch structurally, without downloading media or writing stations. Does not prove factual accuracy or browser rendering.',
+         _object({'batch': {'type': 'object'}}, ('batch',))),
         # Structural/semantic invalid research must reach its validator and retain its diagnostics.
         ('research_validate', 'Validate externally collected RESEARCH 1.0 and return the exact COMPARE payload. No web research.',
          {'type': 'object'}),
@@ -87,6 +90,18 @@ def research_contract():
 
 
 def _dispatch(name, arguments):
+    if name in ('station_batch_contract', 'station_batch_validate'):
+        from app.services.station_batch import batch_contract, validate_batch
+        from app.services.resort_json import ValidationProblem
+        if name == 'station_batch_contract':
+            return batch_contract()
+        try:
+            records = validate_batch(arguments['batch'])
+            return {'valid': True, 'stations_count': len(records), 'media_checked': False,
+                    'catalogue_checked': False, 'modal_checked': False}
+        except ValidationProblem as exc:
+            return {'valid': False, 'errors': exc.errors, 'media_checked': False,
+                    'catalogue_checked': False, 'modal_checked': False}
     if name == 'catalog_schema':
         try:
             return catalog_schema.catalog_schema(arguments)

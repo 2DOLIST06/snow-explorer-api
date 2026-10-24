@@ -61,6 +61,22 @@ def _sort_order(value, default, path, errors):
     return value
 
 
+def normalize_price_label(value):
+    """Preserve the legacy import label as a note, without changing prices."""
+    out = dict(value)
+    if "label" not in out:
+        return out
+    label = out.pop("label")
+    if label is not None and not isinstance(label, str):
+        raise ValueError("label doit être un texte ou null")
+    if isinstance(label, str) and label.strip():
+        note = out.get("note")
+        if note is not None and not isinstance(note, str):
+            raise ValueError("note doit être un texte ou null")
+        out["note"] = "\n".join(dict.fromkeys(part.strip() for part in (note or "", label) if part.strip()))
+    return out
+
+
 def validate_grid(payload, resort_lookup=None, allow_empty=False):
     errors = []
     if not isinstance(payload, dict):
@@ -119,6 +135,10 @@ def validate_grid(payload, resort_lookup=None, allow_empty=False):
         prices = []
         for j, value in enumerate(raw_prices):
             ppath = f"{path}.prices[{j}]"; value = value if isinstance(value, dict) else {}
+            try:
+                value = normalize_price_label(value)
+            except ValueError as exc:
+                errors.append({"path": f"{ppath}.label", "message": str(exc)})
             period_id = _required_text(value.get("period_id"), f"{ppath}.period_id", errors)
             category = _required_text(value.get("category"), f"{ppath}.category", errors)
             category_label = _required_text(value.get("category_label"), f"{ppath}.category_label", errors)

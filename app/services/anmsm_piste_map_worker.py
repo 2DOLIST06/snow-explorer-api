@@ -84,6 +84,7 @@ def main():
     parser.add_argument("--memory-mb", type=int, required=True)
     parser.add_argument("--quality", type=int, required=True)
     parser.add_argument("--source-format", choices=("jpeg", "png", "webp", "pdf"))
+    parser.add_argument("--adaptive-photo", action="store_true")
     args = parser.parse_args()
     output_path = None
     try:
@@ -132,6 +133,13 @@ def main():
                 output_path = handle.name; handle.close()
                 _log("webp_encoding", "before", width=size[0], height=size[1])
                 output.save(output_path, "WEBP", quality=args.quality, method=6)
+                # Photographs may be reduced to a byte budget. Piste maps never
+                # use this option: their labels must remain readable.
+                if args.adaptive_photo:
+                    for quality in (78, 68, 58, 48, 40):
+                        if os.path.getsize(output_path) <= args.output_limit:
+                            break
+                        output.save(output_path, "WEBP", quality=quality, method=6)
                 _log("webp_encoding", "after")
                 if not is_pdf and output is not image:
                     output.close()

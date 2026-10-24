@@ -140,6 +140,55 @@ def _submitted_preview_token():
     )
 
 
+@bp_resort_json.post("/import/batch/resolve")
+@admin_required
+def resolve_researched_batch():
+    from app.services.station_batch import resolve_batch
+    return _batch_response(lambda payload: resolve_batch(payload.get("batch")))
+
+
+@bp_resort_json.get("/import/batch/contract")
+@admin_required
+def researched_batch_contract():
+    from app.services.station_batch import batch_contract
+    return jsonify(batch_contract())
+
+
+@bp_resort_json.post("/import/batch/prepare-media")
+@admin_required
+def prepare_researched_media():
+    from app.services.station_batch import prepare_media
+    return _batch_response(lambda payload: prepare_media(payload.get("job_token")))
+
+
+@bp_resort_json.post("/import/batch/assemble")
+@admin_required
+def assemble_researched_batch():
+    from app.services.station_batch import assemble_batch
+    def assemble(payload):
+        document, warnings = assemble_batch(payload.get("batch"), payload.get("receipts"))
+        return {"document": document, "warnings": warnings}
+    return _batch_response(assemble)
+
+
+def _batch_response(action):
+    from app.services.anmsm_logos import LogoImportError
+    if request.content_length and request.content_length > 1024 * 1024:
+        return jsonify({"message": "Le lot dépasse 1 Mio."}), 413
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"message": "Un objet JSON est requis."}), 400
+    try:
+        return jsonify(action(payload))
+    except ValidationProblem as exc:
+        return jsonify({"message": exc.errors[0]["message"], "errors": exc.errors}), 422
+    except LogoImportError as exc:
+        return jsonify({"message": str(exc), "error": exc.code}), 422
+    except Exception:
+        current_app.logger.exception("Station batch preparation failed")
+        return jsonify({"message": "Préparation impossible. Vérifiez les sources et la configuration du stockage."}), 502
+
+
 @bp_resort_json.post("/import/preview")
 @admin_required
 def preview_bulk():
