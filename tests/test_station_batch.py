@@ -128,6 +128,60 @@ class StationBatchTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 batch.resolve_batch(document("FR"))
 
+    def test_explicit_current_viewer_is_not_overwritten_by_old_anmsm_map(self):
+        data = document("FR")
+        data["media"][2].update(status="found", format="interactive", source_url="https://official.example/current", source_page_url="https://official.example/")
+        logos = [{"external_station_id": "STAT1", "external_name": "Test Station", "logo": {}}]
+        maps = [{"external_station_id": "STAT1", "piste_maps": [{"media_id": "old", "url": "https://example.org/2016.pdf"}]}]
+        with patch("app.routes.admin_resort_import._resolve", return_value=None), \
+             patch.object(batch.anmsm_logos, "fetch_stations", return_value=logos), \
+             patch.object(batch.anmsm_piste_maps, "fetch_maps", return_value=maps), \
+             patch.object(batch, "public_target"):
+            result = batch.resolve_batch(data)
+        self.assertEqual(result["jobs"][0]["source_url"], "https://official.example/current")
+        self.assertEqual(result["jobs"][0]["format"], "interactive")
+
+    def test_existing_ski_area_references_are_kept_and_checked_before_media(self):
+        data = document()
+        data["document"]["stations"][0]["domaines_skiables"] = {"items": [{"id": 12, "slug": "existing-area"}]}
+        self.assertEqual(batch.validate_batch(data)[0]["domaines_skiables"]["items"][0]["id"], 12)
+        with patch("app.routes.admin_resort_import._resolve", return_value=None), \
+             patch.object(batch, "validate_references", return_value=[{"path": "domaines_skiables", "message": "not found"}]), \
+             patch.object(batch.anmsm_logos, "fetch_stations") as feed:
+            with self.assertRaises(ValidationProblem):
+                batch.resolve_batch(data)
+        feed.assert_not_called()
+
+    def test_official_image_link_is_decoded_and_kept_without_duplicate_upload(self):
+        job = {"kind": "job", "station_slug": "test-station", "role": "piste_map", "source_provider": "official",
+               "source_url": "https://official.example/map.jpg", "batch_checksum": "test"}
+        with tempfile.NamedTemporaryFile(delete=False) as source:
+            source.write(b"downloaded")
+        with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as display:
+            display.write(b"decoded")
+        import json
+        metadata = {"ok": True, "path": display.name, "width": 1200, "height": 800}
+        with patch.object(batch, "download", return_value=(source.name, "image/jpeg", 10)), \
+             patch.object(batch.subprocess, "run", return_value=Mock(returncode=0, stdout=json.dumps(metadata))), \
+             patch.object(batch.s3, "put_file") as upload:
+            result = batch.prepare_media(batch.signed(job))
+        upload.assert_not_called()
+        self.assertTrue(result["linked_image"])
+        self.assertEqual(result["url"], job["source_url"])
+        self.assertIsNone(result["s3_key"])
+
+    def test_linked_image_assembly_uses_official_field_and_keeps_domains(self):
+        data = document()
+        data["document"]["stations"][0]["domaines_skiables"] = {"items": [{"slug": "existing-area"}]}
+        job = {"station_slug": "test-station", "role": "piste_map", "source_provider": "official", "source_url": "https://official.example/map.jpg"}
+        receipt = batch.signed({**job, "kind": "prepared", "batch_checksum": batch.checksum(data), "url": job["source_url"], "linked_image": True, "render_mode": "image", "s3_key": None})
+        with patch.object(batch, "resolve_batch", return_value={"jobs": [job], "warnings": []}), \
+             patch.object(batch.s3, "validate_object") as storage:
+            output, _ = batch.assemble_batch(data, [receipt])
+        storage.assert_not_called()
+        self.assertEqual(output["stations"][0]["pistes"]["official_map_url"], job["source_url"])
+        self.assertEqual(output["stations"][0]["domaines_skiables"]["items"], [{"slug": "existing-area"}])
+
     def test_ambiguous_anmsm_plan_does_not_choose_first_result(self):
         logos = [{"external_station_id": "STAT1", "external_name": "Test Station", "logo": {}}]
         maps = [{"external_station_id": "STAT1", "piste_maps": [

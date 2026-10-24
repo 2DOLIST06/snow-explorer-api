@@ -23,7 +23,8 @@ from flask import current_app
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from app.services import anmsm_logos, anmsm_piste_maps, s3
-from app.services.resort_json import BLOCK_FIELDS, STATION_FIELDS, ValidationProblem, checksum, validate_document
+from app.services.resort_json import BLOCK_FIELDS, STATION_FIELDS, ValidationProblem, checksum, validate_document, validate_references
+from app.models.ski_area import SkiArea
 
 ROLES = {"cover", "logo", "piste_map"}
 MAX_BATCH = 10
@@ -39,6 +40,7 @@ BATCH_BLOCK_FIELDS = {
     "remontees": {"tire_fesses", "telesieges", "telepheriques"},
     "snowpark": {"count"},
     "forfaits_avances": {"seasons"},
+    "domaines_skiables": {"items"},
 }
 
 
@@ -145,7 +147,10 @@ def batch_contract():
         "media_roles": sorted(ROLES), "media_statuses": ["found", "not_found"],
         "media_fields": ["station_slug", "role", "status", "format", "source_url", "source_page_url",
                          "source_provider", "credit", "anmsm_external_id", "anmsm_media_id"],
-        "media_policy": "ANMSM first for FR logo/map; direct HTTPS image, map PDF or explicit interactive map; browser modal review before confirmation.",
+        "media_policy": "ANMSM first for logos and unselected FR maps. Preserve an explicitly selected map; official image links stay URLs, never PDF fallbacks. Browser modal test before confirmation.",
+        "existing_ski_areas": [{"id": area.id, "slug": area.slug, "name": area.name}
+                               for area in SkiArea.select().order_by(SkiArea.slug)],
+        "ski_area_policy": "Link existing catalogue areas only via domaines_skiables.items [{id, slug}]; never create an area implicitly.",
         "limits": {"cover_webp_bytes": 80 * 1024, "logo_webp_bytes": 50 * 1024,
                    "piste_map_webp_bytes": 6 * 1024 * 1024},
         "unsupported": ["proof of cross-origin iframe rendering from HTTP alone", "SVG media", "automatic station publication"],
@@ -158,6 +163,9 @@ def resolve_batch(batch):
     for record in records:
         if _resolve(record):
             fail("document", f"{record['station']['slug']} existe déjà ou présente un conflit d’identité. Retirez cette entrée du lot de créations.")
+        errors = validate_references(record)
+        if errors:
+            raise ValidationProblem(errors)
     # ANMSM is checked once per lot, including when the plugin found nothing.
     logos = anmsm_logos.fetch_stations() if batch["scope"]["country_code"] == "FR" else []
     maps = anmsm_piste_maps.fetch_maps() if batch["scope"]["country_code"] == "FR" else []
@@ -182,6 +190,12 @@ def resolve_batch(batch):
                     candidates = [match["logo"]] if match["logo"].get("url") else []
                 else:
                     candidates = [m for row in maps if row["external_station_id"].casefold() == match["external_station_id"].casefold() for m in row["piste_maps"]]
+                # A researched explicit plan wins over the default feed choice.
+                # Match its actual URL/ID, never trust source_provider supplied by a caller.
+                explicit_plan = role == "piste_map" and asset["status"] == "found"
+                if explicit_plan:
+                    candidates = [m for m in candidates if m.get("url") == asset.get("source_url")
+                                  and (not asset.get("anmsm_media_id") or str(m.get("media_id")) == str(asset["anmsm_media_id"]))]
                 if len(candidates) > 1:
                     candidates = [m for m in candidates if str(m.get("media_id")) == str(asset.get("anmsm_media_id"))]
                     if len(candidates) != 1:
@@ -199,8 +213,8 @@ def resolve_batch(batch):
             continue
         if not choice.get("source_url"):
             fail("media", f"{slug} : URL directe requise pour {role}.")
-        if role == "piste_map" and choice.get("source_provider") != "anmsm" and choice.get("format") != "interactive":
-            fail("media", f"{slug} : hors ANMSM, utilisez l’URL du lecteur officiel intégrable (format interactive), pas un PDF.")
+        if role == "piste_map" and choice.get("source_provider") != "anmsm" and urlsplit(choice["source_url"]).path.lower().endswith(".pdf"):
+            fail("media", f"{slug} : utilisez le lecteur officiel ou un lien image, pas un PDF de remplacement.")
         # Validate the structure now; DNS/network checks happen in preparation.
         public_target(choice["source_url"])
         payload = {"kind": "job", "batch_checksum": checksum(batch), **choice}
@@ -320,6 +334,9 @@ def prepare_media(token):
     source = display = None
     try:
         source, mime, _ = download(job["source_url"], job["role"])
+        linked_map = job["role"] == "piste_map" and job.get("source_provider") != "anmsm"
+        if linked_map and mime == "application/pdf":
+            fail("source_url", "Le lien du plan officiel doit être une image ou un lecteur, pas un PDF.")
         if job["role"] == "logo":
             with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as output:
                 display = output.name
@@ -352,11 +369,15 @@ def prepare_media(token):
         with open(display, "rb") as image:
             digest = hashlib.file_digest(image, "sha256").hexdigest()
         key = f"station-batches/{job['station_slug']}/{job['role']}/{digest}.webp"
-        url = s3.put_file(key, display, "image/webp")
+        # Decode the official image to verify it, but retain its existing URL.
+        # This also avoids duplicating plans already hosted on our server.
+        url = job["source_url"] if linked_map else s3.put_file(key, display, "image/webp")
         value = {**job, "kind": "prepared", "url": url, "s3_key": key, "render_mode": "image",
                  "sha256": digest, "width": width, "height": height,
                  "size_bytes": os.path.getsize(display)}
-        return {**value, "preview_url": s3.preview_url(key), "receipt": signed(value)}
+        if linked_map:
+            value.update(s3_key=None, linked_image=True)
+        return {**value, "preview_url": url if linked_map else s3.preview_url(key), "receipt": signed(value)}
     finally:
         for path in {source, display} - {None}:
             if os.path.exists(path):
@@ -377,7 +398,9 @@ def assemble_batch(batch, receipts):
         if (not job or identity in assets or value.get("batch_checksum") != checksum(batch)
                 or value.get("source_url") != job["source_url"]):
             fail("receipts", "Le lot ou une source a changé depuis la préparation.")
-        if value.get("render_mode") != "interactive" and not s3.validate_object(value["s3_key"]):
+        if value.get("linked_image") and (value.get("url") != job["source_url"] or job.get("source_provider") == "anmsm"):
+            fail("receipts", "Le lien image a changé depuis la préparation.")
+        if value.get("render_mode") != "interactive" and not value.get("linked_image") and not s3.validate_object(value["s3_key"]):
             fail("receipts", "Un média préparé n’est plus disponible.")
         assets[identity] = value
     output = {"schema_version": "1.0", "stations": copy.deepcopy(records)}
@@ -388,7 +411,7 @@ def assemble_batch(batch, receipts):
                 record["station"][field] = assets[(slug, role)]["url"]
         if (slug, "piste_map") in assets:
             plan = assets[(slug, "piste_map")]
-            field = "official_map_url" if plan.get("render_mode") == "interactive" else "large_map_url"
+            field = "official_map_url" if plan.get("render_mode") == "interactive" or plan.get("linked_image") else "large_map_url"
             record.setdefault("pistes", {}).update({"enabled": True, field: plan["url"]})
     validate_document(output, bulk=True)
     return output, resolved["warnings"]
