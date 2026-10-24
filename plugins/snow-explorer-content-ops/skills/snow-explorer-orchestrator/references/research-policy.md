@@ -20,7 +20,7 @@ Ne pas attribuer de score numérique artificiel de confiance.
 - Altitudes, pistes, remontées, kilomètres skiables : privilégier station ou domaine officiel; recouper en cas d'écart notable.
 - Région, département, coordonnées : préférer données publiques officielles ou référence cartographique fiable.
 - Domaines skiables : ne proposer une relation que si l'appartenance est explicitement établie.
-- Images, logos et plans : ne proposer que des URLs légitimes; ne jamais fabriquer un logo officiel.
+- Médias : appliquer station-media.md. Les visuels officiels servent d’inspiration à une cover originale générée de zéro. Le logo est celui de l’ANMSM si disponible, sinon un écusson Snow Explorer original. Un écusson ne doit jamais être présenté comme le logo officiel. Le plan reste une URL déjà disponible ; aucune URL de stockage n’est inventée.
 - Contenus éditoriaux : distinguer les faits sourcés de la rédaction originale. Ne pas copier de longs passages protégés.
 
 ## Choisir une valeur cohérente
