@@ -97,3 +97,7 @@ Ne jamais :
 
 Pour une demande de JSON à importer, suivre [le workflow par lots](references/station-batches.md). Ce flux prépare un fichier et ne lance aucun APPLY. Le pipeline RESEARCH/COMPARE/REVIEW/APPLY reste requis pour les écritures directes via Station Ops.
 
+
+## Descriptions et périmètre de création
+
+Pour toute création de station, appliquer impérativement [les règles de description](references/station-descriptions.md) : recherche des faits d’abord, rédaction originale ensuite, sans plan ni phrases préfabriqués ; relire fluidité et diversité avant livraison. Le périmètre exact des champs figure dans [le workflow par lots](references/station-batches.md). Ne pas enrichir automatiquement avec d’autres blocs.

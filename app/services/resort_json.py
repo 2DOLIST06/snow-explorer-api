@@ -1,5 +1,6 @@
 """Versioned, allow-listed station import/export domain service."""
 import hashlib
+import copy
 import hmac
 import json
 import os
@@ -16,7 +17,7 @@ from app.models.resort import Resort
 from app.models.station_widgets import StationWidgets
 from app.models.ski_area import SkiArea, SkiAreaResort
 from app.models.ski_pass import SkiPassSeason
-from app.services.ski_passes import prefetch_seasons, replace_grid, serialize_season, validate_grid
+from app.services.ski_passes import prefetch_seasons, replace_grid, serialize_season, validate_grid, normalize_price_label
 from app.datetime_utils import utcnow
 
 SCHEMA_VERSION = "1.0"
@@ -158,6 +159,10 @@ def serialize_station(resort, widgets=None, pistes=None, lifts=None):
         "items": [{"id": p.id, "name": p.name, "difficulty": p.difficulty, "length_m": p.length_m, "elevation_diff_m": p.elevation_diff_m} for p in pistes],
     }
     out["remontees"] = {name: sum(l.type == typ for l in lifts) for name, typ in lift_types.items()}
+    for name in lift_types:
+        stored = _widget(cfg, "remontees", "tireFesses" if name == "tire_fesses" else name)
+        if stored is not None:
+            out["remontees"][name] = stored
     out["remontees"]["items"] = [{"id": l.id, "name": l.name, "type": l.type, "capacity_per_hour": l.capacity_per_hour} for l in lifts]
     out["snowpark"] = {"enabled": bool(_widget(cfg, "snowpark", "enabled", False)), "count": _widget(cfg, "snowparks", "count", _widget(cfg, "snowpark", "count")), "map_url": resort.snowpark_map_url, "image_url": _widget(cfg, "snowpark", "imageUrl"), "logo_url": _widget(cfg, "snowpark", "logoUrl"), "caption": resort.snowpark_caption, "description_html": _widget(cfg, "snowpark", "descriptionHtml")}
     for block in ("webcams", "forfaits"):
@@ -253,7 +258,7 @@ def validate_document(document, bulk=False, allow_empty_advanced=False):
         for key in unknown_blocks: errors.append({"path": prefix + key, "message": "unknown field"})
         station = record.get("station")
         if not isinstance(station, dict): errors.append({"path": prefix + "station", "message": "station object is required"}); continue
-        clean = dict(record); clean["station"] = dict(station)
+        clean = copy.deepcopy(record); record = clean; station = clean["station"]
         if not station.get("id") and not station.get("slug"):
             errors.append({"path": prefix + "station", "message": "id or slug is required"})
         for field in set(station) - set(STATION_FIELDS): errors.append({"path": prefix + "station." + field, "message": "unknown field"})
@@ -311,6 +316,11 @@ def validate_document(document, bulk=False, allow_empty_advanced=False):
                             errors.append({"path": f"{season_path}.passes.{pass_index}.{key}", "message": "unknown field"})
                         for price_index, price in enumerate(product.get("prices", []) if isinstance(product.get("prices"), list) else []):
                             if isinstance(price, dict):
+                                try:
+                                    price = normalize_price_label(price)
+                                    product["prices"][price_index] = price
+                                except ValueError as exc:
+                                    errors.append({"path": f"{season_path}.passes.{pass_index}.prices.{price_index}.label", "message": str(exc)})
                                 allowed_price = {"period_id", "category", "category_label", "price_type", "price", "price_min", "price_max", "dynamic_label", "note", "sort_order"}
                                 for key in set(price) - allowed_price:
                                     errors.append({"path": f"{season_path}.passes.{pass_index}.prices.{price_index}.{key}", "message": "unknown field"})
@@ -357,7 +367,6 @@ def differences(resort, record):
         for field, new in values.items():
             # Identity metadata must never become a previewed change.
             if block == "station" and field == "id": continue
-            if block == "remontees" and field != "items": continue
             old = current[block].get(field)
             path = f"{block}.{field}"
             (unchanged if old == new else changes).append(path if old == new else {"path": path, "old_value": old, "new_value": new, "action": "clear" if new is None else "update"})
@@ -401,6 +410,9 @@ def apply_record(resort, record):
                 attr = "snowpark_" + key; setattr(resort, attr, value); resort.updated_at = utcnow(); resort.save(); relation_updates.append(f"snowpark.{key}"); continue
             if block == "pistes" and key == "items": _replace_pistes(resort, value); relation_updates.append("pistes.items"); continue
             if block == "remontees" and key == "items": _replace_lifts(resort, value); relation_updates.append("remontees.items"); continue
+            if block == "remontees" and key in {"tire_fesses", "telesieges", "telepheriques"}:
+                widget["tireFesses" if key == "tire_fesses" else key] = value
+                relation_updates.append(f"remontees.{key}"); continue
             if block == "pistes" and key in {"green", "blue", "red", "black"}:
                 colors = dict(widget.get("colors", {})) if isinstance(widget.get("colors"), dict) else {}
                 colors[key] = value; widget["colors"] = colors
@@ -417,7 +429,7 @@ def apply_record(resort, record):
                 relation_updates.append(f"description.{key}"); continue
             if block in {"forfaits_avances", "domaines_skiables"}: continue
             widget[mappings.get(key, key)] = value; relation_updates.append(f"{block}.{key}")
-        if block not in {"remontees", "forfaits_avances", "domaines_skiables"}: cfg[block] = widget
+        if block not in {"forfaits_avances", "domaines_skiables"}: cfg[block] = widget
     if "forfaits_avances" in record:
         _replace_advanced_passes(resort, record["forfaits_avances"].get("seasons", []))
         relation_updates.append("forfaits_avances.seasons")

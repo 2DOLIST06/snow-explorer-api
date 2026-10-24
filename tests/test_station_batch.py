@@ -59,6 +59,57 @@ class StationBatchTests(unittest.TestCase):
             with self.assertRaises(ValidationProblem):
                 batch.resolve_batch(document())
 
+    def test_creation_scope_rejects_unrequested_fields_and_lower_description(self):
+        for key, value in (("description", {"html": "<p>Wrong field</p>"}), ("webcams", {"enabled": False})):
+            data = document()
+            data["document"]["stations"][0][key] = value
+            with self.subTest(key=key), self.assertRaises(ValidationProblem):
+                batch.validate_batch(data)
+        data = document()
+        data["document"]["stations"][0]["station"]["meta_title"] = "Not requested"
+        with self.assertRaises(ValidationProblem):
+            batch.validate_batch(data)
+
+    def test_combined_advanced_passes_preserve_legacy_label_without_mutating_input(self):
+        from app.services.resort_json import validate_document
+        from app.services.ski_passes import validate_grid
+        season = {"season": "2026-2027", "currency": "EUR", "periods": [
+            {"id": "winter", "name": "Winter", "start_date": "2026-12-01", "end_date": "2027-03-31"}],
+            "passes": [{"id": "day", "name": "Day", "duration_days": 1, "duration_label": "1 day", "prices": [
+                {"period_id": "winter", "category": "adult", "category_label": "Adult", "price_type": "fixed", "price": 42,
+                 "label": "Card extra", "note": "Online purchase"}]}]}
+        data = document()
+        data["document"]["stations"][0]["forfaits_avances"] = {"seasons": [season]}
+        record = validate_document(data["document"], bulk=True)[0]
+        price = record["forfaits_avances"]["seasons"][0]["passes"][0]["prices"][0]
+        self.assertEqual(price["note"], "Online purchase\nCard extra")
+        self.assertEqual(price["price"], 42)
+        self.assertNotIn("label", price)
+        self.assertIn("label", season["passes"][0]["prices"][0])
+        grid, errors = validate_grid({**season, "station_slug": "test-station"}, resort_lookup=lambda _: object())
+        self.assertEqual(errors, [])
+        self.assertEqual(grid["products"][0]["prices"][0]["note"], price["note"])
+
+    def test_widget_counters_are_written_without_fabricated_lifts_or_lower_description(self):
+        from types import SimpleNamespace
+        from app.services.resort_json import apply_record
+        row = Mock()
+        record = {"station": {}, "pistes": {"green": 0, "blue": 3},
+                  "remontees": {"tire_fesses": 2, "telesieges": 4}, "snowpark": {"count": 1}}
+        with patch("app.services.resort_json._load_widgets", return_value={"description": {"html": "Keep"}}), \
+             patch("app.services.resort_json.StationWidgets.get_or_none", return_value=row), \
+             patch("app.services.resort_json._replace_lifts") as lifts:
+            apply_record(SimpleNamespace(slug="test-station", id="s1"), record)
+        import json
+        cfg = json.loads(row.config)
+        self.assertEqual(cfg["remontees"]["tireFesses"], 2)
+        self.assertEqual(cfg["remontees"]["telesieges"], 4)
+        self.assertNotIn("telepheriques", cfg["remontees"])
+        self.assertEqual(cfg["pistes"]["colors"], {"green": 0, "blue": 3})
+        self.assertEqual(cfg["snowparks"]["count"], 1)
+        self.assertEqual(cfg["description"]["html"], "Keep")
+        lifts.assert_not_called()
+
     def test_anmsm_logo_takes_precedence_over_official_fallback(self):
         data = document("FR")
         data["media"][1].update(status="found", source_url="https://official.example/logo.png", source_page_url="https://official.example/")

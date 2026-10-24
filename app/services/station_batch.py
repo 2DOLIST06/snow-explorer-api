@@ -28,6 +28,18 @@ from app.services.resort_json import BLOCK_FIELDS, STATION_FIELDS, ValidationPro
 ROLES = {"cover", "logo", "piste_map"}
 MAX_BATCH = 10
 MAX_BYTES = 20 * 1024 * 1024
+BATCH_STATION_FIELDS = {
+    "id", "slug", "name", "is_active", "country_code", "region_id", "region_name", "department",
+    "website_url", "latitude", "longitude", "altitude_min_m", "altitude_max_m",
+    "pistes_count", "ski_area_km", "lifts_count", "season_open_date", "season_close_date",
+    "description_md",
+}
+BATCH_BLOCK_FIELDS = {
+    "pistes": {"green", "blue", "red", "black"},
+    "remontees": {"tire_fesses", "telesieges", "telepheriques"},
+    "snowpark": {"count"},
+    "forfaits_avances": {"seasons"},
+}
 
 
 def fail(path, message):
@@ -81,6 +93,12 @@ def validate_batch(batch):
     slugs = set()
     for i, record in enumerate(records):
         station = record["station"]
+        extra = set(station) - BATCH_STATION_FIELDS
+        if extra:
+            fail(f"document.stations.{i}.station", "Champ hors périmètre : " + ", ".join(sorted(extra)))
+        for block in set(record) - {"station"}:
+            if block not in BATCH_BLOCK_FIELDS or set(record[block]) - BATCH_BLOCK_FIELDS[block]:
+                fail(f"document.stations.{i}.{block}", "Bloc ou champ hors du périmètre de création demandé.")
         slug = station.get("slug")
         if not slug or slug in slugs:
             fail(f"document.stations.{i}.station.slug", "Slug requis et unique dans le lot.")
@@ -119,8 +137,11 @@ def batch_contract():
         "root_fields": ["batch_version", "scope", "document", "media", "research"],
         "scope_fields": ["country_code", "massif", "discipline", "season"],
         "disciplines": ["alpine", "nordic", "mixed"],
-        "station_fields": list(STATION_FIELDS),
-        "blocks": {key: sorted(value) for key, value in BLOCK_FIELDS.items()},
+        "station_fields": sorted(BATCH_STATION_FIELDS),
+        "blocks": {key: sorted(value) for key, value in BATCH_BLOCK_FIELDS.items()},
+        "description_field": "station.description_md",
+        "description_policy": "Original fact-first prose, no fixed outline, no season years or piste/lift/snowpark counts; sources outside public description.",
+        "legacy_price_label": "Preserved as note; never discarded.",
         "media_roles": sorted(ROLES), "media_statuses": ["found", "not_found"],
         "media_fields": ["station_slug", "role", "status", "format", "source_url", "source_page_url",
                          "source_provider", "credit", "anmsm_external_id", "anmsm_media_id"],
@@ -145,6 +166,7 @@ def resolve_batch(batch):
     for asset in batch["media"]:
         slug, role = asset["station_slug"], asset["role"]
         choice = copy.deepcopy(asset)
+        choice["source_provider"] = "official"
         if role in {"logo", "piste_map"} and batch["scope"]["country_code"] == "FR":
             matches = [row for row in logos if normalized(row["external_name"]) == normalized(stations[slug]["name"])]
             external_id = asset.get("anmsm_external_id")
@@ -177,6 +199,8 @@ def resolve_batch(batch):
             continue
         if not choice.get("source_url"):
             fail("media", f"{slug} : URL directe requise pour {role}.")
+        if role == "piste_map" and choice.get("source_provider") != "anmsm" and choice.get("format") != "interactive":
+            fail("media", f"{slug} : hors ANMSM, utilisez l’URL du lecteur officiel intégrable (format interactive), pas un PDF.")
         # Validate the structure now; DNS/network checks happen in preparation.
         public_target(choice["source_url"])
         payload = {"kind": "job", "batch_checksum": checksum(batch), **choice}
