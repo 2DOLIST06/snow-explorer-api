@@ -146,6 +146,9 @@ def serialize_station(resort, widgets=None, pistes=None, lifts=None):
     lifts = list(lifts if lifts is not None else Lift.select().where(Lift.resort == resort.id))
     station = {field: iso(getattr(resort, field, None)) for field in STATION_FIELDS}
     difficulties = {colour: sum(p.difficulty == colour for p in pistes) for colour in ("green", "blue", "red", "black")}
+    stored_colors = _widget(cfg, "pistes", "colors", {})
+    if isinstance(stored_colors, dict):
+        difficulties.update({key: stored_colors[key] for key in difficulties if key in stored_colors})
     lift_types = {"tire_fesses": "drag", "telesieges": "chair", "telepheriques": "gondola"}
     out = {"station": station}
     out["pistes"] = {
@@ -156,7 +159,7 @@ def serialize_station(resort, widgets=None, pistes=None, lifts=None):
     }
     out["remontees"] = {name: sum(l.type == typ for l in lifts) for name, typ in lift_types.items()}
     out["remontees"]["items"] = [{"id": l.id, "name": l.name, "type": l.type, "capacity_per_hour": l.capacity_per_hour} for l in lifts]
-    out["snowpark"] = {"enabled": bool(_widget(cfg, "snowpark", "enabled", False)), "count": _widget(cfg, "snowpark", "count"), "map_url": resort.snowpark_map_url, "image_url": _widget(cfg, "snowpark", "imageUrl"), "logo_url": _widget(cfg, "snowpark", "logoUrl"), "caption": resort.snowpark_caption, "description_html": _widget(cfg, "snowpark", "descriptionHtml")}
+    out["snowpark"] = {"enabled": bool(_widget(cfg, "snowpark", "enabled", False)), "count": _widget(cfg, "snowparks", "count", _widget(cfg, "snowpark", "count")), "map_url": resort.snowpark_map_url, "image_url": _widget(cfg, "snowpark", "imageUrl"), "logo_url": _widget(cfg, "snowpark", "logoUrl"), "caption": resort.snowpark_caption, "description_html": _widget(cfg, "snowpark", "descriptionHtml")}
     for block in ("webcams", "forfaits"):
         out[block] = {"enabled": bool(_widget(cfg, block, "enabled", False)), "items": _widget(cfg, block, "items", [])}
     out["forfaits"]["columns"] = _widget(cfg, "forfaits", "columns", [])
@@ -354,8 +357,7 @@ def differences(resort, record):
         for field, new in values.items():
             # Identity metadata must never become a previewed change.
             if block == "station" and field == "id": continue
-            # Aggregate counters are informative; item arrays are authoritative relations.
-            if block in {"pistes", "remontees"} and field not in {"enabled", "small_map_url", "large_map_url", "caption", "items"}: continue
+            if block == "remontees" and field != "items": continue
             old = current[block].get(field)
             path = f"{block}.{field}"
             (unchanged if old == new else changes).append(path if old == new else {"path": path, "old_value": old, "new_value": new, "action": "clear" if new is None else "update"})
@@ -399,6 +401,16 @@ def apply_record(resort, record):
                 attr = "snowpark_" + key; setattr(resort, attr, value); resort.updated_at = utcnow(); resort.save(); relation_updates.append(f"snowpark.{key}"); continue
             if block == "pistes" and key == "items": _replace_pistes(resort, value); relation_updates.append("pistes.items"); continue
             if block == "remontees" and key == "items": _replace_lifts(resort, value); relation_updates.append("remontees.items"); continue
+            if block == "pistes" and key in {"green", "blue", "red", "black"}:
+                colors = dict(widget.get("colors", {})) if isinstance(widget.get("colors"), dict) else {}
+                colors[key] = value; widget["colors"] = colors
+                relation_updates.append(f"pistes.{key}"); continue
+            if block == "pistes" and key in {"enabled", "official_map_url"}:
+                widget[mappings.get(key, key)] = value
+                relation_updates.append(f"pistes.{key}"); continue
+            if block == "snowpark" and key == "count":
+                counts = dict(cfg.get("snowparks", {})) if isinstance(cfg.get("snowparks"), dict) else {}
+                counts["count"] = value; cfg["snowparks"] = counts
             if block in {"pistes", "remontees"}: continue
             if block == "description" and key in {"html", "meta_title", "meta_description"}:
                 widget[{"meta_title": "metaTitle", "meta_description": "metaDescription"}.get(key, key)] = value
