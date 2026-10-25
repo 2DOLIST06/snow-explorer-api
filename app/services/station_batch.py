@@ -263,8 +263,6 @@ def resolve_batch(batch):
             fail("media", f"{slug} : sans logo ANMSM, générez un écusson Snow Explorer original ; pas de logo officiel de remplacement.")
         if not choice.get("source_url"):
             fail("media", f"{slug} : URL directe requise pour {role}.")
-        if role == "piste_map" and urlsplit(choice["source_url"]).path.lower().endswith(".pdf"):
-            fail("media", f"{slug} : utilisez le plan ANMSM déjà converti ou le lecteur officiel, pas un PDF brut.")
         # Validate the structure now; DNS/network checks happen in preparation.
         public_target(choice["source_url"])
         payload = {"kind": "job", "batch_checksum": checksum(batch), **choice}
@@ -374,8 +372,8 @@ def probe_interactive(url):
     fail("source_url", "Trop de redirections.")
 
 
-def probe_map_image(url):
-    """Check a linked plan without writing, converting or uploading its bytes."""
+def probe_map_image(url, *, pdf=False):
+    """Check a linked image or PDF without copying or converting the plan."""
     for _ in range(4):
         parsed, address = public_target(url)
         connection = PinnedHTTPSConnection(parsed.hostname, address)
@@ -387,10 +385,23 @@ def probe_map_image(url):
                 url = urljoin(url, response.getheader("Location", ""))
                 continue
             mime = (response.getheader("Content-Type") or "").split(";")[0].strip().lower()
-            if response.status not in {200, 206} or mime not in {"image/jpeg", "image/png", "image/webp"}:
-                fail("source_url", "Le lien du plan doit répondre avec une image déjà disponible, pas un PDF brut ni une page HTML.")
-            if not response.read(16):
+            allowed = {"application/pdf"} if pdf else {"image/jpeg", "image/png", "image/webp"}
+            if response.status not in {200, 206} or mime not in allowed:
+                fail("source_url", "Le lien du plan doit répondre avec une image ou un PDF valide, pas une page HTML.")
+            prefix = response.read(16)
+            if not prefix:
                 fail("source_url", "Le lien du plan est vide.")
+            if pdf:
+                if not prefix.startswith(b"%PDF-"):
+                    fail("source_url", "Le fichier du plan n’est pas un PDF valide.")
+                if response.getheader("X-Frame-Options"):
+                    fail("source_url", "Le fournisseur restreint l’ouverture du PDF dans la fenêtre du plan.")
+                csp = response.getheader("Content-Security-Policy") or ""
+                ancestors = re.search(r"(?:^|;)\s*frame-ancestors\s+([^;]+)", csp, re.I)
+                if ancestors and ancestors.group(1).strip() != "*":
+                    fail("source_url", "La politique du fournisseur restreint l’intégration du PDF.")
+                if "attachment" in (response.getheader("Content-Disposition") or "").lower():
+                    fail("source_url", "Le fournisseur force le téléchargement du PDF au lieu de son affichage.")
             return url
         finally:
             connection.close()
@@ -400,8 +411,14 @@ def probe_map_image(url):
 def prepare_media(token):
     job = verified(token, "job")
     if job["role"] == "piste_map":
-        interactive = job.get("format") == "interactive"
-        probe_interactive(job["source_url"]) if interactive else probe_map_image(job["source_url"])
+        pdf = urlsplit(job["source_url"]).path.lower().endswith(".pdf")
+        interactive = job.get("format") == "interactive" or pdf
+        if pdf:
+            probe_map_image(job["source_url"], pdf=True)
+        elif interactive:
+            probe_interactive(job["source_url"])
+        else:
+            probe_map_image(job["source_url"])
         value = {**job, "kind": "prepared", "url": job["source_url"],
                  "render_mode": "interactive" if interactive else "image",
                  "linked_image": not interactive, "s3_key": None,
