@@ -118,6 +118,10 @@ Pour toute création ou réécriture de description, lire et appliquer impérati
 
 Appliquer obligatoirement [cover, écusson et plan](references/station-media.md) avant de produire un lot : cover générée de zéro ≤ 80 Ko ; logo ANMSM ou écusson Snow Explorer original ≤ 40 Ko ; plan uniquement par URL déjà disponible, jamais reconverti dans l’import. Les images originales sont réellement générées avec l’outil de génération, puis embarquées en WebP dans le JSON ; une photo officielle n’est jamais une cover de remplacement.
 
+## Forfaits avancés
+
+Avant toute génération de forfaits, lire et appliquer [la construction des grilles et onglets](references/station-forfaits.md). Séparer les familles d’offres dans `periods`, rattacher chaque prix au bon groupe et conserver la saison dans `season`. Les dates de consultation et commentaires de recherche restent dans `research`, jamais dans les intitulés publics.
+
 ## Filtre des lots importables
 
 Appliquer scripts/filter-complete-stations.py au lot final avant validation et livraison, après préparation des médias, avec un nouveau chemin de sortie et un rapport distinct. Ce contrôle élimine toute station sans un champ obligatoire, forfaits avancés de la bonne saison, cover, logo ou plan importable ; zéro est accepté. Relire aussi la validité factuelle et la complétude des tarifs : ce filtre de présence ne remplace pas la recherche ni la validation de schéma. Vérifier les données avant génération des médias pour éviter de produire inutilement des images de stations déjà incomplètes. Ne pas fractionner un lot pour respecter une ancienne règle de 1 Mo : cette restriction éditoriale est supprimée. Les plafonds unitaires WebP de 80/40 Ko restent inchangés ; le plafond technique courant de l’importeur se lit dans station_batch_contract.max_bytes.
