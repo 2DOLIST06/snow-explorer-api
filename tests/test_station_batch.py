@@ -390,6 +390,25 @@ class StationBatchTests(unittest.TestCase):
         self.assertTrue(any("failed" in line and "TimeoutError" in line for line in logs.output))
         self.assertTrue(all(job["source_url"] not in line for line in logs.output))
 
+    def test_batch_logo_selects_fast_encoder_and_preserves_40k_limit(self):
+        job = {"kind": "job", "station_slug": "test", "role": "logo", "source_provider": "anmsm",
+               "source_url": "https://example.org/logo.png"}
+        with tempfile.NamedTemporaryFile(delete=False) as original:
+            original.write(b"source")
+            source = original.name
+        def convert(source_path, output_path, **kwargs):
+            self.assertEqual(kwargs, {"output_limit": 40 * 1024, "webp_method": 4})
+            with open(output_path, "wb") as output:
+                output.write(b"prepared")
+            return {"optimized_width": 512, "optimized_height": 512}
+        with patch.object(batch, "download", return_value=(source, "image/png", "digest")), \
+             patch.object(batch.anmsm_logos, "_convert_subprocess", side_effect=convert), \
+             patch.object(batch.s3, "put_file", return_value="https://cdn.example/logo.webp"), \
+             patch.object(batch.s3, "preview_url", return_value="https://cdn.example/logo.webp"):
+            result = batch.prepare_media(batch.signed(job))
+        self.assertEqual(result["url"], "https://cdn.example/logo.webp")
+        self.assertFalse(os.path.exists(source))
+
     def test_logo_conversion_error_preserves_code_and_names_phase(self):
         job = {"station_slug": "test", "role": "logo"}
         with self.assertRaises(batch.anmsm_logos.LogoImportError) as raised:

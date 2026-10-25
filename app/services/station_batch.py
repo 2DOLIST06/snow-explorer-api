@@ -470,7 +470,7 @@ def prepare_media(token):
             with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as output:
                 display = output.name
             with media_stage(job, "conversion du logo en WebP"):
-                metadata = anmsm_logos._convert_subprocess(source, display, output_limit=40 * 1024)
+                metadata = anmsm_logos._convert_subprocess(source, display, output_limit=40 * 1024, webp_method=4)
         else:
             fail("media", "La couverture et l’écusson de remplacement doivent être générés avant l’import.")
         if os.path.getsize(display) > GENERATED_LIMITS[job["role"]]:
