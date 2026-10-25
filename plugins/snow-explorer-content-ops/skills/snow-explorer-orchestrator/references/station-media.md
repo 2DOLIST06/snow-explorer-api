@@ -23,3 +23,7 @@ Après génération réelle, utiliser scripts/embed-generated-media.py avec le f
 ## Plans
 
 Les plans sont uniquement des liens. Consulter prepared_anmsm_maps du contrat et réutiliser l’image déjà convertie par l’outil ANMSM, avec son URL persistante. Ne pas modifier l’outil ANMSM ni lancer sa conversion depuis l’import par lots. En l’absence de plan pertinent déjà préparé, utiliser le lecteur officiel (LumiPlay, Calaméo ou autre) ou un lien image existant. Aucun fichier de plan n’est généré, converti, réhébergé ni embarqué en base64. Les contrôles de disponibilité ne sont pas un téléchargement pour stockage. Le rendu doit être testé dans la modale lorsque le navigateur le permet, sans annoncer de réussite fictive.
+
+## Station incomplète
+
+Un plan introuvable ou un média indisponible exclut la station entière du lot importable, au même titre qu’un champ obligatoire manquant. Ne pas livrer une station avec media.status=not_found en espérant que l’import la complète. Continuer les recherches officielles et ANMSM avant exclusion, puis nommer la station et ses manques dans le résultat. Un test de modale bloqué reste annoncé comme tel, sans fausse validation.

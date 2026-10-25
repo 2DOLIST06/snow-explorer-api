@@ -31,6 +31,7 @@ from app.models.station_piste_map_candidate import StationPisteMapCandidate
 
 ROLES = {"cover", "logo", "piste_map"}
 MAX_BATCH = 10
+MAX_BATCH_BYTES = 16 * 1024 * 1024
 MAX_BYTES = 20 * 1024 * 1024
 GENERATED_LIMITS = {"cover": 80 * 1024, "logo": 40 * 1024}
 BATCH_STATION_FIELDS = {
@@ -116,8 +117,8 @@ def validate_batch(batch):
     if not isinstance(batch, dict) or batch.get("batch_version") != "1.0":
         fail("batch_version", "Version de lot attendue : 1.0.")
     try:
-        if len(json.dumps(batch, allow_nan=False).encode("utf-8")) > 1024 * 1024:
-            fail("batch", "Le lot dépasse 1 Mio.")
+        if len(json.dumps(batch, allow_nan=False).encode("utf-8")) > MAX_BATCH_BYTES:
+            fail("batch", "Le lot dépasse la limite technique de 16 Mio.")
     except (TypeError, ValueError, RecursionError):
         fail("batch", "Le lot doit être un JSON fini et sérialisable.")
     scope = batch.get("scope")
@@ -177,7 +178,7 @@ def validate_batch(batch):
 def batch_contract():
     return {
         "batch_version": "1.0", "media_policy_version": "2.0", "document_schema_version": "1.0", "max_stations": MAX_BATCH,
-        "max_bytes": 1024 * 1024, "creation_only": True, "is_active": False,
+        "max_bytes": MAX_BATCH_BYTES, "creation_only": True, "is_active": False,
         "root_fields": ["batch_version", "scope", "document", "media", "research"],
         "scope_fields": ["country_code", "massif", "discipline", "season"],
         "disciplines": ["alpine", "nordic", "mixed"],

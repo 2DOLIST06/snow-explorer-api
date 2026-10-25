@@ -55,8 +55,6 @@ def main():
             asset.update(status="found", format="file", source_kind="generated", source_provider="generated",
                          data_base64=base64.b64encode(webp_bytes(filename, role)).decode("ascii"))
     text = json.dumps(batch, ensure_ascii=False, indent=2)
-    if len((text + "\n").encode("utf-8")) > 1024 * 1024:
-        raise ValueError("Batch exceeds 1 MiB; split it into smaller batches")
     Path(args.output).write_text(text + "\n")
 
 

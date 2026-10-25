@@ -173,8 +173,9 @@ def assemble_researched_batch():
 
 def _batch_response(action):
     from app.services.anmsm_logos import LogoImportError
-    if request.content_length and request.content_length > 1024 * 1024:
-        return jsonify({"message": "Le lot dépasse 1 Mio."}), 413
+    from app.services.station_batch import MAX_BATCH_BYTES
+    if request.content_length and request.content_length > MAX_BATCH_BYTES:
+        return jsonify({"message": "Le lot dépasse la limite technique de 16 Mio."}), 413
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"message": "Un objet JSON est requis."}), 400
