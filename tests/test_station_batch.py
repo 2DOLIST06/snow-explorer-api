@@ -377,6 +377,76 @@ class StationBatchTests(unittest.TestCase):
             with self.assertRaises(ValidationProblem):
                 batch.assemble_batch(data, [receipt + "tampered"])
 
+    def test_revision_rebinds_only_unchanged_signed_media(self):
+        data = document()
+        for asset in data["media"]:
+            asset.update(status="found", source_provider="official", source_url="https://example.org/" + asset["role"] + ".webp", source_page_url="https://example.org/")
+        def resolve(value):
+            binding = batch.checksum(value)
+            jobs = []
+            for asset in value["media"]:
+                job = {**asset, "kind": "job", "batch_checksum": binding}
+                jobs.append({**asset, "job_token": batch.signed(job)})
+            return {"jobs": jobs, "warnings": [], "batch_checksum": binding}
+        original = resolve(data)
+        receipts = []
+        for item in original["jobs"]:
+            job = batch.verified(item["job_token"], "job")
+            value = {**job, "kind": "prepared", "job_fingerprint": batch.media_fingerprint(job),
+                     "url": job["source_url"], "linked_image": True, "s3_key": None}
+            receipts.append(batch.signed(value))
+        changed = copy.deepcopy(data)
+        changed["media"][2]["source_url"] = "https://example.org/new-map.pdf"
+        changed["document"]["stations"][0]["station"]["name"] = "Corrected name"
+        with patch.object(batch, "resolve_batch", side_effect=resolve):
+            result = batch.revise_batch(changed, receipts)
+        self.assertEqual(len(result["prepared"]), 2)
+        self.assertEqual({asset["role"] for asset in result["prepared"]}, {"cover", "logo"})
+        for asset in result["prepared"]:
+            value = batch.verified(asset["receipt"], "prepared")
+            self.assertEqual(value["batch_checksum"], batch.checksum(changed))
+        with patch.object(batch, "resolve_batch", side_effect=resolve):
+            with self.assertRaises(ValidationProblem):
+                batch.revise_batch(changed, [receipts[0] + "tampered"])
+
+    def test_revised_receipt_assembles_after_station_data_correction(self):
+        data = document()
+        data["media"][2].update(status="found", source_provider="official", source_url="https://example.org/map.webp", source_page_url="https://example.org/")
+        with patch("app.routes.admin_resort_import._resolve", return_value=None), patch.object(batch, "public_target"):
+            resolved = batch.resolve_batch(data)
+            with patch.object(batch, "probe_map_image"):
+                prepared = batch.prepare_media(resolved["jobs"][0]["job_token"])
+            changed = copy.deepcopy(data)
+            changed["document"]["stations"][0]["station"]["altitude_min_m"] = 1200
+            result = batch.revise_batch(changed, [prepared["receipt"]])
+            self.assertEqual(len(result["prepared"]), 1)
+            output, _ = batch.assemble_batch(changed, [result["prepared"][0]["receipt"]])
+        self.assertEqual(output["stations"][0]["station"]["altitude_min_m"], 1200)
+        self.assertEqual(output["stations"][0]["pistes"]["official_map_url"], prepared["url"])
+        with patch.object(batch, "resolve_batch", return_value=result):
+            with self.assertRaises(ValidationProblem):
+                batch.revise_batch(changed, [prepared["receipt"], prepared["receipt"]])
+
+    def test_fingerprint_changes_with_generated_bytes_and_source_properties(self):
+        job = {"kind": "job", "batch_checksum": "before", "station_slug": "test", "role": "cover", "data_base64": "AAAA", "source_kind": "generated"}
+        same = {**job, "batch_checksum": "after"}
+        self.assertEqual(batch.media_fingerprint(job), batch.media_fingerprint(same))
+        self.assertNotEqual(batch.media_fingerprint(job), batch.media_fingerprint({**job, "data_base64": "BBBB"}))
+        self.assertNotEqual(batch.media_fingerprint(job), batch.media_fingerprint({**job, "format": "interactive"}))
+
+    def test_manual_generated_logo_is_not_overwritten_by_feed(self):
+        data = document("FR")
+        data["media"][1].update(status="found", source_kind="generated", source_selection="manual", data_base64="placeholder")
+        logos = [{"external_station_id": "STAT1", "external_name": "Test Station", "logo": {"url": "https://example.org/old.png"}}]
+        with patch.object(batch, "generated_bytes", return_value=b"generated"), \
+             patch("app.routes.admin_resort_import._resolve", return_value=None), \
+             patch.object(batch.anmsm_logos, "fetch_stations", return_value=logos), \
+             patch.object(batch, "prepared_map_feed", return_value=[]):
+            result = batch.resolve_batch(data)
+        logo = next(job for job in result["jobs"] if job["role"] == "logo")
+        self.assertEqual(logo["source_provider"], "generated")
+        self.assertNotIn("source_url", logo)
+
     def test_logo_timeout_identifies_download_phase(self):
         job = {"kind": "job", "station_slug": "pralognan-la-vanoise", "role": "logo",
                "source_provider": "anmsm", "source_url": "https://example.org/logo.png"}
