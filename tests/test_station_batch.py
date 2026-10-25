@@ -278,6 +278,45 @@ class StationBatchTests(unittest.TestCase):
             self.assertEqual(result["url"], job["source_url"])
             self.assertIsNone(result["s3_key"])
 
+    def test_pdf_plan_is_resolved_and_prepared_as_linked_reader(self):
+        data = document()
+        data["media"][2].update(status="found", source_url="https://example.org/map.pdf",
+                                source_provider="official", source_page_url="https://example.org/")
+        with patch("app.routes.admin_resort_import._resolve", return_value=None), patch.object(batch, "public_target"):
+            resolved = batch.resolve_batch(data)
+        job = resolved["jobs"][0]
+        with patch.object(batch, "probe_map_image") as probe, patch.object(batch, "download") as download:
+            prepared = batch.prepare_media(job["job_token"])
+        probe.assert_called_once_with(job["source_url"], pdf=True)
+        download.assert_not_called()
+        self.assertEqual(prepared["render_mode"], "interactive")
+        self.assertEqual(prepared["url"], job["source_url"])
+        self.assertIsNone(prepared["s3_key"])
+        with patch.object(batch, "resolve_batch", return_value=resolved):
+            output, _ = batch.assemble_batch(data, [prepared["receipt"]])
+        self.assertEqual(output["stations"][0]["pistes"]["official_map_url"], job["source_url"])
+
+    def test_pdf_probe_rejects_invalid_or_unembeddable_responses(self):
+        cases = [({}, b"%PDF-1.7", True), ({"Content-Type": "text/html"}, b"<html>", False),
+                 ({}, b"not a pdf", False), ({"X-Frame-Options": "DENY"}, b"%PDF-1.7", False),
+                 ({"Content-Disposition": "attachment; filename=map.pdf"}, b"%PDF-1.7", False),
+                 ({"Content-Security-Policy": "frame-ancestors 'self'"}, b"%PDF-1.7", False)]
+        for extra, content, accepted in cases:
+            with self.subTest(headers=extra, content=content):
+                connection = Mock()
+                response = connection.getresponse.return_value
+                response.status = 206
+                headers = {"Content-Type": "application/pdf", **extra}
+                response.getheader.side_effect = lambda key, default=None: headers.get(key, default)
+                response.read.return_value = content
+                with patch.object(batch, "public_target", return_value=(batch.urlsplit("https://example.org/map.pdf"), "8.8.8.8")), patch.object(batch, "PinnedHTTPSConnection", return_value=connection):
+                    if accepted:
+                        self.assertEqual(batch.probe_map_image("https://example.org/map.pdf", pdf=True), "https://example.org/map.pdf")
+                    else:
+                        with self.assertRaises(ValidationProblem):
+                            batch.probe_map_image("https://example.org/map.pdf", pdf=True)
+                connection.close.assert_called_once()
+
     def test_linked_image_assembly_uses_official_field_and_keeps_domains(self):
         data = document()
         data["document"]["stations"][0]["domaines_skiables"] = {"items": [{"slug": "existing-area"}]}
