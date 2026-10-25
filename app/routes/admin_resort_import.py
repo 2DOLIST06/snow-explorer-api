@@ -161,6 +161,13 @@ def prepare_researched_media():
     return _batch_response(lambda payload: prepare_media(payload.get("job_token")))
 
 
+@bp_resort_json.post("/import/batch/revise")
+@admin_required
+def revise_researched_batch():
+    from app.services.station_batch import revise_batch
+    return _batch_response(lambda payload: revise_batch(payload.get("batch"), payload.get("receipts", [])))
+
+
 @bp_resort_json.post("/import/batch/assemble")
 @admin_required
 def assemble_researched_batch():
