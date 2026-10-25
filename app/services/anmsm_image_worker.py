@@ -256,7 +256,7 @@ def _content_box(image):
 
 
 def convert(source, output, max_pixels, output_size, output_limit,
-            max_width=16_000, max_height=16_000):
+            max_width=16_000, max_height=16_000, webp_method=6):
     from PIL import Image, UnidentifiedImageError
     globals()["Image"] = Image  # helpers remain import-light until limits are active
     Image.MAX_IMAGE_PIXELS = max_pixels
@@ -320,7 +320,7 @@ def convert(source, output, max_pixels, output_size, output_limit,
         canvas.alpha_composite(resized, ((output_size - width) // 2, (output_size - height) // 2))
         for quality in (82, 72, 62, 52, 42, 32, 22):
             try:
-                canvas.save(output, "WEBP", quality=quality, method=6)
+                canvas.save(output, "WEBP", quality=quality, method=webp_method)
             except OSError as exc:
                 raise ConversionError("webp_encode_failed") from exc
             size = os.path.getsize(output)
@@ -358,11 +358,12 @@ def main():
     parser.add_argument("--size", type=int, required=True)
     parser.add_argument("--output-limit", type=int, required=True)
     parser.add_argument("--memory-mb", type=int, required=True)
+    parser.add_argument("--webp-method", type=int, choices=range(7), default=6)
     args = parser.parse_args()
     try:
         _limit(args.memory_mb)
         metadata = convert(args.source, args.output, args.max_pixels, args.size,
-                           args.output_limit, args.max_width, args.max_height)
+                           args.output_limit, args.max_width, args.max_height, args.webp_method)
         result, status = {"ok": True, "metadata": metadata}, 0
     except ConversionError as exc:
         result, status = {"ok": False, "error": str(exc)}, 2

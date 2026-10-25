@@ -81,6 +81,26 @@ class AnmsmLogoSafetyTests(unittest.TestCase):
         self.assertTrue(response.closed); unlink.assert_called_once()
         self.assertFalse(os.path.exists(unlink.call_args.args[0]))
 
+    def test_fast_batch_encoding_keeps_transparency_dimensions_and_40k_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, output = os.path.join(directory, "logo.png"), os.path.join(directory, "logo.webp")
+            image = Image.new("RGBA", (828, 688), (0, 0, 0, 0))
+            from PIL import ImageDraw
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((80, 80, 748, 608), fill=(20, 80, 160, 255))
+            draw.polygon([(160, 500), (414, 140), (668, 500)], fill=(255, 255, 255, 255))
+            image.save(source, "PNG")
+            with patch("app.services.anmsm_logos.subprocess.run", wraps=subprocess.run) as worker:
+                metadata = _convert_subprocess(source, output, output_limit=40 * 1024, webp_method=4)
+            command = worker.call_args.args[0]
+            self.assertEqual(command[command.index("--webp-method") + 1], "4")
+            self.assertLessEqual(os.path.getsize(output), 40 * 1024)
+            self.assertEqual((metadata["optimized_width"], metadata["optimized_height"]), (512, 512))
+            with patch.object(Image, "MAX_IMAGE_PIXELS", 40_000_000), Image.open(output) as result:
+                self.assertEqual(result.format, "WEBP")
+                self.assertEqual(result.mode, "RGBA")
+                self.assertEqual(result.getpixel((0, 0))[3], 0)
+
     def test_child_timeout_and_signal_become_controlled_errors(self):
         with patch("app.services.anmsm_logos.subprocess.run",
                    side_effect=subprocess.TimeoutExpired("worker", 1)):
@@ -128,7 +148,7 @@ class AnmsmLogoSafetyTests(unittest.TestCase):
             for y in range(100, 300): image.putpixel((x, y), (0, 50, 180))
         # An internal white hole belongs to the logo and must not become edge background.
         for x in range(220, 280):
-            for y in range(160, 240): image.putpixel((x, y), "white")
+            for y in range(160, 240): image.putpixel((x, y), (255, 255, 255))
         raw = io.BytesIO(); image.save(raw, "JPEG", quality=95)
         metadata = self.convert_bytes(raw.getvalue())
         self.assertLess(metadata["content_width"], 350)

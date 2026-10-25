@@ -116,13 +116,14 @@ def download(url, session=requests):
             temporary.close()
     raise LogoImportError("too_many_redirects", "Too many media redirects")
 
-def _convert_subprocess(source_path, output_path, output_limit=OUTPUT_LIMIT):
+def _convert_subprocess(source_path, output_path, output_limit=OUTPUT_LIMIT, webp_method=6):
     timeout = _timeout("ANMSM_CONVERSION_TIMEOUT", 30)
     memory = int(_timeout("ANMSM_CONVERSION_MEMORY_MB", 512))
     command = [sys.executable, "-m", "app.services.anmsm_image_worker", source_path, output_path,
                "--max-pixels", str(MAX_PIXELS), "--size", str(OUTPUT_SIZE),
                "--max-width", str(MAX_WIDTH), "--max-height", str(MAX_HEIGHT),
-               "--output-limit", str(output_limit), "--memory-mb", str(memory)]
+               "--output-limit", str(output_limit), "--memory-mb", str(memory),
+               "--webp-method", str(webp_method)]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
