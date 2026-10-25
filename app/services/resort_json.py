@@ -21,7 +21,7 @@ from app.services.ski_passes import prefetch_seasons, replace_grid, serialize_se
 from app.datetime_utils import utcnow
 
 SCHEMA_VERSION = "1.0"
-MAX_FILE_SIZE = 1024 * 1024
+MAX_FILE_SIZE = 16 * 1024 * 1024
 MAX_STATIONS = 500
 MAX_JSON_DEPTH = 20
 MAX_ARRAY_ITEMS = 1000

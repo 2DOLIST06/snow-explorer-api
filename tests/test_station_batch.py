@@ -26,6 +26,14 @@ def document(country="CH"):
 
 
 class StationBatchTests(unittest.TestCase):
+    def test_batch_over_one_mib_is_accepted_and_technical_limit_is_kept(self):
+        data = document()
+        data['research'] = [{'notes': 'x' * (1024 * 1024)}]
+        self.assertEqual(len(batch.validate_batch(data)), 1)
+        with patch.object(batch, 'MAX_BATCH_BYTES', 1024):
+            with self.assertRaises(ValidationProblem):
+                batch.validate_batch(data)
+
     def setUp(self):
         self.app = Flask(__name__)
         self.app.config["SECRET_KEY"] = "test-secret"
