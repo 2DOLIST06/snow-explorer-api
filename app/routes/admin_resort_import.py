@@ -182,8 +182,10 @@ def _batch_response(action):
     try:
         return jsonify(action(payload))
     except ValidationProblem as exc:
+        current_app.logger.warning("Station batch rejected path=%s errors=%s", request.path, exc.errors)
         return jsonify({"message": exc.errors[0]["message"], "errors": exc.errors}), 422
     except LogoImportError as exc:
+        current_app.logger.warning("Station batch media rejected path=%s code=%s message=%s", request.path, exc.code, str(exc))
         return jsonify({"message": str(exc), "error": exc.code}), 422
     except Exception:
         current_app.logger.exception("Station batch preparation failed")

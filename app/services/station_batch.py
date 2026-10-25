@@ -4,6 +4,7 @@ The transport pins public DNS addresses, the existing isolated decoders produce
 WebP files, and signed receipts bind the review to the exact prepared bytes.
 """
 import copy
+from contextlib import contextmanager
 import base64
 import binascii
 import hashlib
@@ -408,6 +409,30 @@ def probe_map_image(url, *, pdf=False):
     fail("source_url", "Trop de redirections.")
 
 
+@contextmanager
+def media_stage(job, stage):
+    """Trace preparation phases without logging tokens, URLs or image data."""
+    label = f"{job['station_slug']} — {job['role']} — {stage}"
+    started = time.monotonic()
+    current_app.logger.info("station_batch_media start station=%s role=%s stage=%s",
+                            job['station_slug'], job['role'], stage)
+    try:
+        yield
+    except Exception as exc:
+        current_app.logger.warning("station_batch_media failed station=%s role=%s stage=%s elapsed=%.2fs error_type=%s",
+                                   job['station_slug'], job['role'], stage, time.monotonic() - started, type(exc).__name__)
+        if isinstance(exc, ValidationProblem):
+            raise ValidationProblem([{**error, "message": f"{label} : {error['message']}"} for error in exc.errors]) from exc
+        if isinstance(exc, anmsm_logos.LogoImportError):
+            raise anmsm_logos.LogoImportError(exc.code, f"{label} : {exc}") from exc
+        if isinstance(exc, TimeoutError):
+            fail("media", f"{label} : délai dépassé, le service n’a pas répondu à temps. Vous pouvez reprendre cette étape.")
+        raise
+    else:
+        current_app.logger.info("station_batch_media done station=%s role=%s stage=%s elapsed=%.2fs",
+                                job['station_slug'], job['role'], stage, time.monotonic() - started)
+
+
 def prepare_media(token):
     job = verified(token, "job")
     if job["role"] == "piste_map":
@@ -440,10 +465,12 @@ def prepare_media(token):
             if result.returncode or not metadata.get("ok"):
                 fail("media", "WebP généré invalide ou dimensions excessives.")
         elif job["role"] == "logo" and job.get("source_provider") == "anmsm":
-            source, _, _ = download(job["source_url"], "logo")
+            with media_stage(job, "téléchargement du logo ANMSM"):
+                source, _, _ = download(job["source_url"], "logo")
             with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as output:
                 display = output.name
-            metadata = anmsm_logos._convert_subprocess(source, display, output_limit=40 * 1024)
+            with media_stage(job, "conversion du logo en WebP"):
+                metadata = anmsm_logos._convert_subprocess(source, display, output_limit=40 * 1024)
         else:
             fail("media", "La couverture et l’écusson de remplacement doivent être générés avant l’import.")
         if os.path.getsize(display) > GENERATED_LIMITS[job["role"]]:
@@ -451,7 +478,8 @@ def prepare_media(token):
         with open(display, "rb") as image:
             digest = hashlib.file_digest(image, "sha256").hexdigest()
         key = f"station-batches/{job['station_slug']}/{job['role']}/{digest}.webp"
-        url = s3.put_file(key, display, "image/webp")
+        with media_stage(job, "enregistrement du média dans le stockage"):
+            url = s3.put_file(key, display, "image/webp")
         clean_job = {k: v for k, v in job.items() if k != "data_base64"}
         value = {**clean_job, "kind": "prepared", "url": url, "s3_key": key, "render_mode": "image",
                  "sha256": digest, "width": metadata.get("width", metadata.get("optimized_width", 512)),

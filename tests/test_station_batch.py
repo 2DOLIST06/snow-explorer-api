@@ -377,6 +377,27 @@ class StationBatchTests(unittest.TestCase):
             with self.assertRaises(ValidationProblem):
                 batch.assemble_batch(data, [receipt + "tampered"])
 
+    def test_logo_timeout_identifies_download_phase(self):
+        job = {"kind": "job", "station_slug": "pralognan-la-vanoise", "role": "logo",
+               "source_provider": "anmsm", "source_url": "https://example.org/logo.png"}
+        with patch.object(batch, "download", side_effect=TimeoutError()), self.assertLogs(self.app.logger, level="INFO") as logs:
+            with self.assertRaises(ValidationProblem) as raised:
+                batch.prepare_media(batch.signed(job))
+        message = raised.exception.errors[0]["message"]
+        self.assertIn("pralognan-la-vanoise", message)
+        self.assertIn("téléchargement du logo ANMSM", message)
+        self.assertIn("délai dépassé", message)
+        self.assertTrue(any("failed" in line and "TimeoutError" in line for line in logs.output))
+        self.assertTrue(all(job["source_url"] not in line for line in logs.output))
+
+    def test_logo_conversion_error_preserves_code_and_names_phase(self):
+        job = {"station_slug": "test", "role": "logo"}
+        with self.assertRaises(batch.anmsm_logos.LogoImportError) as raised:
+            with batch.media_stage(job, "conversion du logo en WebP"):
+                raise batch.anmsm_logos.LogoImportError("conversion_timeout", "Conversion trop longue.")
+        self.assertEqual(raised.exception.code, "conversion_timeout")
+        self.assertIn("conversion du logo en WebP", str(raised.exception))
+
     def test_real_image_conversion_stores_webp_and_keeps_logo_transparency(self):
         raw = io.BytesIO()
         Image.new("RGBA", (200, 100), (0, 100, 220, 180)).save(raw, "PNG")
