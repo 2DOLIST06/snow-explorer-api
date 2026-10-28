@@ -180,6 +180,8 @@ def replace_grid(payload, target_season=None):
     )
     grid, errors = validate_grid(payload, allow_empty=empty_replacement)
     if errors: return None, errors
+    if target_season is not None and "is_active" in payload and not isinstance(payload["is_active"], bool):
+        return None, [{"path": "is_active", "message": "booléen obligatoire"}]
     with db.atomic():
         season = target_season
         if season is None:
@@ -198,6 +200,14 @@ def replace_grid(payload, target_season=None):
             return None, []
         season.season, season.currency = grid["season"], grid["currency"]
         season.source_url, season.updated_at = grid["source_url"], utcnow()
+        if target_season is not None and "is_active" in payload:
+            season.is_active = payload["is_active"]
+            if season.is_active:
+                # Saving the displayed season selects it for the public site.
+                # Keep older/newer grids, but remove their public visibility.
+                (SkiPassSeason.update(is_active=False)
+                 .where((SkiPassSeason.resort == season.resort_id)
+                        & (SkiPassSeason.id != season.id)).execute())
         season.save()
         # Children are intentionally deleted inside the same transaction: any
         # later insert failure restores the complete previous grid.
