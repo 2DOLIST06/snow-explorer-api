@@ -142,6 +142,9 @@ class SkiPassReplacementIntegrationTests(unittest.TestCase):
         self.database.bind(self.models)
         self.database.connect()
         self.database.create_tables(self.models)
+        database_patch = patch("app.services.ski_passes.db", self.database)
+        database_patch.start()
+        self.addCleanup(database_patch.stop)
         self.resort = Resort.create(id="resort-1", name="Chamonix", slug="chamonix")
         self.widgets = StationWidgets.create(
             station_slug="chamonix",
@@ -151,6 +154,39 @@ class SkiPassReplacementIntegrationTests(unittest.TestCase):
     def tearDown(self):
         self.database.drop_tables(self.models)
         self.database.close()
+
+    def test_save_older_season_selects_it_publicly_and_keeps_both_grids(self):
+        newer, _ = replace_grid(grid())
+        newer.is_active = True
+        newer.save()
+        payload = grid()
+        payload["season"] = "2025-2026"
+        older, _ = replace_grid(payload)
+        payload["is_active"] = True
+        saved, errors = replace_grid(payload, target_season=older)
+        self.assertEqual(errors, [])
+        self.assertTrue(saved.is_active)
+        self.assertFalse(SkiPassSeason.get_by_id(newer.id).is_active)
+        self.assertEqual(SkiPassSeason.select().count(), 2)
+        app = Flask(__name__)
+        app.register_blueprint(bp_ski_passes)
+        response = app.test_client().get("/api/forfaits/stations/chamonix")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["season"], "2025-2026")
+
+    def test_failed_selection_rolls_back_visibility_and_prices(self):
+        newer, _ = replace_grid(grid())
+        newer.is_active = True
+        newer.save()
+        payload = grid()
+        payload["season"] = "2025-2026"
+        older, _ = replace_grid(payload)
+        payload["is_active"] = True
+        with patch("app.services.ski_passes.SkiPassPrice.create", side_effect=RuntimeError("insert failed")):
+            with self.assertRaises(RuntimeError):
+                replace_grid(payload, target_season=older)
+        self.assertTrue(SkiPassSeason.get_by_id(newer.id).is_active)
+        self.assertEqual(SkiPassPrice.select().count(), 6)
 
     def test_existing_grid_can_be_replaced_then_deleted_without_touching_legacy(self):
         initial = grid()
@@ -192,7 +228,7 @@ class SkiPassReplacementIntegrationTests(unittest.TestCase):
         self.assertEqual(exported["forfaits_avances"]["seasons"], [])
         self.assertEqual(exported["forfaits"]["items"], [{"id": "legacy"}])
         self.assertEqual(
-            StationWidgets.from_json(StationWidgets.get_by_id(self.widgets.station_slug).config)["forfaits"]["items"],
+            StationWidgets.from_json(StationWidgets.get_by_id(self.widgets.id).config)["forfaits"]["items"],
             [{"id": "legacy"}],
         )
 
