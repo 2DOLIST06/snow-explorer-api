@@ -21,6 +21,7 @@ def _deep_merge(dst: dict, src: dict) -> dict:
     return out
 
 DEFAULT_CFG = {
+    "nordique": {"enabled": False},
     "stationSlug": "",
     "pistes": {"enabled": False, "smallMapUrl": None, "largeMapUrl": None, "officialMapUrl": None, "caption": None},
     "meteo": {"enabled": False, "iframeUrl": None},

@@ -437,6 +437,10 @@ def patch_widgets_admin(slug):
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         abort(400, "Invalid payload")
+    if "nordique" in payload:
+        from app.services.nordic import validate_nordic
+        problem = validate_nordic(payload["nordique"])
+        if problem: return jsonify({"error": problem}), 400
     payload = _normalize_official_map_url(payload)
     payload = _normalize_widgets_config(payload)
     w = StationWidgets.get_or_none(StationWidgets.station_slug == slug)
