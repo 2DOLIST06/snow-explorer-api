@@ -18,6 +18,7 @@ from app.services.station_v2 import v2_public_fields
 
 
 PUBLIC_CFG_KEYS = (
+    "nordique",
     "pistes", "meteo", "description", "forfaits", "webcams", "snow",
     "snowpark", "remontees", "snowparks",
 )

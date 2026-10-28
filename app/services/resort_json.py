@@ -439,7 +439,7 @@ def apply_record(resort, record):
                 widget[{"meta_title": "metaTitle", "meta_description": "metaDescription"}.get(key, key)] = value
                 relation_updates.append(f"description.{key}"); continue
             if block in {"forfaits_avances", "domaines_skiables"}: continue
-            widget[mappings.get(key, key)] = value; relation_updates.append(f"{block}.{key}")
+            widget[key if block == "nordique" else mappings.get(key, key)] = value; relation_updates.append(f"{block}.{key}")
         if block == "nordique" and has_nordic_data(data): widget["enabled"] = True
         if block not in {"forfaits_avances", "domaines_skiables"}: cfg[block] = widget
     if "forfaits_avances" in record:
