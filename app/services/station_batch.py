@@ -42,6 +42,7 @@ BATCH_STATION_FIELDS = {
     "description_md",
 }
 BATCH_BLOCK_FIELDS = {
+    "nordique": BLOCK_FIELDS["nordique"],
     "pistes": {"green", "blue", "red", "black"},
     "remontees": {"tire_fesses", "telesieges", "telepheriques"},
     "snowpark": {"count"},

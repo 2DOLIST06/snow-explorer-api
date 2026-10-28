@@ -20,6 +20,8 @@ from app.models.ski_pass import SkiPassSeason
 from app.services.ski_passes import prefetch_seasons, replace_grid, serialize_season, validate_grid, normalize_price_label
 from app.datetime_utils import utcnow
 
+from app.services.nordic import FIELDS as NORDIC_FIELDS, validate_nordic, has_nordic_data
+
 SCHEMA_VERSION = "1.0"
 MAX_FILE_SIZE = 16 * 1024 * 1024
 MAX_STATIONS = 500
@@ -50,9 +52,10 @@ DATE_FIELDS = {"season_open_date", "season_close_date"}
 URL_FIELDS = {"website_url", "cover_image_url", "logo_url"}
 HTML_FIELDS = {"description_html"}
 OPTIONAL_TEXT = set(STATION_FIELDS) - REQUIRED - BOOL_FIELDS - INT_FIELDS - FLOAT_FIELDS - DATE_FIELDS
-BLOCKS = {"pistes", "remontees", "snowpark", "webcams", "meteo", "snow", "forfaits",
+BLOCKS = {"nordique", "pistes", "remontees", "snowpark", "webcams", "meteo", "snow", "forfaits",
           "description", "forfaits_avances", "domaines_skiables"}
 BLOCK_FIELDS = {
+    "nordique": NORDIC_FIELDS,
     "pistes": {"enabled", "green", "blue", "red", "black", "small_map_url", "large_map_url", "official_map_url", "caption", "items"},
     "remontees": {"tire_fesses", "telesieges", "telepheriques", "items"},
     "snowpark": {"enabled", "count", "map_url", "image_url", "logo_url", "caption", "description_html"},
@@ -152,6 +155,8 @@ def serialize_station(resort, widgets=None, pistes=None, lifts=None):
         difficulties.update({key: stored_colors[key] for key in difficulties if key in stored_colors})
     lift_types = {"tire_fesses": "drag", "telesieges": "chair", "telepheriques": "gondola"}
     out = {"station": station}
+    if isinstance(cfg.get("nordique"), dict):
+        out["nordique"] = {key: value for key, value in cfg["nordique"].items() if key in NORDIC_FIELDS}
     out["pistes"] = {
         "enabled": bool(_widget(cfg, "pistes", "enabled", False)), **difficulties,
         "small_map_url": resort.pistes_small_map_url, "large_map_url": resort.pistes_large_map_url,
@@ -282,6 +287,11 @@ def validate_document(document, bulk=False, allow_empty_advanced=False):
         for block in BLOCKS & set(record):
             data = record[block]
             if not isinstance(data, dict): errors.append({"path": prefix + block, "message": "must be an object"}); continue
+            if block == "nordique":
+                problem = validate_nordic(data)
+                if problem: errors.append({"path": prefix + block, "message": problem})
+                clean[block] = dict(data)
+                if has_nordic_data(data): clean[block]["enabled"] = True
             for field in set(data) - BLOCK_FIELDS[block]: errors.append({"path": prefix + block + "." + field, "message": "unknown field"})
             for field in {"items", "columns"} & set(data):
                 if not isinstance(data[field], list): errors.append({"path": prefix + block + "." + field, "message": "must be an array"})
@@ -362,6 +372,7 @@ def validate_document(document, bulk=False, allow_empty_advanced=False):
 def differences(resort, record):
     changes, unchanged = [], []
     current = serialize_station(resort, widgets=_load_widgets(resort.slug))
+    current.setdefault("nordique", {"enabled": False})
     for block, values in record.items():
         if block not in current or not isinstance(values, dict): continue
         for field, new in values.items():
@@ -429,6 +440,7 @@ def apply_record(resort, record):
                 relation_updates.append(f"description.{key}"); continue
             if block in {"forfaits_avances", "domaines_skiables"}: continue
             widget[mappings.get(key, key)] = value; relation_updates.append(f"{block}.{key}")
+        if block == "nordique" and has_nordic_data(data): widget["enabled"] = True
         if block not in {"forfaits_avances", "domaines_skiables"}: cfg[block] = widget
     if "forfaits_avances" in record:
         _replace_advanced_passes(resort, record["forfaits_avances"].get("seasons", []))
