@@ -75,3 +75,43 @@ class NordicAdminPublicTests(unittest.TestCase):
             self.assertEqual(config['nordique']['ski_area_km'], 12.5)
             self.assertEqual(config['pistes']['colors']['blue'], 8)
             db.drop_tables(models)
+
+class NordicMapTests(unittest.TestCase):
+    def test_nordic_map_validation_and_import_auto_activation(self):
+        from app.services.resort_json import ValidationProblem
+        with Flask(__name__).app_context():
+            doc = {'schema_version': '1.0', 'station': {'slug': 'map', 'name': 'Map'},
+                   'nordique': {'large_map_url': 'https://example.test/nordic.jpg', 'caption': 'Plan nordique'}}
+            record = validate_document(doc)[0]
+            self.assertTrue(record['nordique']['enabled'])
+            self.assertEqual(record['nordique']['large_map_url'], doc['nordique']['large_map_url'])
+            for url in ('javascript:alert(1)', 'https://user:password@example.test/map', 'https://example.test/bad url'):
+                doc['nordique']['large_map_url'] = url
+                with self.assertRaises(ValidationProblem): validate_document(doc)
+            self.assertIsNotNone(validate_nordic({'caption': 4}))
+
+    def test_map_round_trip_and_partial_clear_leave_alpine_unchanged(self):
+        from peewee import SqliteDatabase
+        from app.models.resort import Resort
+        from app.models.station_widgets import StationWidgets
+        from app.services.resort_json import apply_record, serialize_station, validate_document
+        from unittest.mock import patch
+        models = [Resort, StationWidgets]
+        db = SqliteDatabase(':memory:')
+        with db.bind_ctx(models):
+            db.create_tables(models)
+            resort = Resort.create(id='map', slug='map', name='Map', pistes_large_map_url='https://example.test/alpine.jpg')
+            apply_record(resort, {'nordique': {'large_map_url': 'https://example.test/nordic.jpg', 'caption': 'Nordique'}})
+            cfg = StationWidgets.from_json(StationWidgets.get().config)
+            with patch('app.services.resort_json._advanced_passes', return_value=[]), patch('app.services.resort_json._ski_areas', return_value=[]):
+                exported = serialize_station(resort, widgets=cfg, pistes=[], lifts=[])
+                with Flask(__name__).app_context():
+                    imported = validate_document({'schema_version': '1.0', **exported})[0]
+                self.assertEqual(imported['nordique']['large_map_url'], 'https://example.test/nordic.jpg')
+                self.assertEqual(exported['pistes']['large_map_url'], 'https://example.test/alpine.jpg')
+            apply_record(resort, {'nordique': {'large_map_url': None}})
+            saved = StationWidgets.from_json(StationWidgets.get().config)['nordique']
+            self.assertIsNone(saved['large_map_url'])
+            self.assertEqual(saved['caption'], 'Nordique')
+            self.assertEqual(Resort.get().pistes_large_map_url, 'https://example.test/alpine.jpg')
+            db.drop_tables(models)
