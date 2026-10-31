@@ -1,3 +1,5 @@
+import json
+from datetime import timedelta
 from flask import Blueprint, current_app, g, jsonify, request
 from app.datetime_utils import utcnow
 from app.models.member import MemberUser, MemberSession, MemberLoginLink
@@ -5,7 +7,7 @@ from app.models.newsletter import NewsletterSubscriber, SnowNewsletterPreference
 from app.services.admin_auth import normalize_email, validate_email, validate_password, hash_password, verify_password, _cookie_settings
 from app.services.member_auth import authenticated, limited, send_member_link, consume_link, session_response, user_json, csrf_for, COOKIE
 from app.routes import newsletter
-from app.services import newsletter_stations
+from app.services import newsletter_stations, newsletter_onboarding
 
 bp_member = Blueprint("member", __name__, url_prefix="/api/member")
 
@@ -145,6 +147,65 @@ def newsletter_access():
     if not subscriber:
         return jsonify({"status": "not_subscribed"})
     return jsonify({"status": subscriber.status})
+
+
+@bp_member.post("/newsletter/start")
+def newsletter_start():
+    data = body()
+    email = normalize_email(data.get("email"))
+    if not validate_email(email):
+        return jsonify({"error": "invalid_email"}), 400
+    if limited(email):
+        return jsonify({"error": "too_many_login_attempts"}), 429
+    try:
+        intent = newsletter_onboarding.normalize_intent(data.get("intent"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    member, _ = MemberUser.get_or_create(email=email)
+    if not member.is_active:
+        return jsonify({"error": "account_unavailable"}), 403
+    error, status = send_member_link(member, newsletter_intent=intent)
+    if error:
+        return jsonify({"error": error}), status
+    newsletter_onboarding.capture_pending(email, intent)
+    return jsonify({"ok": True, "verification_required": True,
+                    "draft_token": newsletter_onboarding.draft_token(member)}), 201
+
+
+@bp_member.post("/newsletter/draft")
+def newsletter_draft():
+    data = body()
+    if limited("newsletter-draft"):
+        return jsonify({"error": "too_many_login_attempts"}), 429
+    try:
+        intent = newsletter_onboarding.normalize_intent(data.get("intent"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not newsletter_onboarding.update_draft(data.get("draft_token"), intent):
+        return jsonify({"error": "invalid_or_expired_link"}), 401
+    return jsonify({"ok": True})
+
+
+@bp_member.post("/newsletter/apply")
+@authenticated
+def newsletter_apply():
+    try:
+        intent = newsletter_onboarding.normalize_intent(body().get("intent"))
+        newsletter_onboarding.apply_intent(g.member_user.email, intent)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 409 if str(exc) == "newsletter_unavailable" else 400
+    MemberLoginLink.update(newsletter_intent=None).where(MemberLoginLink.member == g.member_user.id).execute()
+    return jsonify({"ok": True})
+
+
+@bp_member.route("/newsletter/request", methods=["GET", "POST"])
+@authenticated
+def newsletter_request():
+    link = MemberLoginLink.get_or_none((MemberLoginLink.member == g.member_user.id) & (MemberLoginLink.requested_at > utcnow() - timedelta(days=1)))
+    if request.method == "POST":
+        MemberLoginLink.update(newsletter_intent=None).where(MemberLoginLink.member == g.member_user.id).execute()
+        return jsonify({"ok": True})
+    return jsonify({"intent": json.loads(link.newsletter_intent) if link and link.newsletter_intent else None})
 
 
 @bp_member.post("/newsletter/subscribe")
