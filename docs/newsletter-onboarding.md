@@ -77,3 +77,8 @@ Validation : 60 tests ciblés comptes/newsletter passent, dont l’ajout direct,
 Le clic explicite sur le thème weather via `/newsletter/follow` active ensemble weather, snowfall et snow_conditions. Il conserve les fréquences déjà choisies et les autres thèmes. `already_followed` ne vaut true que si le groupe complet est déjà actif. Les formats et colonnes historiques restent inchangés, sans migration SQL. Les autres thèmes restent indépendants.
 
 Le désabonnement depuis le compte reste protégé par session et CSRF, préserve les préférences et ne touche pas les autres comptes. Validation : 61 tests ciblés comptes/newsletter passent, dont le groupe météo/neige, la répétition du clic et le désabonnement global authentifié.
+
+
+## Liens de retour aux fiches
+
+Les préférences de station incluent `station_slug`, calculé depuis la station canonique ; la valeur fournie par le client n’est jamais utilisée comme destination. Le champ vaut null pour une station inactive. Le format est accepté lors de la sauvegarde complète. Les nouvelles inscriptions reçoivent également leur intent normalisé pour afficher le lien dès leur arrivée sur le compte. Aucune migration SQL.

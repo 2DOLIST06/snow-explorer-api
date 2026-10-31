@@ -278,3 +278,18 @@ class NewsletterOnboardingTests(StationSettingsTests):
         self.assertEqual(settings['intent'], before)
         self.assertEqual(self.other.get('/api/member/newsletter/settings').get_json()['data']['status'], 'active')
         self.assertEqual(self.request('unsubscribe', {}, self.client, self.csrf).status_code, 200)
+
+
+    def test_account_station_links_use_canonical_slug_and_hide_inactive_stations(self):
+        from app.models.resort import Resort
+        intent = dict(self.intent, stations=[{'station_id': 'FR_2', 'station_slug': 'https://wrong.example', 'topics': ['weather']}])
+        response = self.request('settings', {'intent': intent}, self.client, self.csrf)
+        self.assertEqual(response.status_code, 200)
+        slug = Resort.get_by_id('FR_2').slug
+        self.assertEqual(response.get_json()['data']['intent']['stations'][0]['station_slug'], slug)
+        snapshot = response.get_json()['data']['intent']
+        self.assertEqual(self.request('settings', {'intent': snapshot}, self.client, self.csrf).status_code, 200)
+        Resort.update(is_active=False).where(Resort.id == 'FR_2').execute()
+        current = self.client.get('/api/member/newsletter/settings').get_json()['data']['intent']
+        self.assertIsNone(current['stations'][0]['station_slug'])
+        self.assertEqual(self.request('settings', {'intent': current}, self.client, self.csrf).status_code, 200)
