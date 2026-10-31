@@ -354,3 +354,17 @@ def newsletter_settings():
             return jsonify({'error': str(exc)}), 409 if str(exc) == 'newsletter_unavailable' else 400
         MemberLoginLink.update(newsletter_intent=None).where(MemberLoginLink.member == g.member_user.id).execute()
     return jsonify({'data': newsletter_onboarding.current_preferences(g.member_user.email)})
+
+
+@bp_member.post("/newsletter/follow")
+@authenticated
+def newsletter_follow():
+    data = body()
+    if set(data) - {'station_id', 'topic', 'language'}:
+        return jsonify({'error': 'invalid_newsletter_intent'}), 400
+    try:
+        result = newsletter_onboarding.follow_station(g.member_user.email, data.get('station_id'), data.get('topic'), data.get('language', 'fr'))
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 409 if str(exc) in {'newsletter_unavailable', 'station_limit_reached'} else 400
+    MemberLoginLink.update(newsletter_intent=None).where(MemberLoginLink.member == g.member_user.id).execute()
+    return jsonify(result)
