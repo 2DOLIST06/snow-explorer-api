@@ -70,3 +70,10 @@ Validation : 56 tests ciblés API et 403 tests frontend passent. Les tests de co
 Le frontend doit déployer ce nouveau parcours après cette API. Les visiteurs non connectés ouvrent la page de compte avec le champ email et le choix station/thème préparé. Une adresse existante garde ce choix pendant la connexion, puis le retrouve dans l’éditeur habituel. Le message de bienvenue ne comporte plus de phrase expliquant l’absence de confirmation.
 
 Validation : 60 tests ciblés comptes/newsletter passent, dont l’ajout direct, les clics répétés, la conservation des fréquences, la météo en pause, la réactivation, les permissions/CSRF et la limite de stations. Aucune migration SQL supplémentaire.
+
+
+## Choix météo et enneigement commun
+
+Le clic explicite sur le thème weather via `/newsletter/follow` active ensemble weather, snowfall et snow_conditions. Il conserve les fréquences déjà choisies et les autres thèmes. `already_followed` ne vaut true que si le groupe complet est déjà actif. Les formats et colonnes historiques restent inchangés, sans migration SQL. Les autres thèmes restent indépendants.
+
+Le désabonnement depuis le compte reste protégé par session et CSRF, préserve les préférences et ne touche pas les autres comptes. Validation : 61 tests ciblés comptes/newsletter passent, dont le groupe météo/neige, la répétition du clic et le désabonnement global authentifié.

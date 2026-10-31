@@ -226,10 +226,13 @@ class NewsletterOnboardingTests(StationSettingsTests):
         self.assertEqual(rows['FR_2']['weather_frequency'], 'daily'); self.assertEqual(rows['FR_2']['newsletter_frequency'], 'monthly')
         self.assertEqual(rows['FR_1']['topics'], ['snowfall']); self.assertFalse(settings['articles'])
         self.assertEqual(settings['newsletter_frequency'], 'monthly')
-        before = settings
         repeated = self.request('follow', {'station_id': 'FR_2', 'topic': 'weather'}, self.client, self.csrf)
-        self.assertTrue(repeated.get_json()['already_followed'])
-        self.assertEqual(self.client.get('/api/member/newsletter/settings').get_json()['data']['intent'], before)
+        self.assertFalse(repeated.get_json()['already_followed'])
+        after = self.client.get('/api/member/newsletter/settings').get_json()['data']['intent']
+        weather = next(row for row in after['stations'] if row['station_id'] == 'FR_2')
+        self.assertEqual(set(weather['topics']), {'weather', 'snowfall', 'snow_conditions', 'resort_updates'})
+        self.assertEqual(weather['weather_frequency'], 'daily')
+        self.assertTrue(self.request('follow', {'station_id': 'FR_2', 'topic': 'weather'}, self.client, self.csrf).get_json()['already_followed'])
         self.assertEqual(self.other.get('/api/member/newsletter/settings').get_json()['data']['intent']['stations'], [])
 
     def test_station_cta_weather_enables_paused_weather_and_reactivates_subscription(self):
@@ -261,3 +264,17 @@ class NewsletterOnboardingTests(StationSettingsTests):
         self.assertEqual(response.status_code, 409); self.assertEqual(response.get_json()['error'], 'station_limit_reached')
         self.assertEqual(self.request('follow', {'station_id': 'limit_0', 'topic': 'weather'}, self.client, self.csrf).status_code, 200)
         self.assertEqual(NewsletterSubscriberStation.select().where(NewsletterSubscriberStation.subscriber == self.a).count(), 20)
+
+
+    def test_member_unsubscribe_stops_all_emails_and_preserves_preferences(self):
+        self.request('settings', {'intent': self.intent}, self.client, self.csrf)
+        before = self.client.get('/api/member/newsletter/settings').get_json()['data']['intent']
+        self.assertEqual(self.request('unsubscribe', {}, self.client).status_code, 403)
+        result = self.request('unsubscribe', {}, self.client, self.csrf)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.get_json()['data']['status'], 'unsubscribed')
+        settings = self.client.get('/api/member/newsletter/settings').get_json()['data']
+        self.assertEqual(settings['status'], 'unsubscribed')
+        self.assertEqual(settings['intent'], before)
+        self.assertEqual(self.other.get('/api/member/newsletter/settings').get_json()['data']['status'], 'active')
+        self.assertEqual(self.request('unsubscribe', {}, self.client, self.csrf).status_code, 200)

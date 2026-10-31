@@ -217,7 +217,7 @@ def current_preferences(email):
 
 def follow_station(email, station_id, topic, language='fr'):
     """Add one explicit station CTA choice without resetting saved preferences."""
-    intent = normalize_intent({'stations': [{'station_id': station_id, 'topics': [topic]}],
+    intent = normalize_intent({'stations': [{'station_id': station_id, 'topics': ['weather', 'snowfall', 'snow_conditions'] if topic == 'weather' else [topic]}],
                                'consent': True, 'language': language, 'source': 'station_page'})
     row = intent['stations'][0]
     with NewsletterSubscriber._meta.database.atomic():
@@ -226,7 +226,7 @@ def follow_station(email, station_id, topic, language='fr'):
             raise ValueError('newsletter_unavailable')
         preference = NewsletterStationPreference.get_or_none(
             (NewsletterStationPreference.subscriber == subscriber) & (NewsletterStationPreference.station == row['station_id'])) if subscriber else None
-        already_followed = bool(subscriber and subscriber.status == 'active' and preference and getattr(preference, TOPICS[topic])
+        already_followed = bool(subscriber and subscriber.status == 'active' and preference and all(getattr(preference, TOPICS[key]) for key in row['topics'])
                                 and (topic != 'weather' or preference.weather_frequency != 'disabled'))
         if preference:
             row['newsletter_frequency'] = preference.newsletter_frequency
