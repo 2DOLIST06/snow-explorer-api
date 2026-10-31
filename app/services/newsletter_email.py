@@ -1,7 +1,6 @@
 import html
 from urllib.parse import urlencode
 
-import requests
 from flask import current_app
 
 
@@ -16,11 +15,12 @@ def _preferences_urls(language, token):
     return preferences_url, unsubscribe_url
 
 
-def build_welcome_email(subscriber, station_name=None):
-    """Build the public Snow Explorer welcome message without exposing database IDs."""
-    preferences_url, unsubscribe_url = _preferences_urls(
+def build_welcome_email(subscriber, station_name=None, account_url=None):
+    """Build the welcome message with access to the shared member account."""
+    _, unsubscribe_url = _preferences_urls(
         subscriber.language, subscriber.preferences_token
     )
+    account_url = account_url or f"{(current_app.config.get('FRONTEND_URL') or '').rstrip('/')}/connexion"
     safe_station_name = html.escape(station_name) if station_name else None
     if subscriber.language == "fr":
         subject = "Bienvenue sur Snow Explorer"
@@ -33,7 +33,8 @@ def build_welcome_email(subscriber, station_name=None):
         station_text = (
             f"Vous suivez désormais la station {safe_station_name}." if safe_station_name else ""
         )
-        button = "Gérer mes préférences"
+        button = "Accéder à mon compte"
+        account_text = "Retrouvez vos abonnements dans votre compte Snow Explorer. Vous pourrez y définir un mot de passe pour vos prochaines connexions. Ce lien d’accès est valable 15 minutes ; votre inscription à la newsletter reste active même si vous ne l’utilisez pas."
         unsubscribe = "Se désabonner"
     else:
         subject = "Welcome to Snow Explorer"
@@ -46,14 +47,16 @@ def build_welcome_email(subscriber, station_name=None):
         station_text = (
             f"You are now following {safe_station_name}." if safe_station_name else ""
         )
-        button = "Manage my preferences"
+        button = "Access my account"
+        account_text = "Your Snow Explorer account contains your subscriptions. You can set a password for future sign-ins. This access link is valid for 15 minutes; your newsletter subscription stays active even if you do not use it."
         unsubscribe = "Unsubscribe"
 
     html_content = f"""<!doctype html>
 <html lang="{subscriber.language}"><body style="font-family:Arial,sans-serif;color:#16233b">
 <h1>{title}</h1><p>{intro}</p><p>{description}</p>
 {f'<p>{station_text}</p>' if station_text else ''}
-<p><a href="{html.escape(preferences_url, quote=True)}" style="background:#1769e0;color:white;padding:12px 18px;text-decoration:none;border-radius:4px">{button}</a></p>
+<p>{account_text}</p>
+<p><a href="{html.escape(account_url, quote=True)}" style="background:#1769e0;color:white;padding:12px 18px;text-decoration:none;border-radius:4px">{button}</a></p>
 <p><a href="{html.escape(unsubscribe_url, quote=True)}">{unsubscribe}</a></p>
 </body></html>"""
     return {
@@ -64,6 +67,7 @@ def build_welcome_email(subscriber, station_name=None):
         "to": [{"email": subscriber.email}],
         "subject": subject,
         "htmlContent": html_content,
+        "textContent": f"{title}\n\n{intro}\n\n{account_text}\n\n{button} : {account_url}\n\n{unsubscribe} : {unsubscribe_url}",
     }
 
 
@@ -78,23 +82,10 @@ def send_welcome_email(subscriber, station_name=None):
             "Snow Explorer welcome email skipped: Brevo configuration is incomplete"
         )
         return False
-    payload = build_welcome_email(subscriber, station_name)
-    try:
-        response = requests.post(
-            BREVO_EMAIL_ENDPOINT,
-            headers={
-                "accept": "application/json",
-                "content-type": "application/json",
-                "api-key": api_key,
-            },
-            json=payload,
-            timeout=10,
-        )
-        response.raise_for_status()
-        return True
-    except requests.RequestException as exc:
-        # No email address, API key or preferences token is included in this log.
-        current_app.logger.error(
-            "Snow Explorer welcome email failed via Brevo (%s)", type(exc).__name__
-        )
-        return False
+    # Local import avoids a module cycle: all account email templates share the
+    # member service's short-lived, one-use links and revocation rules.
+    from app.models.member import MemberUser
+    from app.services.member_auth import send_member_link
+    member, _ = MemberUser.get_or_create(email=subscriber.email)
+    error, _ = send_member_link(member, welcome_subscriber=subscriber, station_name=station_name)
+    return error is None

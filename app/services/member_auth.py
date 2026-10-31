@@ -7,12 +7,13 @@ import secrets
 from datetime import timedelta
 from functools import wraps
 from urllib.parse import urlsplit
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import requests
 from flask import current_app, g, jsonify, make_response, request
 from app.datetime_utils import ensure_utc, utcnow
 from app.models.member import MemberUser, MemberSession, MemberLoginLink, MemberLoginAttempt
 from app.services.admin_auth import _digest, _client_ip, _cookie_settings
-from app.services.newsletter_email import BREVO_EMAIL_ENDPOINT
+from app.services.newsletter_email import BREVO_EMAIL_ENDPOINT, build_welcome_email
 
 COOKIE = "member_session"
 
@@ -73,7 +74,9 @@ def limited(key=""):
     return False
 
 
-def send_member_link(member, newsletter_intent=None):
+def send_member_link(member, newsletter_intent=None, welcome_subscriber=None, station_name=None):
+    if not member.is_active:
+        return "account_unavailable", 403
     config = current_app.config
     parsed = urlsplit(config.get("FRONTEND_URL") or "")
     origin = f"{parsed.scheme}://{parsed.netloc}"
@@ -91,15 +94,20 @@ def send_member_link(member, newsletter_intent=None):
                .where((MemberLoginLink.id == link.id) & (MemberLoginLink.requested_at.is_null() | (MemberLoginLink.requested_at < now-timedelta(minutes=1)))).execute())
     if not claimed:
         return "login_link_cooldown", 429
-    url = f"{origin}/connexion/lien#{token}"
+    # This extra signature permits only an email resend, never authentication.
+    # It lets an old/replaced link request a fresh link without asking the email
+    # address again. The login token itself still expires after 15 minutes.
+    resend_claim = URLSafeTimedSerializer(config["ADMIN_SESSION_SECRET"], salt="member-resend-v1").dumps({"member": member.id, "link": digest})
+    url = f"{origin}/connexion/lien#{token}~{resend_claim}"
     text = "Ce lien est valable 15 minutes et utilisable une seule fois. Si vous ne l’avez pas demandé, ignorez ce message."
+    payload = build_welcome_email(welcome_subscriber, station_name, account_url=url) if welcome_subscriber is not None else {
+        "sender": {"email": config["BREVO_SENDER_EMAIL"], "name": config["BREVO_SENDER_NAME"]},
+        "to": [{"email": member.email}], "subject": "Votre lien de connexion à votre compte Snow Explorer",
+        "htmlContent": f'<p>Snow Explorer</p><p><a href="{html.escape(url, quote=True)}">Accéder à mon compte</a></p><p>{text}</p>',
+        "textContent": f"Accéder à mon compte : {url}\n\n{text}",
+    }
     try:
-        response = requests.post(BREVO_EMAIL_ENDPOINT, headers={"accept": "application/json", "content-type": "application/json", "api-key": config["BREVO_API_KEY"]}, json={
-            "sender": {"email": config["BREVO_SENDER_EMAIL"], "name": config["BREVO_SENDER_NAME"]},
-            "to": [{"email": member.email}], "subject": "Votre lien de connexion à votre compte Snow Explorer",
-            "htmlContent": f'<p>Snow Explorer</p><p><a href="{html.escape(url, quote=True)}">Accéder à mon compte</a></p><p>{text}</p>',
-            "textContent": f"Accéder à mon compte : {url}\n\n{text}",
-        }, timeout=10)
+        response = requests.post(BREVO_EMAIL_ENDPOINT, headers={"accept": "application/json", "content-type": "application/json", "api-key": config["BREVO_API_KEY"]}, json=payload, timeout=10)
         response.raise_for_status()
     except requests.RequestException:
         MemberLoginLink.update(token_hash=None, requested_at=None, expires_at=None, newsletter_intent=None).where((MemberLoginLink.id == link.id) & (MemberLoginLink.token_hash == digest)).execute()
@@ -108,8 +116,42 @@ def send_member_link(member, newsletter_intent=None):
     return None, 200
 
 
+def _raw_link_token(value):
+    if not isinstance(value, str) or len(value) > 4096:
+        return None
+    raw = value.partition("~")[0]
+    return raw if re.fullmatch(r"[a-f0-9]{64}", raw) else None
+
+
+def resend_member_link(value):
+    raw = _raw_link_token(value)
+    if not raw:
+        return "resend_email_required", 400
+    digest = _digest(raw, b"member-link:")
+    _, separator, capability = value.partition("~")
+    member = None
+    if separator:
+        try:
+            claim = URLSafeTimedSerializer(current_app.config["ADMIN_SESSION_SECRET"], salt="member-resend-v1").loads(capability, max_age=90 * 24 * 60 * 60)
+        except (BadSignature, SignatureExpired):
+            return "resend_email_required", 400
+        if not isinstance(claim, dict) or claim.get("link") != digest:
+            return "resend_email_required", 400
+        member = MemberUser.get_or_none(MemberUser.id == claim.get("member"))
+    else:
+        # Compatibility with an old, expired token still stored in the database.
+        link = MemberLoginLink.get_or_none(MemberLoginLink.token_hash == digest)
+        member = MemberUser.get_or_none(MemberUser.id == link.member_id) if link else None
+    if not member:
+        return "resend_email_required", 400
+    pending = MemberLoginLink.get_or_none((MemberLoginLink.member == member) & (MemberLoginLink.requested_at > utcnow() - timedelta(days=1)))
+    intent = json.loads(pending.newsletter_intent) if pending and pending.newsletter_intent else None
+    return send_member_link(member, newsletter_intent=intent)
+
+
 def consume_link(token):
-    if not isinstance(token, str) or not re.fullmatch(r"[a-f0-9]{64}", token):
+    token = _raw_link_token(token)
+    if not token:
         return None
     now = utcnow()
     digest = _digest(token, b"member-link:")

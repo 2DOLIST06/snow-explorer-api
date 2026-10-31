@@ -28,11 +28,11 @@ class NewsletterOnboardingTests(StationSettingsTests):
         self.assertEqual(NewsletterSubscriber.get(NewsletterSubscriber.email=='new@example.com').status,'active')
         pref=NewsletterStationPreference.get()
         self.assertTrue(pref.weather_enabled); self.assertFalse(pref.resort_updates_enabled)
-        self.assertEqual(MemberUser.select().count(),2)  # Only the two fixture accounts.
-        self.assertEqual(MemberLoginLink.select().count(),0)
+        self.assertEqual(MemberUser.select().count(),3)  # Signup creates its one account.
+        self.assertEqual(MemberLoginLink.select().count(),1)
         self.assertEqual(self.app.test_client().get('/api/member/session').status_code,401)
         self.assertIn('Aucune confirmation',self.sender.call_args.kwargs['json']['htmlContent'])
-        self.assertNotIn('/connexion/lien',self.sender.call_args.kwargs['json']['htmlContent'])
+        self.assertIn('/connexion/lien#',self.sender.call_args.kwargs['json']['htmlContent'])
 
     def test_five_duplicate_requests_do_not_resend_mail_or_change_preferences(self):
         self.start()
@@ -97,3 +97,62 @@ class NewsletterOnboardingTests(StationSettingsTests):
         NewsletterSubscriber.update(status='complained').where(NewsletterSubscriber.id==self.b.id).execute()
         self.assertEqual(self.start('b@example.com').status_code,409)
         self.assertEqual(NewsletterSubscriber.get_by_id(self.b.id).status,'complained')
+
+    def test_welcome_link_and_password_open_the_same_account_and_subscriptions(self):
+        response=self.start()
+        self.assertEqual(response.status_code,201)
+        member=MemberUser.get(MemberUser.email=='new@example.com')
+        self.assertIsNone(member.verified_at); self.assertIsNone(member.password_hash)
+        token=self.sender.call_args.kwargs['json']['textContent'].split('#')[1].split()[0]
+        email_client=self.app.test_client()
+        signed=email_client.post('/api/member/login-link/consume',json={'token':token},headers={'Origin':ORIGIN})
+        self.assertEqual(signed.status_code,200)
+        self.assertEqual(signed.get_json()['user']['id'],member.id)
+        stations_by_link=email_client.get('/api/member/newsletter/stations').get_json()['data']['stations']
+        self.assertEqual(stations_by_link[0]['station']['id'],'FR_2')
+        password='one shared account password'
+        changed=email_client.post('/api/member/password',json={'password':password},headers={'Origin':ORIGIN,'X-CSRF-Token':signed.get_json()['csrf_token']})
+        self.assertEqual(changed.status_code,200)
+        password_client=self.app.test_client()
+        logged=password_client.post('/api/member/login',json={'email':' NEW@EXAMPLE.COM ','password':password},headers={'Origin':ORIGIN})
+        self.assertEqual(logged.status_code,200)
+        self.assertEqual(logged.get_json()['user']['id'],member.id)
+        self.assertEqual(password_client.get('/api/member/newsletter/stations').get_json()['data']['stations'],stations_by_link)
+        self.assertEqual(MemberUser.select().where(MemberUser.email=='new@example.com').count(),1)
+        self.assertEqual(NewsletterSubscriber.select().where(NewsletterSubscriber.email=='new@example.com').count(),1)
+
+    def test_duplicate_signup_keeps_existing_password_and_only_one_account(self):
+        self.start()
+        account=MemberUser.get(MemberUser.email=='new@example.com')
+        from app.services.admin_auth import hash_password
+        account.password_hash=hash_password('existing secure password');account.verified_at=utcnow();account.save()
+        old_hash=account.password_hash
+        self.assertEqual(self.start(' NEW@EXAMPLE.COM ').get_json()['status'],'already_subscribed')
+        account=MemberUser.get_by_id(account.id)
+        self.assertEqual(account.password_hash,old_hash)
+        self.assertEqual(MemberUser.select().where(MemberUser.email==account.email).count(),1)
+
+    def test_old_preferences_link_can_request_email_access_but_cannot_authenticate(self):
+        legacy=self.a.preferences_token
+        client=self.app.test_client()
+        before=client.post('/api/member/login-link/consume',json={'token':legacy},headers={'Origin':ORIGIN})
+        self.assertEqual(before.status_code,401)
+        response=self.request('account-link',{'token':legacy},client)
+        self.assertEqual(response.status_code,200)
+        self.assertNotIn('Set-Cookie',response.headers)
+        self.assertNotIn('token',response.get_json())
+        self.assertEqual(client.get('/api/member/session').status_code,401)
+        login_token=self.sender.call_args.kwargs['json']['textContent'].split('#')[1].split()[0]
+        access=client.post('/api/member/login-link/consume',json={'token':login_token},headers={'Origin':ORIGIN})
+        self.assertEqual(access.status_code,200)
+        self.assertEqual(access.get_json()['user']['email'],'a@example.com')
+        self.assertEqual(self.request('account-link',{'token':'invalid'},client).status_code,404)
+
+    def test_newsletter_only_subscriber_can_use_normal_account_login_link(self):
+        import secrets
+        NewsletterSubscriber.create(email='legacy@example.com',status='active',language='fr',source='footer',consent_at=utcnow(),consent_text_version='v1',consent_source='footer',preferences_token=secrets.token_urlsafe(48))
+        self.assertFalse(MemberUser.select().where(MemberUser.email=='legacy@example.com').exists())
+        response=self.app.test_client().post('/api/member/login-link',json={'email':'legacy@example.com'},headers={'Origin':ORIGIN})
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(MemberUser.select().where(MemberUser.email=='legacy@example.com').count(),1)
+        self.assertEqual(NewsletterSubscriber.get(NewsletterSubscriber.email=='legacy@example.com').status,'active')
