@@ -25,7 +25,7 @@ def build_welcome_email(subscriber, station_name=None):
     if subscriber.language == "fr":
         subject = "Bienvenue sur Snow Explorer"
         title = "Bienvenue sur Snow Explorer"
-        intro = "Votre inscription à Snow Explorer a bien été prise en compte."
+        intro = "Vous êtes inscrit à la newsletter Snow Explorer. Aucune confirmation n’est nécessaire."
         description = (
             "Vous pouvez suivre vos stations préférées et choisir les informations que "
             "vous souhaitez recevoir : chutes de neige, état de la neige, météo, actualités des stations et nouveaux articles."
@@ -38,7 +38,7 @@ def build_welcome_email(subscriber, station_name=None):
     else:
         subject = "Welcome to Snow Explorer"
         title = "Welcome to Snow Explorer"
-        intro = "Your Snow Explorer subscription has been successfully registered."
+        intro = "You are subscribed to the Snow Explorer newsletter. No confirmation is needed."
         description = (
             "You can follow your favourite resorts and choose the information you want "
             "to receive: snowfall, snow conditions, weather, resort news and new articles."

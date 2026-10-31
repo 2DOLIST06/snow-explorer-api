@@ -8,6 +8,7 @@ from app.services.admin_auth import normalize_email, validate_email, validate_pa
 from app.services.member_auth import authenticated, limited, send_member_link, consume_link, session_response, user_json, csrf_for, COOKIE
 from app.routes import newsletter
 from app.services import newsletter_stations, newsletter_onboarding
+from app.services.newsletter_email import send_welcome_email
 
 bp_member = Blueprint("member", __name__, url_prefix="/api/member")
 
@@ -161,15 +162,41 @@ def newsletter_start():
         intent = newsletter_onboarding.normalize_intent(data.get("intent"))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    with NewsletterSubscriber._meta.database.atomic():
+        subscriber = newsletter_onboarding.capture_pending(email, intent)
+        created = subscriber._newsletter_created
+        if not created and subscriber.status == "active":
+            return jsonify({"ok": True, "status": "already_subscribed", "verification_required": False})
+        if subscriber.status in {"bounced", "complained"}:
+            return jsonify({"error": "newsletter_unavailable"}), 409
+        subscriber = newsletter_onboarding.apply_intent(email, intent, consent_version="v2-newsletter-button")
+        subscriber = NewsletterSubscriber.get_by_id(subscriber.id)
+        capability = newsletter_onboarding.signup_token(subscriber) if created else None
+    # Newsletter activation does not depend on email delivery or account verification.
+    mail_sent = send_welcome_email(subscriber, intent["stations"][0]["station_name"] if intent["stations"] else None)
+    return jsonify({"ok": True, "status": "active", "verification_required": False,
+                    "email_sent": bool(mail_sent), "draft_token": capability}), 201
+
+
+@bp_member.post("/newsletter/login-link")
+def newsletter_login_link():
+    data = body()
+    email = normalize_email(data.get("email"))
+    if not validate_email(email):
+        return jsonify({"error": "invalid_email"}), 400
+    if limited(email):
+        return jsonify({"error": "too_many_login_attempts"}), 429
+    try:
+        intent = newsletter_onboarding.normalize_intent(data.get("intent"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     member, _ = MemberUser.get_or_create(email=email)
     if not member.is_active:
         return jsonify({"error": "account_unavailable"}), 403
     error, status = send_member_link(member, newsletter_intent=intent)
     if error:
         return jsonify({"error": error}), status
-    newsletter_onboarding.capture_pending(email, intent)
-    return jsonify({"ok": True, "verification_required": True,
-                    "draft_token": newsletter_onboarding.draft_token(member)}), 201
+    return jsonify({"ok": True})
 
 
 @bp_member.post("/newsletter/draft")
@@ -181,7 +208,8 @@ def newsletter_draft():
         intent = newsletter_onboarding.normalize_intent(data.get("intent"))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    if not newsletter_onboarding.update_draft(data.get("draft_token"), intent):
+    token = data.get("draft_token")
+    if not (newsletter_onboarding.update_signup(token, intent) or newsletter_onboarding.update_draft(token, intent)):
         return jsonify({"error": "invalid_or_expired_link"}), 401
     return jsonify({"ok": True})
 
