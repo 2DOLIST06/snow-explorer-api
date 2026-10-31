@@ -339,3 +339,18 @@ def member_station_remove(station_id):
     if not subscriber:
         return jsonify({"error": "newsletter_inactive"}), 409
     return newsletter_stations.remove_station(subscriber, station_id)
+
+
+@bp_member.route("/newsletter/settings", methods=["GET", "POST"])
+@authenticated
+def newsletter_settings():
+    if request.method == "POST":
+        existing = newsletter_onboarding.current_preferences(g.member_user.email)
+        retained = {str(row['station_id']) for row in existing['intent']['stations']}
+        try:
+            intent = newsletter_onboarding.normalize_intent(body().get('intent'), retained_station_ids=retained)
+            newsletter_onboarding.replace_preferences(g.member_user.email, intent)
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 409 if str(exc) == 'newsletter_unavailable' else 400
+        MemberLoginLink.update(newsletter_intent=None).where(MemberLoginLink.member == g.member_user.id).execute()
+    return jsonify({'data': newsletter_onboarding.current_preferences(g.member_user.email)})
