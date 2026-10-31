@@ -187,7 +187,7 @@ def newsletter_start():
     # Newsletter activation does not depend on email delivery or account verification.
     mail_sent = send_welcome_email(subscriber, intent["stations"][0]["station_name"] if intent["stations"] else None)
     return jsonify({"ok": True, "status": "active", "verification_required": False,
-                    "email_sent": bool(mail_sent), "draft_token": capability}), 201
+                    "email_sent": bool(mail_sent), "draft_token": capability, "intent": intent}), 201
 
 
 @bp_member.post("/newsletter/login-link")

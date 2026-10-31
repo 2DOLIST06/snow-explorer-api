@@ -41,7 +41,7 @@ def normalize_intent(value, retained_station_ids=()):
         raise ValueError('invalid_newsletter_intent')
     seen = set()
     for row in rows:
-        if not isinstance(row, dict) or set(row) - {'station_id', 'station_name', 'topics', 'newsletter_frequency', 'weather_frequency'}:
+        if not isinstance(row, dict) or set(row) - {'station_id', 'station_name', 'station_slug', 'topics', 'newsletter_frequency', 'weather_frequency'}:
             raise ValueError('invalid_newsletter_intent')
         station_id = row.get('station_id')
         topics = row.get('topics')
@@ -62,7 +62,8 @@ def normalize_intent(value, retained_station_ids=()):
             station = Resort.get_or_none(Resort.id == station_id)
         if not station:
             raise ValueError('station_not_found')
-        result['stations'].append({'station_id': station.id, 'station_name': station.name,
+        # Link metadata is always rebuilt from the canonical station, never trusted from the client.
+        result['stations'].append({'station_id': station.id, 'station_name': station.name, 'station_slug': station.slug if station.is_active else None,
                                    'topics': sorted(set(topics)), 'newsletter_frequency': frequency,
                                    'weather_frequency': weather})
     return result
@@ -209,6 +210,7 @@ def current_preferences(email):
         for relation in followed:
             preference = preferences.get(relation.station_id)
             intent['stations'].append({'station_id': relation.station_id, 'station_name': relation.station.name,
+                                      'station_slug': relation.station.slug if relation.station.is_active else None,
                                       'topics': [key for key, field in TOPICS.items() if preference and getattr(preference, field)],
                                       'newsletter_frequency': preference.newsletter_frequency if preference else 'weekly',
                                       'weather_frequency': preference.weather_frequency if preference else 'disabled'})
