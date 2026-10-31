@@ -22,7 +22,7 @@ Les modifications depuis le compte nécessitent toujours une session vérifiée 
 
 ## Présentation
 
-La sélection et les abonnements enregistrés utilisent une liste compacte de stations avec un résumé des thèmes et fréquences. Un seul panneau de réglages est affiché à la fois, avec le nom de la station en titre. L’ajout est une recherche suivie d’un clic ; le sélecteur se ferme aussitôt. Les modifications en cours restent visibles et ne sont pas perdues quand on passe à une autre station.
+La sélection et les abonnements enregistrés utilisent une liste compacte de stations avec un résumé des thèmes et fréquences. Un seul panneau de réglages est affiché à la fois, avec le nom de la station en titre. Un seul composant de préférences est utilisé après inscription et dans le compte, quel que soit le statut antérieur. « Ajouter une station » ouvre immédiatement la liste des stations avec des cases à cocher et une recherche facultative. Plusieurs stations peuvent être cochées puis ajoutées ensemble ; le sélecteur se ferme après confirmation. Les articles et guides, leurs fréquences et les thèmes de chaque station se règlent dans le même formulaire. Les modifications en cours restent visibles et ne sont pas perdues quand on passe à une autre station.
 
 Le bouton météo est placé au-dessus des informations météo, sur la page Météo, dans les fiches stations/domaines et sur les pages snowpark.
 
@@ -52,3 +52,12 @@ Les nouveaux fragments contiennent le secret de connexion et une signature sépa
 Le bouton « Inscrire une autre adresse email » remet le formulaire newsletter à zéro sans désabonner la première adresse ni déconnecter le compte ouvert. L’adresse utilisée est affichée dans le résultat. Une connexion avec une autre adresse peut être demandée explicitement ; le compte courant n’est remplacé qu’après une connexion réussie.
 
 Validation du correctif : 51 tests ciblés API passent, dont le parcours newsletter → lien de bienvenue → définition du mot de passe → connexion avec ce mot de passe, les liens expirés ou remplacés, le renvoi réel, les échecs de livraison et la protection des anciens liens newsletter.
+
+
+## Interface unique et sauvegarde complète
+
+`GET /api/member/newsletter/settings` fournit les réglages complets du compte connecté sans créer d’abonnement. `POST` sur la même route enregistre la sélection complète dans une transaction : stations, thèmes cochés ou décochés, fréquences générales et par station. L’adresse est toujours celle de la session ; le client ne peut pas choisir un autre propriétaire. Le formulaire de personnalisation immédiate après inscription utilise le même format et la même sauvegarde complète via sa capacité limitée existante.
+
+Les anciens composants de réglages généraux et de stations ont été supprimés du frontend. La sélection multiple, le panneau unique de station et le bouton « Enregistrer mes choix » proviennent du même composant dans tous les parcours. Une station sans thème sélectionné peut être conservée. Une station devenue inactive peut être conservée par son abonné actuel, mais ne peut pas être ajoutée par un autre compte. Les liens depuis les pages stations complètent les choix déjà enregistrés sans les remplacer.
+
+Validation : 56 tests ciblés API et 403 tests frontend passent. Les tests de composants comparent les contrôles réellement affichés après inscription et pour les comptes sans abonnement, actifs ou désabonnés ; ils vérifient aussi la liste immédiatement visible, la sélection multiple et la sauvegarde complète. Aucun changement de schéma ni envoi automatique de bulletin.

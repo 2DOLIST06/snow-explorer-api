@@ -156,3 +156,57 @@ class NewsletterOnboardingTests(StationSettingsTests):
         self.assertEqual(response.status_code,200)
         self.assertEqual(MemberUser.select().where(MemberUser.email=='legacy@example.com').count(),1)
         self.assertEqual(NewsletterSubscriber.get(NewsletterSubscriber.email=='legacy@example.com').status,'active')
+
+    def test_single_editor_reads_without_subscribing_and_saves_a_complete_selection(self):
+        before=NewsletterSubscriber.select().count()
+        data=self.client.get('/api/member/newsletter/settings').get_json()['data']
+        self.assertEqual(data['status'],'active')
+        self.assertEqual(data['intent']['stations'],[])
+        self.assertEqual(NewsletterSubscriber.select().count(),before)
+        intent={'articles':False,'newsletter_frequency':'monthly','stations':[{'station_id':'FR_1','topics':['weather'],'weather_frequency':'daily'},{'station_id':'FR_2','topics':['snowfall','ski_pass_updates'],'newsletter_frequency':'monthly'}],'consent':True,'source':'member-account'}
+        saved=self.request('settings',{'intent':intent},self.client,self.csrf)
+        self.assertEqual(saved.status_code,200)
+        result=saved.get_json()['data']['intent']
+        self.assertEqual({row['station_id'] for row in result['stations']},{'FR_1','FR_2'})
+        self.assertFalse(result['articles']); self.assertEqual(result['newsletter_frequency'],'monthly')
+        self.assertEqual(self.other.get('/api/member/newsletter/settings').get_json()['data']['intent']['stations'],[])
+
+    def test_single_editor_removes_stations_unchecks_topics_and_keeps_paused_stations(self):
+        first=dict(self.intent,stations=[{'station_id':'FR_1','topics':['weather','snowfall']},{'station_id':'FR_2','topics':['weather']}])
+        self.assertEqual(self.request('settings',{'intent':first},self.client,self.csrf).status_code,200)
+        paused=dict(self.intent,stations=[{'station_id':'FR_1','topics':[],'weather_frequency':'disabled','newsletter_frequency':'monthly'}])
+        result=self.request('settings',{'intent':paused},self.client,self.csrf)
+        self.assertEqual(result.status_code,200)
+        rows=result.get_json()['data']['intent']['stations']
+        self.assertEqual(len(rows),1);self.assertEqual(rows[0]['station_id'],'FR_1');self.assertEqual(rows[0]['topics'],[])
+        self.assertEqual(rows[0]['newsletter_frequency'],'monthly');self.assertEqual(rows[0]['weather_frequency'],'disabled')
+        self.assertEqual(NewsletterSubscriberStation.select().where(NewsletterSubscriberStation.subscriber==self.a.id).count(),1)
+
+    def test_single_editor_rejects_invalid_bulk_selection_without_partial_changes(self):
+        self.request('settings',{'intent':self.intent},self.client,self.csrf)
+        before=self.client.get('/api/member/newsletter/settings').get_json()
+        invalid=dict(self.intent,stations=[{'station_id':'FR_1','topics':['snowfall']},{'station_id':'missing','topics':['weather']}])
+        self.assertEqual(self.request('settings',{'intent':invalid},self.client,self.csrf).status_code,400)
+        self.assertEqual(self.client.get('/api/member/newsletter/settings').get_json(),before)
+        self.assertEqual(self.request('settings',{'intent':self.intent},self.client).status_code,403)
+        self.assertEqual(self.request('settings',{'intent':self.intent}).status_code,401)
+        self.assertEqual(self.request('settings',{'intent':dict(self.intent,subscriber_id=self.b.id)},self.client,self.csrf).status_code,400)
+
+    def test_single_editor_preserves_existing_inactive_station_but_does_not_add_new_inactive_ones(self):
+        NewsletterSubscriberStation.create(subscriber=self.a,station='hidden')
+        NewsletterStationPreference.create(subscriber=self.a,station='hidden',weather_enabled=False)
+        existing=self.client.get('/api/member/newsletter/settings').get_json()['data']['intent']
+        self.assertEqual(self.request('settings',{'intent':existing},self.client,self.csrf).status_code,200)
+        self.assertEqual(self.request('settings',{'intent':existing},self.other,self.other_csrf).status_code,400)
+
+    def test_signup_and_account_editor_share_article_frequency_and_station_choices(self):
+        signup=self.start().get_json();token=signup['draft_token']
+        initial=dict(self.intent,articles=True,newsletter_frequency='monthly')
+        self.assertEqual(self.request('draft',{'draft_token':token,'intent':initial}).status_code,200)
+        login=self.sender.call_args.kwargs['json']['textContent'].split('#')[1].split()[0]
+        client=self.app.test_client()
+        result=client.post('/api/member/login-link/consume',json={'token':login},headers={'Origin':ORIGIN})
+        self.assertEqual(result.status_code,200)
+        settings=client.get('/api/member/newsletter/settings').get_json()['data']['intent']
+        self.assertTrue(settings['articles']);self.assertEqual(settings['newsletter_frequency'],'monthly')
+        self.assertEqual(settings['stations'][0]['station_id'],'FR_2')
