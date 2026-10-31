@@ -42,20 +42,27 @@ def session_response(member):
     return response
 
 
+def current_session():
+    """A server-issued session authenticates independently of email verification."""
+    raw = request.cookies.get(COOKIE, "")
+    session = (MemberSession.select(MemberSession, MemberUser).join(MemberUser)
+               .where(MemberSession.token_hash == _digest(raw, b"member-session:")).first()) if raw else None
+    member = session.member if session else None
+    if (not session or session.revoked_at or ensure_utc(session.expires_at) <= utcnow() or not member.is_active
+            or (member.password_changed_at and ensure_utc(member.password_changed_at) > ensure_utc(session.created_at))):
+        return None, raw
+    return session, raw
+
+
 def authenticated(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
-        raw = request.cookies.get(COOKIE, "")
-        session = (MemberSession.select(MemberSession, MemberUser).join(MemberUser)
-                   .where(MemberSession.token_hash == _digest(raw, b"member-session:")).first()) if raw else None
-        now = utcnow()
-        member = session.member if session else None
-        if (not session or session.revoked_at or ensure_utc(session.expires_at) <= now or not member.is_active
-                or not member.verified_at or (member.password_changed_at and ensure_utc(member.password_changed_at) > ensure_utc(session.created_at))):
+        session, raw = current_session()
+        if not session:
             return jsonify({"error": "member_authentication_required", "authenticated": False}), 401
         if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not hmac.compare_digest(request.headers.get("X-CSRF-Token", "").encode("utf-8"), csrf_for(raw).encode("ascii")):
             return jsonify({"error": "csrf_validation_failed"}), 403
-        g.member_user, g.member_session, g.member_raw = member, session, raw
+        g.member_user, g.member_session, g.member_raw = session.member, session, raw
         return view(*args, **kwargs)
     return wrapped
 

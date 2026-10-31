@@ -35,6 +35,51 @@ class NewsletterOnboardingTests(StationSettingsTests):
         self.assertNotIn('Aucune confirmation',self.sender.call_args.kwargs['json']['htmlContent'])
         self.assertIn('/connexion/lien#',self.sender.call_args.kwargs['json']['htmlContent'])
 
+    def test_signup_opens_persistent_account_with_saved_selection_without_second_submit(self):
+        client = self.app.test_client()
+        signed = self.request('start', {'email': 'fresh@example.com', 'intent': self.intent}, client)
+        self.assertEqual(signed.status_code, 201)
+        self.assertTrue(signed.get_json()['authenticated'])
+        cookie = signed.headers['Set-Cookie']
+        self.assertIn('HttpOnly', cookie); self.assertIn('Max-Age=', cookie)
+        session = client.get('/api/member/session')
+        self.assertEqual(session.status_code, 200)
+        self.assertEqual(session.get_json()['user']['email'], 'fresh@example.com')
+        preferences = client.get('/api/member/newsletter/settings').get_json()['data']['intent']
+        self.assertEqual(preferences['stations'][0]['station_id'], 'FR_2')
+        self.assertIn('weather', preferences['stations'][0]['topics'])
+        # A new page load uses the same cookie and needs no draft capability.
+        self.assertEqual(client.get('/api/member/session').status_code, 200)
+        self.assertIsNone(MemberUser.get(MemberUser.email == 'fresh@example.com').verified_at)
+        self.assertEqual(self.request('settings', {'intent': self.intent}, client).status_code, 403)
+        password = 'a future password for this account'
+        changed = client.post('/api/member/password', json={'password': password}, headers={'Origin': ORIGIN, 'X-CSRF-Token': session.get_json()['csrf_token']})
+        self.assertEqual(changed.status_code, 200)
+        other = self.app.test_client()
+        logged = other.post('/api/member/login', json={'email': 'fresh@example.com', 'password': password}, headers={'Origin': ORIGIN})
+        self.assertEqual(logged.status_code, 200)
+        self.assertEqual(logged.get_json()['user']['id'], signed.get_json()['user']['id'])
+
+    def test_signup_never_opens_existing_member_or_legacy_subscriber(self):
+        MemberUser.create(email='existing@example.com', is_active=True)
+        client = self.app.test_client()
+        response = self.request('start', {'email': 'existing@example.com', 'intent': self.intent}, client)
+        self.assertEqual(response.status_code, 201)
+        self.assertNotIn('Set-Cookie', response.headers)
+        self.assertEqual(client.get('/api/member/session').status_code, 401)
+        MemberUser.delete().where(MemberUser.email == 'a@example.com').execute()
+        response = self.request('start', {'email': 'a@example.com', 'intent': self.intent}, client)
+        self.assertEqual(response.get_json()['status'], 'already_subscribed')
+        self.assertNotIn('Set-Cookie', response.headers)
+        self.assertEqual(client.get('/api/member/session').status_code, 401)
+
+    def test_signup_for_another_email_preserves_current_session(self):
+        before = self.client.get('/api/member/session').get_json()['user']
+        response = self.request('start', {'email': 'another@example.com', 'intent': self.intent}, self.client)
+        self.assertEqual(response.status_code, 201)
+        self.assertNotIn('Set-Cookie', response.headers)
+        self.assertEqual(self.client.get('/api/member/session').get_json()['user'], before)
+
     def test_five_duplicate_requests_do_not_resend_mail_or_change_preferences(self):
         self.start()
         count=self.sender.call_count
@@ -73,8 +118,10 @@ class NewsletterOnboardingTests(StationSettingsTests):
     def test_email_failure_does_not_lose_the_subscription(self):
         import requests
         self.sender.side_effect=requests.RequestException('offline')
-        response=self.start()
+        client = self.app.test_client()
+        response = self.request('start', {'email': 'new@example.com', 'intent': self.intent}, client)
         self.assertEqual(response.status_code,201)
+        self.assertEqual(client.get('/api/member/session').status_code, 200)
         self.assertFalse(response.get_json()['email_sent'])
         self.assertEqual(NewsletterSubscriber.get(NewsletterSubscriber.email=='new@example.com').status,'active')
         self.assertTrue(NewsletterStationPreference.get().weather_enabled)

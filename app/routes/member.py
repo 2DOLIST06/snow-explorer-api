@@ -5,7 +5,7 @@ from app.datetime_utils import utcnow
 from app.models.member import MemberUser, MemberSession, MemberLoginLink
 from app.models.newsletter import NewsletterSubscriber, SnowNewsletterPreference
 from app.services.admin_auth import normalize_email, validate_email, validate_password, hash_password, verify_password, _cookie_settings
-from app.services.member_auth import authenticated, limited, send_member_link, resend_member_link, consume_link, session_response, user_json, csrf_for, COOKIE
+from app.services.member_auth import authenticated, current_session, limited, send_member_link, resend_member_link, consume_link, session_response, user_json, csrf_for, COOKIE
 from app.routes import newsletter
 from app.services import newsletter_stations, newsletter_onboarding
 from app.services.newsletter_email import send_welcome_email
@@ -99,7 +99,7 @@ def login():
     if limited(email):
         return jsonify({"error": "too_many_login_attempts"}), 429
     member = MemberUser.get_or_none(MemberUser.email == email)
-    if not member or not member.is_active or not member.verified_at:
+    if not member or not member.is_active:
         return jsonify({"error": "invalid_credentials"}), 401
     if not member.password_hash:
         return jsonify({"error": "password_not_set"}), 401
@@ -173,8 +173,8 @@ def newsletter_start():
         return jsonify({"error": str(exc)}), 400
     with NewsletterSubscriber._meta.database.atomic():
         # One normalized email identifies the same account for newsletter,
-        # password sign-in and email sign-in. Signup never verifies or logs in.
-        MemberUser.get_or_create(email=email)
+        # password sign-in and email sign-in. Never open an existing account by email alone.
+        member, member_created = MemberUser.get_or_create(email=email)
         subscriber = newsletter_onboarding.capture_pending(email, intent)
         created = subscriber._newsletter_created
         if not created and subscriber.status == "active":
@@ -184,10 +184,17 @@ def newsletter_start():
         subscriber = newsletter_onboarding.apply_intent(email, intent, consent_version="v2-newsletter-button")
         subscriber = NewsletterSubscriber.get_by_id(subscriber.id)
         capability = newsletter_onboarding.signup_token(subscriber) if created else None
+        existing_session, _ = current_session()
+        # Only this request's entirely new identity can start a session without
+        # proof of email ownership. Preserve any already signed-in account.
+        response = session_response(member) if (member_created and created and member.is_active and not existing_session) else jsonify({})
     # Newsletter activation does not depend on email delivery or account verification.
     mail_sent = send_welcome_email(subscriber, intent["stations"][0]["station_name"] if intent["stations"] else None)
-    return jsonify({"ok": True, "status": "active", "verification_required": False,
-                    "email_sent": bool(mail_sent), "draft_token": capability, "intent": intent}), 201
+    payload = response.get_json()
+    payload.update({"ok": True, "status": "active", "verification_required": False,
+                    "email_sent": bool(mail_sent), "draft_token": capability, "intent": intent})
+    response.set_data(current_app.json.dumps(payload))
+    return response, 201
 
 
 @bp_member.post("/newsletter/login-link")
