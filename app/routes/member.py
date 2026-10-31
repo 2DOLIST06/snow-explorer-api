@@ -5,7 +5,7 @@ from app.datetime_utils import utcnow
 from app.models.member import MemberUser, MemberSession, MemberLoginLink
 from app.models.newsletter import NewsletterSubscriber, SnowNewsletterPreference
 from app.services.admin_auth import normalize_email, validate_email, validate_password, hash_password, verify_password, _cookie_settings
-from app.services.member_auth import authenticated, limited, send_member_link, consume_link, session_response, user_json, csrf_for, COOKIE
+from app.services.member_auth import authenticated, limited, send_member_link, resend_member_link, consume_link, session_response, user_json, csrf_for, COOKIE
 from app.routes import newsletter
 from app.services import newsletter_stations, newsletter_onboarding
 from app.services.newsletter_email import send_welcome_email
@@ -45,8 +45,6 @@ def register():
         return jsonify({"error": "too_many_login_attempts"}), 429
     # Signup is verified by mail. No attacker-chosen password is staged before proof of email ownership.
     member, _ = MemberUser.get_or_create(email=email)
-    if member.verified_at:
-        return jsonify({"error": "account_exists"}), 409
     if not member.is_active:
         return jsonify({"error": "account_unavailable"}), 403
     error, status = send_member_link(member)
@@ -61,6 +59,8 @@ def request_link():
     if limited(email):
         return jsonify({"error": "too_many_login_attempts"}), 429
     member = MemberUser.get_or_none(MemberUser.email == email)
+    if not member and NewsletterSubscriber.select().where(NewsletterSubscriber.email == email).exists():
+        member, _ = MemberUser.get_or_create(email=email)
     if not member:
         return jsonify({"error": "account_not_found"}), 404
     if not member.is_active:
@@ -78,6 +78,15 @@ def consume():
         if not member:
             return jsonify({"error": "invalid_or_expired_link"}), 401
         return session_response(member)
+
+
+@bp_member.post("/login-link/resend")
+def resend_link():
+    value = body().get("token")
+    if limited("member-resend:" + str(value or "")[:128]):
+        return jsonify({"error": "too_many_login_attempts"}), 429
+    error, status = resend_member_link(value)
+    return (jsonify({"error": error}), status) if error else jsonify({"ok": True})
 
 
 @bp_member.post("/login")
@@ -163,6 +172,9 @@ def newsletter_start():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     with NewsletterSubscriber._meta.database.atomic():
+        # One normalized email identifies the same account for newsletter,
+        # password sign-in and email sign-in. Signup never verifies or logs in.
+        MemberUser.get_or_create(email=email)
         subscriber = newsletter_onboarding.capture_pending(email, intent)
         created = subscriber._newsletter_created
         if not created and subscriber.status == "active":
@@ -197,6 +209,20 @@ def newsletter_login_link():
     if error:
         return jsonify({"error": error}), status
     return jsonify({"ok": True})
+
+
+@bp_member.post("/newsletter/account-link")
+def newsletter_account_link():
+    # Old preference links can request an account link by email, but are never
+    # exchanged directly for a full member session or password-setting access.
+    if limited("legacy-newsletter-account"):
+        return jsonify({"error": "too_many_login_attempts"}), 429
+    subscriber = newsletter._subscriber_for_token(body().get("token"))
+    if not subscriber:
+        return jsonify({"error": "invalid_preferences_token"}), 404
+    member, _ = MemberUser.get_or_create(email=subscriber.email)
+    error, status = send_member_link(member)
+    return (jsonify({"error": error}), status) if error else jsonify({"ok": True})
 
 
 @bp_member.post("/newsletter/draft")

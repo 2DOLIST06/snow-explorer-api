@@ -13,6 +13,7 @@ from app.models.newsletter import (
     SnowNewsletterPreference,
 )
 from app.models.resort import Resort
+from app.models.member import MemberUser
 from app.services.newsletter_email import send_welcome_email
 from app.services import newsletter_stations
 
@@ -157,6 +158,7 @@ def subscribe():
     verified_owner = bool(member and member.email == email)
     try:
         with NewsletterSubscriber._meta.database.atomic():
+            MemberUser.get_or_create(email=email)
             subscriber = NewsletterSubscriber.get_or_none(
                 NewsletterSubscriber.email == email
             )

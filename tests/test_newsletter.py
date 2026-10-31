@@ -18,6 +18,7 @@ from app.models.newsletter import (
     SnowNewsletterPreference,
 )
 from app.models.resort import Resort
+from app.models.member import MemberUser, MemberLoginLink
 from app.routes.newsletter import bp_newsletter
 from app.routes.public_resorts import bp_public_stations
 
@@ -27,7 +28,7 @@ class NewsletterTests(unittest.TestCase):
         self.database = SqliteDatabase(":memory:", pragmas={"foreign_keys": 1})
         self.models = [
             Resort, NewsletterSubscriber, SnowNewsletterPreference,
-            NewsletterSubscriberStation, NewsletterStationPreference, SnowAlert,
+            NewsletterSubscriberStation, NewsletterStationPreference, SnowAlert, MemberUser, MemberLoginLink,
         ]
         self.database.bind(self.models)
         self.database.connect()
@@ -36,6 +37,7 @@ class NewsletterTests(unittest.TestCase):
         Resort.create(id="hidden", name="Hidden", slug="hidden", is_active=False)
         app = Flask(__name__)
         app.config.update(
+            ADMIN_SESSION_SECRET="s"*64, ADMIN_ALLOWED_ORIGINS=["https://www.snow-explorer.com"],
             BREVO_API_KEY="secret-key", BREVO_SENDER_EMAIL="hello@snow-explorer.com",
             BREVO_SENDER_NAME="Snow Explorer", FRONTEND_URL="https://www.snow-explorer.com",
         )
@@ -45,7 +47,7 @@ class NewsletterTests(unittest.TestCase):
         self.brevo_response = Mock()
         self.brevo_response.raise_for_status.return_value = None
         self.brevo_patch = patch(
-            "app.services.newsletter_email.requests.post", return_value=self.brevo_response
+            "app.services.member_auth.requests.post", return_value=self.brevo_response
         )
         self.brevo_post = self.brevo_patch.start()
 

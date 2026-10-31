@@ -58,7 +58,7 @@ class MemberAccountTests(unittest.TestCase):
         self.assertIn('member_session=',response.headers['Set-Cookie']); self.assertIn('HttpOnly',response.headers['Set-Cookie']); self.assertIn('Secure',response.headers['Set-Cookie'])
         self.assertFalse(response.get_json()['user']['password_set']); self.assertNotIn('token',response.get_json())
         self.assertEqual(self.post('/login-link/consume',{'token':token}).status_code,401)
-        self.assertEqual(self.post('/register',{'email':member.email}).status_code,409)
+        self.assertEqual(self.post('/register',{'email':member.email}).status_code,429)
         self.assertEqual(self.post('/login',{'email':member.email,'password':'any password'}).get_json()['error'],'password_not_set')
         self.assertEqual(self.client.get('/api/member/newsletter/access').get_json(),{'status':'not_subscribed'})
     def test_member_and_admin_sessions_and_accounts_are_independent(self):
@@ -163,4 +163,57 @@ class MemberAccountTests(unittest.TestCase):
         self.assertEqual(response.headers.get('Access-Control-Allow-Credentials'),'true')
         self.assertEqual(response.headers.get('Access-Control-Allow-Origin'),ORIGIN)
 
-if __name__=='__main__': unittest.main()
+    def test_expired_login_link_resends_email_in_place_without_starting_a_session(self):
+        self.post('/register',{'email':'member@example.com'})
+        expired=self.token()
+        MemberLoginLink.update(requested_at=utcnow()-timedelta(minutes=20),expires_at=utcnow()-timedelta(minutes=5)).execute()
+        self.assertEqual(self.post('/login-link/consume',{'token':expired}).status_code,401)
+        before=self.sender.call_count
+        response=self.post('/login-link/resend',{'token':expired})
+        self.assertEqual(response.status_code,200)
+        self.assertTrue(response.get_json()['ok'])
+        self.assertNotIn('Set-Cookie',response.headers)
+        self.assertEqual(self.sender.call_count,before+1)
+        self.assertEqual(self.client.get('/api/member/session').status_code,401)
+        fresh=self.token();self.assertNotEqual(fresh,expired)
+        self.assertEqual(self.post('/login-link/consume',{'token':expired}).status_code,401)
+        self.assertEqual(self.post('/login-link/consume',{'token':fresh}).status_code,200)
+
+    def test_replaced_link_can_resend_but_resend_signature_never_authenticates(self):
+        self.post('/register',{'email':'member@example.com'});older=self.token()
+        MemberLoginLink.update(requested_at=utcnow()-timedelta(minutes=2)).execute()
+        self.post('/login-link',{'email':'member@example.com'});replaced=self.token()
+        MemberLoginLink.update(requested_at=utcnow()-timedelta(minutes=2)).execute()
+        self.assertEqual(self.post('/login-link/resend',{'token':older}).status_code,200)
+        fresh=self.token();self.assertNotEqual(fresh,replaced)
+        self.assertEqual(self.post('/login-link/consume',{'token':older.split('~')[1]}).status_code,401)
+        before=self.sender.call_count
+        self.assertEqual(self.post('/login-link/resend',{'token':older+'bad'}).status_code,400)
+        self.assertEqual(self.sender.call_count,before)
+        self.assertEqual(self.post('/login-link/consume',{'token':fresh}).status_code,200)
+
+    def test_resend_reports_real_delivery_failure_and_unknown_old_links_need_email(self):
+        import requests
+        self.post('/register',{'email':'member@example.com'});token=self.token()
+        MemberLoginLink.update(requested_at=utcnow()-timedelta(minutes=20),expires_at=utcnow()-timedelta(minutes=5)).execute()
+        self.sender.side_effect=requests.RequestException('offline')
+        response=self.post('/login-link/resend',{'token':token})
+        self.assertEqual(response.status_code,503)
+        self.assertEqual(response.get_json()['error'],'email_delivery_failed')
+        self.assertNotIn('ok',response.get_json())
+        self.assertEqual(self.client.get('/api/member/session').status_code,401)
+        old=self.post('/login-link/resend',{'token':'b'*64})
+        self.assertEqual(old.status_code,400)
+        self.assertEqual(old.get_json()['error'],'resend_email_required')
+
+    def test_existing_account_registration_requests_the_same_account_link(self):
+        self.signup()
+        member=MemberUser.get()
+        MemberLoginLink.update(requested_at=utcnow()-timedelta(minutes=2)).execute()
+        response=self.post('/register',{'email':' MEMBER@EXAMPLE.COM '})
+        self.assertEqual(response.status_code,201)
+        self.assertEqual(MemberUser.select().count(),1)
+        self.assertEqual(MemberLoginLink.get().member_id,member.id)
+
+if __name__ == '__main__':
+    unittest.main()
