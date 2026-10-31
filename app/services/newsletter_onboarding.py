@@ -213,3 +213,30 @@ def current_preferences(email):
                                       'newsletter_frequency': preference.newsletter_frequency if preference else 'weekly',
                                       'weather_frequency': preference.weather_frequency if preference else 'disabled'})
     return {'status': subscriber.status if subscriber else 'not_subscribed', 'intent': intent}
+
+
+def follow_station(email, station_id, topic, language='fr'):
+    """Add one explicit station CTA choice without resetting saved preferences."""
+    intent = normalize_intent({'stations': [{'station_id': station_id, 'topics': [topic]}],
+                               'consent': True, 'language': language, 'source': 'station_page'})
+    row = intent['stations'][0]
+    with NewsletterSubscriber._meta.database.atomic():
+        subscriber = NewsletterSubscriber.get_or_none(NewsletterSubscriber.email == email)
+        if subscriber and subscriber.status in {'bounced', 'complained'}:
+            raise ValueError('newsletter_unavailable')
+        preference = NewsletterStationPreference.get_or_none(
+            (NewsletterStationPreference.subscriber == subscriber) & (NewsletterStationPreference.station == row['station_id'])) if subscriber else None
+        already_followed = bool(subscriber and subscriber.status == 'active' and preference and getattr(preference, TOPICS[topic])
+                                and (topic != 'weather' or preference.weather_frequency != 'disabled'))
+        if preference:
+            row['newsletter_frequency'] = preference.newsletter_frequency
+            row['weather_frequency'] = preference.weather_frequency
+            if topic == 'weather' and row['weather_frequency'] == 'disabled':
+                row['weather_frequency'] = 'friday'
+        if not subscriber or not NewsletterSubscriberStation.select().where(
+                (NewsletterSubscriberStation.subscriber == subscriber) & (NewsletterSubscriberStation.station == row['station_id'])).exists():
+            count = NewsletterSubscriberStation.select().where(NewsletterSubscriberStation.subscriber == subscriber).count() if subscriber else 0
+            if count >= 20:
+                raise ValueError('station_limit_reached')
+        apply_intent(email, intent)
+    return {'station': row, 'already_followed': already_followed}

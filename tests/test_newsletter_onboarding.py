@@ -31,7 +31,8 @@ class NewsletterOnboardingTests(StationSettingsTests):
         self.assertEqual(MemberUser.select().count(),3)  # Signup creates its one account.
         self.assertEqual(MemberLoginLink.select().count(),1)
         self.assertEqual(self.app.test_client().get('/api/member/session').status_code,401)
-        self.assertIn('Aucune confirmation',self.sender.call_args.kwargs['json']['htmlContent'])
+        self.assertIn('a bien été prise en compte',self.sender.call_args.kwargs['json']['htmlContent'])
+        self.assertNotIn('Aucune confirmation',self.sender.call_args.kwargs['json']['htmlContent'])
         self.assertIn('/connexion/lien#',self.sender.call_args.kwargs['json']['htmlContent'])
 
     def test_five_duplicate_requests_do_not_resend_mail_or_change_preferences(self):
@@ -210,3 +211,53 @@ class NewsletterOnboardingTests(StationSettingsTests):
         settings=client.get('/api/member/newsletter/settings').get_json()['data']['intent']
         self.assertTrue(settings['articles']);self.assertEqual(settings['newsletter_frequency'],'monthly')
         self.assertEqual(settings['stations'][0]['station_id'],'FR_2')
+
+
+    def test_station_cta_immediately_adds_only_requested_topic_and_preserves_other_settings(self):
+        previous = dict(self.intent, articles=False, newsletter_frequency='monthly', stations=[
+            {'station_id': 'FR_1', 'topics': ['snowfall'], 'newsletter_frequency': 'monthly'},
+            {'station_id': 'FR_2', 'topics': ['weather'], 'weather_frequency': 'daily', 'newsletter_frequency': 'monthly'}])
+        self.request('settings', {'intent': previous}, self.client, self.csrf)
+        response = self.request('follow', {'station_id': 'FR_2', 'topic': 'resort_updates'}, self.client, self.csrf)
+        self.assertEqual(response.status_code, 200); self.assertFalse(response.get_json()['already_followed'])
+        settings = self.client.get('/api/member/newsletter/settings').get_json()['data']['intent']
+        rows = {row['station_id']: row for row in settings['stations']}
+        self.assertEqual(set(rows['FR_2']['topics']), {'weather', 'resort_updates'})
+        self.assertEqual(rows['FR_2']['weather_frequency'], 'daily'); self.assertEqual(rows['FR_2']['newsletter_frequency'], 'monthly')
+        self.assertEqual(rows['FR_1']['topics'], ['snowfall']); self.assertFalse(settings['articles'])
+        self.assertEqual(settings['newsletter_frequency'], 'monthly')
+        before = settings
+        repeated = self.request('follow', {'station_id': 'FR_2', 'topic': 'weather'}, self.client, self.csrf)
+        self.assertTrue(repeated.get_json()['already_followed'])
+        self.assertEqual(self.client.get('/api/member/newsletter/settings').get_json()['data']['intent'], before)
+        self.assertEqual(self.other.get('/api/member/newsletter/settings').get_json()['data']['intent']['stations'], [])
+
+    def test_station_cta_weather_enables_paused_weather_and_reactivates_subscription(self):
+        previous = dict(self.intent, stations=[{'station_id': 'FR_2', 'topics': ['weather'], 'weather_frequency': 'disabled'}])
+        self.request('settings', {'intent': previous}, self.client, self.csrf)
+        self.request('unsubscribe', {}, self.client, self.csrf)
+        response = self.request('follow', {'station_id': 'FR_2', 'topic': 'weather'}, self.client, self.csrf)
+        self.assertEqual(response.status_code, 200); self.assertFalse(response.get_json()['already_followed'])
+        settings = self.client.get('/api/member/newsletter/settings').get_json()['data']
+        self.assertEqual(settings['status'], 'active'); self.assertEqual(settings['intent']['stations'][0]['weather_frequency'], 'friday')
+
+    def test_station_cta_requires_session_csrf_valid_station_and_owner(self):
+        data = {'station_id': 'FR_2', 'topic': 'weather'}
+        self.assertEqual(self.request('follow', data).status_code, 401)
+        self.assertEqual(self.request('follow', data, self.client).status_code, 403)
+        for invalid in [dict(data, email=self.b.email), dict(data, station_id='hidden'), dict(data, station_id='missing'), dict(data, topic='bad')]:
+            self.assertEqual(self.request('follow', invalid, self.client, self.csrf).status_code, 400)
+        self.assertEqual(NewsletterSubscriberStation.select().count(), 0)
+        self.a.status = 'complained'; self.a.save()
+        self.assertEqual(self.request('follow', data, self.client, self.csrf).status_code, 409)
+        self.assertEqual(NewsletterSubscriberStation.select().count(), 0)
+
+    def test_station_cta_limit_prevents_adding_but_allows_existing_station(self):
+        from app.models.resort import Resort
+        for index in range(20):
+            station = Resort.create(id='limit_' + str(index), name='Limit ' + str(index), slug='limit-' + str(index), is_active=True)
+            NewsletterSubscriberStation.create(subscriber=self.a, station=station)
+        response = self.request('follow', {'station_id': 'FR_2', 'topic': 'weather'}, self.client, self.csrf)
+        self.assertEqual(response.status_code, 409); self.assertEqual(response.get_json()['error'], 'station_limit_reached')
+        self.assertEqual(self.request('follow', {'station_id': 'limit_0', 'topic': 'weather'}, self.client, self.csrf).status_code, 200)
+        self.assertEqual(NewsletterSubscriberStation.select().where(NewsletterSubscriberStation.subscriber == self.a).count(), 20)

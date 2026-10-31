@@ -61,3 +61,12 @@ Validation du correctif : 51 tests ciblés API passent, dont le parcours newslet
 Les anciens composants de réglages généraux et de stations ont été supprimés du frontend. La sélection multiple, le panneau unique de station et le bouton « Enregistrer mes choix » proviennent du même composant dans tous les parcours. Une station sans thème sélectionné peut être conservée. Une station devenue inactive peut être conservée par son abonné actuel, mais ne peut pas être ajoutée par un autre compte. Les liens depuis les pages stations complètent les choix déjà enregistrés sans les remplacer.
 
 Validation : 56 tests ciblés API et 403 tests frontend passent. Les tests de composants comparent les contrôles réellement affichés après inscription et pour les comptes sans abonnement, actifs ou désabonnés ; ils vérifient aussi la liste immédiatement visible, la sélection multiple et la sauvegarde complète. Aucun changement de schéma ni envoi automatique de bulletin.
+
+
+## Ajout direct depuis une station
+
+`POST /api/member/newsletter/follow` nécessite une session et un jeton CSRF. Il accepte uniquement `station_id`, `topic` et éventuellement `language`. Il ajoute le thème demandé au compte connecté sans remplacer les autres abonnements ni les fréquences déjà choisies. Pour la météo en pause, un clic explicite réactive la fréquence du vendredi. Un ajout déjà actif renvoie `already_followed: true`. Les adresses bounced/complained restent bloquées et la limite de vingt stations s’applique aux nouveaux ajouts. Aucun email de connexion ni bulletin n’est envoyé par cette route.
+
+Le frontend doit déployer ce nouveau parcours après cette API. Les visiteurs non connectés ouvrent la page de compte avec le champ email et le choix station/thème préparé. Une adresse existante garde ce choix pendant la connexion, puis le retrouve dans l’éditeur habituel. Le message de bienvenue ne comporte plus de phrase expliquant l’absence de confirmation.
+
+Validation : 60 tests ciblés comptes/newsletter passent, dont l’ajout direct, les clics répétés, la conservation des fréquences, la météo en pause, la réactivation, les permissions/CSRF et la limite de stations. Aucune migration SQL supplémentaire.
