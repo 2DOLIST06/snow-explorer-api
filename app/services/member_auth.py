@@ -1,5 +1,6 @@
 """Member-only sessions. Administrator credentials and cookies are never accepted."""
 import html
+import json
 import hmac
 import re
 import secrets
@@ -33,7 +34,8 @@ def create_session(member):
 
 def session_response(member):
     raw = create_session(member)
-    response = make_response(jsonify({"authenticated": True, "user": user_json(member), "csrf_token": csrf_for(raw)}))
+    response = make_response(jsonify({"authenticated": True, "user": user_json(member), "csrf_token": csrf_for(raw),
+                                     "newsletter_intent": getattr(g, "member_newsletter_intent", None)}))
     response.set_cookie(COOKIE, raw, max_age=current_app.config["ADMIN_SESSION_TTL_SECONDS"], **_cookie_settings())
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -71,7 +73,7 @@ def limited(key=""):
     return False
 
 
-def send_member_link(member):
+def send_member_link(member, newsletter_intent=None):
     config = current_app.config
     parsed = urlsplit(config.get("FRONTEND_URL") or "")
     origin = f"{parsed.scheme}://{parsed.netloc}"
@@ -84,7 +86,8 @@ def send_member_link(member):
     token = secrets.token_hex(32)
     digest = _digest(token, b"member-link:")
     link, _ = MemberLoginLink.get_or_create(member=member)
-    claimed = (MemberLoginLink.update(token_hash=digest, requested_at=now, expires_at=now + timedelta(minutes=15))
+    claimed = (MemberLoginLink.update(token_hash=digest, requested_at=now, expires_at=now + timedelta(minutes=15),
+                                     newsletter_intent=json.dumps(newsletter_intent) if newsletter_intent is not None else None)
                .where((MemberLoginLink.id == link.id) & (MemberLoginLink.requested_at.is_null() | (MemberLoginLink.requested_at < now-timedelta(minutes=1)))).execute())
     if not claimed:
         return "login_link_cooldown", 429
@@ -99,7 +102,7 @@ def send_member_link(member):
         }, timeout=10)
         response.raise_for_status()
     except requests.RequestException:
-        MemberLoginLink.update(token_hash=None, requested_at=None, expires_at=None).where((MemberLoginLink.id == link.id) & (MemberLoginLink.token_hash == digest)).execute()
+        MemberLoginLink.update(token_hash=None, requested_at=None, expires_at=None, newsletter_intent=None).where((MemberLoginLink.id == link.id) & (MemberLoginLink.token_hash == digest)).execute()
         current_app.logger.error("Member email delivery failed")
         return "email_delivery_failed", 503
     return None, 200
@@ -119,9 +122,13 @@ def consume_link(token):
     condition = (MemberLoginLink.id == link.id) & (MemberLoginLink.token_hash == digest) & (MemberLoginLink.expires_at > now)
     if member.password_changed_at:
         condition &= MemberLoginLink.requested_at >= member.password_changed_at
+    # Claim and read the latest draft in one transaction. Draft updates also compare
+    # token_hash, so a consumed link cannot subsequently edit the draft anonymously.
     consumed = MemberLoginLink.update(token_hash=None, expires_at=None).where(condition).execute()
     if consumed != 1:
         return None
+    latest = MemberLoginLink.get_by_id(link.id)
+    g.member_newsletter_intent = json.loads(latest.newsletter_intent) if latest.newsletter_intent else None
     if not member.verified_at:
         member.verified_at = now
         member.save(only=[MemberUser.verified_at])

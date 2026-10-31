@@ -1,7 +1,7 @@
 import re
 import secrets
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 from peewee import IntegrityError
 
 from app.datetime_utils import utcnow
@@ -152,12 +152,16 @@ def subscribe():
     now = utcnow()
     send_welcome = False
     subscriber = None
+    created_subscriber = False
+    member = getattr(g, "member_user", None)
+    verified_owner = bool(member and member.email == email)
     try:
         with NewsletterSubscriber._meta.database.atomic():
             subscriber = NewsletterSubscriber.get_or_none(
                 NewsletterSubscriber.email == email
             )
             if subscriber is None:
+                created_subscriber = True
                 subscriber = NewsletterSubscriber.create(
                     email=email,
                     status="active",
@@ -172,7 +176,7 @@ def subscribe():
                 )
                 SnowNewsletterPreference.create(subscriber=subscriber)
                 send_welcome = True
-            elif subscriber.status == "unsubscribed":
+            elif subscriber.status == "unsubscribed" and verified_owner:
                 subscriber.status = "active"
                 subscriber.language = language
                 subscriber.source = source
@@ -186,10 +190,10 @@ def subscribe():
                 subscriber.save()
                 SnowNewsletterPreference.get_or_create(subscriber=subscriber)
                 send_welcome = True
-            elif subscriber.status in {"active", "pending"}:
+            elif subscriber.status in {"active", "pending"} and verified_owner:
                 SnowNewsletterPreference.get_or_create(subscriber=subscriber)
 
-            if station is not None and subscriber.status in {"active", "pending"}:
+            if station is not None and subscriber.status in {"active", "pending"} and (created_subscriber or verified_owner):
                 _follow_station(subscriber, station)
     except IntegrityError:
         # A concurrent identical request is intentionally indistinguishable.

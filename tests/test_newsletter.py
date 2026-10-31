@@ -208,7 +208,7 @@ class NewsletterTests(unittest.TestCase):
         self.assertEqual(NewsletterStationPreference.select().count(), 0)
         self.assertEqual(SnowAlert.select().count(), 0)
 
-    def test_unsubscribe_preserves_data_and_resubscribe_is_immediately_active(self):
+    def test_unsubscribe_preserves_data_and_anonymous_email_cannot_reactivate(self):
         subscriber = self.confirmed_subscriber()
         old_token = subscriber.preferences_token
         response = self.client.post("/api/newsletter/unsubscribe", json={"token": old_token})
@@ -218,10 +218,10 @@ class NewsletterTests(unittest.TestCase):
 
         self.assertEqual(self.subscribe().status_code, 201)
         resubscribed = NewsletterSubscriber.get()
-        self.assertEqual(resubscribed.status, "active")
+        self.assertEqual(resubscribed.status, "unsubscribed")
         self.assertEqual(resubscribed.preferences_token, old_token)
         self.assertIsNone(resubscribed.confirmation_token)
-        self.assertIsNone(resubscribed.unsubscribed_at)
+        self.assertIsNotNone(resubscribed.unsubscribed_at)
         self.assertEqual(NewsletterSubscriberStation.select().count(), 1)
 
     def test_station_search_is_limited_to_small_active_projection(self):
@@ -243,6 +243,13 @@ class NewsletterTests(unittest.TestCase):
             json={"station_id": "missing"},
         )
         self.assertEqual(response.status_code, 404)
+
+
+    def test_anonymous_existing_email_cannot_add_a_station(self):
+        self.subscribe(station_id=None)
+        self.assertEqual(NewsletterSubscriberStation.select().count(), 0)
+        self.assertEqual(self.subscribe(station_id="chamonix").status_code, 201)
+        self.assertEqual(NewsletterSubscriberStation.select().count(), 0)
 
     def test_brevo_failure_does_not_rollback_subscription(self):
         self.brevo_post.side_effect = requests.RequestException("no response")

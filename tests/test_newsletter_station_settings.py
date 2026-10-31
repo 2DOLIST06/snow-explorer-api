@@ -35,10 +35,10 @@ class StationSettingsTests(unittest.TestCase):
   return client,client.get('/api/member/session').get_json()['csrf_token']
  def post(self,suffix,payload=None,client=None,csrf=None):
   return (client or self.client).post('/api/member/newsletter/stations'+suffix,json=payload or {},headers={'Origin':ORIGIN,'X-CSRF-Token':csrf or self.csrf})
- def test_multiple_stations_inherit_then_keep_independent_topics_and_frequency(self):
+ def test_multiple_stations_start_disabled_then_keep_independent_topics_and_frequency(self):
   self.assertEqual(self.client.get('/api/member/newsletter/stations').get_json()['data']['stations'],[])
   first=self.post('',{'station_id':'FR_1'});self.assertEqual(first.status_code,201)
-  prefs=first.get_json()['data']['preferences'];self.assertFalse(prefs['snowfall_enabled']);self.assertFalse(prefs['weather_enabled']);self.assertTrue(prefs['articles_enabled']);self.assertEqual(prefs['newsletter_frequency'],'monthly')
+  prefs=first.get_json()['data']['preferences'];self.assertFalse(prefs['snowfall_enabled']);self.assertFalse(prefs['weather_enabled']);self.assertFalse(prefs['articles_enabled']);self.assertEqual(prefs['newsletter_frequency'],'weekly')
   self.assertEqual(self.post('',{'station_id':'FR_1'}).status_code,200)
   self.assertEqual(NewsletterSubscriberStation.select().count(),1)
   self.assertEqual(self.post('',{'station_id':'FR_2'}).status_code,201)
@@ -46,9 +46,9 @@ class StationSettingsTests(unittest.TestCase):
   self.assertEqual(changed.status_code,200)
   listed=self.client.get('/api/member/newsletter/stations').get_json()['data']['stations'];self.assertEqual(len(listed),2)
   by_id={row['station']['id']:row['preferences'] for row in listed}
-  self.assertEqual(by_id['FR_1']['newsletter_frequency'],'weekly');self.assertEqual(by_id['FR_2']['newsletter_frequency'],'monthly')
-  self.assertFalse(by_id['FR_2']['snowfall_enabled']);self.assertTrue(by_id['FR_2']['articles_enabled'])
-  self.assertEqual(set(by_id['FR_1']),{'snowfall_enabled','snow_conditions_enabled','weather_enabled','resort_updates_enabled','articles_enabled','newsletter_frequency'})
+  self.assertEqual(by_id['FR_1']['newsletter_frequency'],'weekly');self.assertEqual(by_id['FR_2']['newsletter_frequency'],'weekly')
+  self.assertFalse(by_id['FR_2']['snowfall_enabled']);self.assertFalse(by_id['FR_2']['articles_enabled'])
+  self.assertEqual(set(by_id['FR_1']),{'snowfall_enabled','snow_conditions_enabled','weather_enabled','resort_updates_enabled','articles_enabled','newsletter_frequency','weather_frequency','opening_closing_enabled','lift_updates_enabled','ski_pass_updates_enabled'})
  def test_removed_topics_invalid_types_frequencies_and_inactive_station_are_rejected(self):
   self.assertEqual(self.post('',{'station_id':'hidden'}).status_code,404)
   self.assertEqual(self.post('',{'station_id':'unknown'}).status_code,404)

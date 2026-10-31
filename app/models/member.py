@@ -31,6 +31,7 @@ class MemberLoginLink(BaseModel):
     token_hash = CharField(max_length=64, unique=True, null=True)
     requested_at = UTCDateTimeField(null=True)
     expires_at = UTCDateTimeField(null=True)
+    newsletter_intent = TextField(null=True)
 
     class Meta:
         table_name = "member_login_links"
